@@ -45,29 +45,37 @@ testpaths = ["tests"]
 
 [tool.isort]
 profile = "black"
+extend_skip_glob = ["src/data/**"]
 
 [tool.ruff]
 target-version = "py311"
 src = ["src"]
+extend-exclude = ["src/data"]
+force-exclude = true
 
 [tool.black]
 target-version = ["py311"]
 line-length = 120
 skip-string-normalization = true
+force-exclude = '''
+/src/data/
+'''
 
 [tool.pyright]
 pythonVersion = "3.11"
-include = ["src", "serve_dynamic.py", "publish_static.py"]
+include = ["src/functions", "serve_dynamic.py", "publish_static.py"]
+exclude = ["src/data"]
 extraPaths = ["src"]  
 reportMissingImports = true
 
 [tool.mypy]
 python_version = "3.11"
-files = ["src", "serve_dynamic.py", "publish_static.py"]
+files = ["src/functions", "serve_dynamic.py", "publish_static.py"]
 mypy_path = ["src"]
 namespace_packages = true
 explicit_package_bases = true
 warn_unused_ignores = true
+exclude = ['^src/data/']
 
 [[tool.mypy.overrides]]
  module = ["yaml", "markdown", "docutils", "docutils.*", "duckdb", "httk.web", "httk.web.*"]

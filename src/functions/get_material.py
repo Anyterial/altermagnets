@@ -1,3 +1,6 @@
+import base64
+import json
+from pathlib import Path
 from typing import Any
 
 CLASSIFICATION_LABELS = {
@@ -31,6 +34,36 @@ CLASSIFICATION_NOTES = {
         "from the symmetry-summary tables mounted in this deployment."
     ),
 }
+
+DETAIL_FIGURE_SPECS = (
+    {
+        "key": "band",
+        "filename": "band.svg",
+        "title": "Spin-split band structure",
+        "summary": "Line-mode bands from the SCF_BAND run, plotted relative to the Fermi level.",
+        "empty_message": "Band structure has not been generated for this material yet.",
+        "alt": "Spin-split band structure",
+        "layout_class": "figure-card--wide",
+    },
+    {
+        "key": "structure",
+        "filename": "structure.svg",
+        "title": "Crystal structure",
+        "summary": "Replicated relaxed cell from the final SCF structure, shown with element-resolved colouring.",
+        "empty_message": "Crystal structure figure has not been generated for this material yet.",
+        "alt": "Crystal structure view",
+        "layout_class": "",
+    },
+    {
+        "key": "bz",
+        "filename": "bz.svg",
+        "title": "Brillouin zone and path",
+        "summary": "Reciprocal-space box with labelled special points and the reported Δmax location when available.",
+        "empty_message": "Brillouin-zone figure has not been generated for this material yet.",
+        "alt": "Brillouin zone and k-path",
+        "layout_class": "",
+    },
+)
 
 
 def _split_pipe(value: str | None) -> list[str]:
@@ -89,6 +122,70 @@ def _doi_links(values: list[str]) -> list[dict[str, str]]:
 
 def _magndata_url(magndata_id: str) -> str:
     return f"https://cryst.ehu.es/magndata/index.php?index={magndata_id}"
+
+
+def _detail_assets_root(global_data: Any) -> Path:
+    root = global_data.get("detail_assets_root")
+    if isinstance(root, Path):
+        return root
+    # Use the src/data symlink so the app can read a read-only mounted data tree.
+    return Path(__file__).resolve().parents[1] / "data" / "details"
+
+
+def _details_dir_for_material(details_root: Path, material_id: str) -> Path | None:
+    prefix, separator, digits = material_id.partition("-")
+    if prefix != "amdb" or separator != "-" or len(digits) < 3 or not digits.isdigit():
+        return None
+    return details_root / digits[:1] / digits[:2] / digits[:3] / material_id
+
+
+def _svg_data_url(path: Path) -> str | None:
+    if not path.exists() or not path.is_file():
+        return None
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:image/svg+xml;base64,{encoded}"
+
+
+def _load_detail_assets(material_id: str, global_data: Any) -> dict[str, Any]:
+    details_dir = _details_dir_for_material(_detail_assets_root(global_data), material_id)
+    figures: list[dict[str, Any]] = []
+    raw_path = ""
+
+    if details_dir is None:
+        return {"figures": figures, "raw_path": raw_path, "available_count": 0}
+
+    metadata_path = details_dir / f"{material_id}.json"
+    if metadata_path.exists() and metadata_path.is_file():
+        try:
+            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            payload = {}
+        raw_path = str(payload.get("raw_path", "")).strip()
+
+    available_count = 0
+    for spec in DETAIL_FIGURE_SPECS:
+        data_url = _svg_data_url(details_dir / spec["filename"])
+        available = data_url is not None
+        if available:
+            available_count += 1
+        figures.append(
+            {
+                "key": spec["key"],
+                "title": spec["title"],
+                "summary": spec["summary"],
+                "empty_message": spec["empty_message"],
+                "alt": spec["alt"],
+                "layout_class": spec["layout_class"],
+                "available": available,
+                "data_url": data_url or "",
+            }
+        )
+
+    return {
+        "figures": figures,
+        "raw_path": raw_path,
+        "available_count": available_count,
+    }
 
 
 def _decorate_linked_entry(row: dict[str, Any]) -> dict[str, Any]:
@@ -202,6 +299,7 @@ def execute(global_data, id: str = "", **kwargs):
         return None
 
     linked_entries = [_decorate_linked_entry(row) for row in linked_rows]
+    detail_assets = _load_detail_assets(material_id, global_data)
     warnings = [warning for entry in linked_entries for warning in entry["warnings"]]
     notes = [note for entry in linked_entries for note in entry["notes"]]
     magnetic_phases = _split_pipe(material.get("magnetic_phases_text"))
@@ -235,6 +333,10 @@ def execute(global_data, id: str = "", **kwargs):
         "icsd_ids": icsd_ids,
         "doi_links": _doi_links(doi_values),
         "linked_entries": linked_entries,
+        "detail_figures": detail_assets["figures"],
+        "detail_figure_count": detail_assets["available_count"],
+        "detail_figure_total": len(detail_assets["figures"]),
+        "detail_raw_path": detail_assets["raw_path"],
         "warnings": warnings,
         "notes": notes,
     }

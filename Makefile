@@ -1,4 +1,5 @@
 PYTHON ?= python3
+PY_SOURCES := src/functions serve_dynamic.py publish_static.py
 
 .PHONY: docs docs-live docs-clean clean format format-check typecheck typecheck_pyright lint test test_fastfail audit generate_details
 
@@ -22,16 +23,16 @@ clean:
 	find . -name "__pycache__" -print0 | xargs -0 rm -rf
 
 format:
-	$(PYTHON) -m ruff check src examples --select F401 --fix
-	$(PYTHON) -m isort src
-	$(PYTHON) -m black src
+	$(PYTHON) -m ruff check $(PY_SOURCES) --select F401 --fix
+	$(PYTHON) -m isort $(PY_SOURCES)
+	$(PYTHON) -m black $(PY_SOURCES)
 
 format-check:
-	$(PYTHON) -m isort --check-only src
-	$(PYTHON) -m black --check src
+	$(PYTHON) -m isort --check-only $(PY_SOURCES)
+	$(PYTHON) -m black --check $(PY_SOURCES)
 
 lint:
-	$(PYTHON) -m ruff check src
+	$(PYTHON) -m ruff check $(PY_SOURCES)
 
 typecheck_pyright:
 	$(PYTHON) -m pyright

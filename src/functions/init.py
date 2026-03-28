@@ -1,21 +1,58 @@
-from pathlib import Path
+from typing import Any
+
+MOCK_MATERIALS: list[dict[str, Any]] = [
+    {
+        "id": "AM-0001",
+        "name": "MnTe layered phase",
+        "formula": "MnTe",
+        "elements": ["Mn", "Te"],
+        "spacegroup": "P4/nmm (129)",
+        "order": "Collinear altermagnetic",
+        "neel_temperature": "307 K",
+        "notes": "Prototype entry for tetragonal transition-metal chalcogenides.",
+    },
+    {
+        "id": "AM-0002",
+        "name": "CrSb polymorph A",
+        "formula": "CrSb",
+        "elements": ["Cr", "Sb"],
+        "spacegroup": "Pnma (62)",
+        "order": "Non-collinear altermagnetic",
+        "neel_temperature": "412 K",
+        "notes": "Mock screening hit with strong anisotropic transport markers.",
+    },
+    {
+        "id": "AM-0003",
+        "name": "Fe2As candidate",
+        "formula": "Fe2As",
+        "elements": ["Fe", "As"],
+        "spacegroup": "I4/mmm (139)",
+        "order": "Compensated altermagnetic",
+        "neel_temperature": "355 K",
+        "notes": "Included to exercise formula + element search patterns.",
+    },
+    {
+        "id": "AM-0004",
+        "name": "Mn3SiN thin-film motif",
+        "formula": "Mn3SiN",
+        "elements": ["Mn", "Si", "N"],
+        "spacegroup": "Pm-3m (221)",
+        "order": "Collinear altermagnetic",
+        "neel_temperature": "278 K",
+        "notes": "Mock perovskite-like entry for nitride families.",
+    },
+    {
+        "id": "AM-0005",
+        "name": "RuO2 distorted cell",
+        "formula": "RuO2",
+        "elements": ["Ru", "O"],
+        "spacegroup": "P42/mnm (136)",
+        "order": "Altermagnetic-like antiferromagnetic",
+        "neel_temperature": "300 K",
+        "notes": "Mock oxide entry kept for broad query coverage.",
+    },
+]
 
 
 def execute(global_data, **kwargs):
-    content_root = Path(__file__).resolve().parents[1] / "content" / "blogposts"
-    filterlist = {".md", ".rst", ".html"}
-
-    global_data["blogposts"] = []
-    global_data["blogposts_latest"] = []
-
-    posts_with_dates: list[tuple[str, str]] = []
-    for path in content_root.iterdir():
-        if not path.is_file() or path.suffix not in filterlist:
-            continue
-        rel = f"blogposts/{path.stem}"
-        date = str(global_data["pages"](rel, "date") or "")
-        posts_with_dates.append((date, rel))
-
-    posts_with_dates.sort(reverse=True)
-    global_data["blogposts"] = [rel for _, rel in posts_with_dates]
-    global_data["blogposts_latest"] = global_data["blogposts"][:5]
+    global_data["materials_db"] = [dict(entry) for entry in MOCK_MATERIALS]

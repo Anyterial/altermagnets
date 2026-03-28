@@ -25,7 +25,7 @@ ELECTRONIC_TYPE_LABELS = {
 
 
 def _default_data_dir() -> Path:
-    return Path(__file__).resolve().parents[2] / "data"
+    return Path(__file__).resolve().parents[2] / "data" / "tables"
 
 
 def _resolve_data_dir() -> Path:

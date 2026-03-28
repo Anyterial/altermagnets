@@ -1,12 +1,15 @@
 PYTHON ?= python3
 
-.PHONY: docs docs-live docs-clean clean format format-check typecheck typecheck_pyright lint test test_fastfail audit
+.PHONY: docs docs-live docs-clean clean format format-check typecheck typecheck_pyright lint test test_fastfail audit generate_details
 
 serve:
 	python3 ./serve_dynamic.py
 
 generate:
 	python3 ./publish_static.py
+
+generate_details:
+	python3 ./tools/generate_material_details.py
 
 serve_static: generate
 	echo "Open:"

@@ -28,6 +28,11 @@ dev = [
   "pyright",
   "mypy"
 ]
+detail-generation = [
+  "matplotlib",
+  "pymatgen",
+  "ase",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

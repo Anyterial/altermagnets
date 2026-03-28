@@ -5,7 +5,7 @@ from starlette.testclient import TestClient
 from httk.web import create_asgi_app
 
 ROOT = Path(__file__).resolve().parents[1]
-DATASET_PATH = ROOT / "data" / "high_throughput_screening_results_fixed.csv"
+DATASET_PATH = ROOT / "data" / "tables" / "high_throughput_screening_results_fixed.csv"
 
 
 def test_home_page_renders_without_cookies() -> None:

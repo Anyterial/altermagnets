@@ -15,9 +15,9 @@ SPEC.loader.exec_module(MODULE)
 
 def test_load_detail_assets_reads_sharded_svg_outputs(tmp_path: Path) -> None:
     details_root = tmp_path / "details"
-    target_dir = details_root / "0" / "00" / "000" / "amdb-0001"
+    target_dir = details_root / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001"
     target_dir.mkdir(parents=True)
-    (target_dir / "amdb-0001.json").write_text(
+    (target_dir / "amdb-1-0001.json").write_text(
         json.dumps({"raw_path": "2/Runs/ht.task.tetralith--default.CrSb_SCF.cleanup.0.unclaimed.3.finished"})
         + "\n",
         encoding="utf-8",
@@ -31,7 +31,7 @@ def test_load_detail_assets_reads_sharded_svg_outputs(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    assets = MODULE._load_detail_assets("amdb-0001", {"detail_assets_root": details_root})
+    assets = MODULE._load_detail_assets("amdb-1-0001", {"detail_assets_root": details_root})
 
     assert assets["raw_path"] == "2/Runs/ht.task.tetralith--default.CrSb_SCF.cleanup.0.unclaimed.3.finished"
     assert assets["available_count"] == 2
@@ -40,3 +40,13 @@ def test_load_detail_assets_reads_sharded_svg_outputs(tmp_path: Path) -> None:
     assert figures["band"]["data_url"].startswith("data:image/svg+xml;base64,")
     assert figures["structure"]["available"] is True
     assert figures["bz"]["available"] is False
+
+
+def test_load_detail_assets_returns_empty_for_missing_detail_directory(tmp_path: Path) -> None:
+    details_root = tmp_path / "details"
+
+    assets = MODULE._load_detail_assets("amdb-1-0001", {"detail_assets_root": details_root})
+
+    assert assets["raw_path"] == ""
+    assert assets["available_count"] == 0
+    assert all(figure["available"] is False for figure in assets["figures"])

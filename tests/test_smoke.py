@@ -6,7 +6,9 @@ from httk.web import create_asgi_app
 
 ROOT = Path(__file__).resolve().parents[1]
 DATASET_PATH = ROOT / "data" / "tables" / "high_throughput_screening_results_fixed.csv"
-DETAIL_ASSET_PATH = ROOT / "data" / "details" / "0" / "00" / "000" / "amdb-0001" / "band.svg"
+DETAIL_ASSET_PATHS = [
+    ROOT / "data" / "details" / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001" / "band.svg",
+]
 
 
 def test_home_page_renders_without_cookies() -> None:
@@ -40,13 +42,13 @@ def test_material_detail_page_handles_local_dataset_or_missing_mount() -> None:
     app = create_asgi_app(ROOT / "src", config_name="config_dynamic")
 
     with TestClient(app) as client:
-        response = client.get("/material", params={"id": "amdb-0001"})
+        response = client.get("/material", params={"id": "amdb-1-0001"})
 
     assert response.status_code == 200
     if DATASET_PATH.exists():
         assert "MAGNDATA" in response.text
         assert "index=0.528" in response.text
-        if DETAIL_ASSET_PATH.exists():
+        if any(path.exists() for path in DETAIL_ASSET_PATHS):
             assert "Calculated figures" in response.text
             assert "Spin-split band structure" in response.text
             assert "data:image/svg+xml;base64," in response.text

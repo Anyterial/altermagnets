@@ -16,8 +16,8 @@ SPEC.loader.exec_module(MODULE)
 
 def test_details_dir_for_material_shards_by_numeric_id() -> None:
     details_root = Path("/tmp/details")
-    result = MODULE.details_dir_for_material(details_root, "amdb-0123")
-    assert result == details_root / "0" / "01" / "012" / "amdb-0123"
+    result = MODULE.details_dir_for_material(details_root, "amdb-1-0123")
+    assert result == details_root / "amdb-1" / "0" / "01" / "012" / "amdb-1-0123"
 
 
 def test_extract_final_magnetization_section_uses_last_block() -> None:
@@ -92,6 +92,20 @@ def test_preferred_task_favors_canonical_runs_path() -> None:
     assert MODULE.preferred_task([failed_job, canonical]) == canonical
 
 
+def test_load_screening_entries_prefers_explicit_amdb_id_column(tmp_path: Path) -> None:
+    tables_dir = tmp_path / "tables"
+    tables_dir.mkdir()
+    (tables_dir / "high_throughput_screening_results_fixed.csv").write_text(
+        "AMDBId;MAGNDATA ID;Material;Space group;FdeltaPct;MaxSS;AvgSS;Bandgap;MinAbundPpm\n"
+        "amdb-1-9001;0.528;CrSb;P6_3/mmc;34.375;1.8724;0.763170313;0.0;0.2\n",
+        encoding="utf-8",
+    )
+
+    entries = MODULE.load_screening_entries(tables_dir)
+
+    assert [entry.material_id for entry in entries] == ["amdb-1-9001"]
+
+
 def test_generate_material_details_writes_sharded_raw_artifacts(tmp_path: Path, monkeypatch) -> None:
     tables_dir = tmp_path / "tables"
     raw_dir = tmp_path / "raw"
@@ -147,17 +161,17 @@ def test_generate_material_details_writes_sharded_raw_artifacts(tmp_path: Path, 
         render_plots=False,
     )
 
-    target_dir = details_dir / "0" / "00" / "000" / "amdb-0001"
+    target_dir = details_dir / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001"
     assert len(results) == 1
     assert results[0].details_dir == target_dir
     assert warnings == []
     assert (target_dir / "POSCAR.bz2").exists()
     assert (target_dir / "CONTCAR.bz2").exists()
     assert (target_dir / "MAGN.bz2").exists()
-    assert (target_dir / "amdb-0001.json").exists()
+    assert (target_dir / "amdb-1-0001.json").exists()
     assert (details_dir / "parse.log").exists()
     assert "\"raw_path\": \"2/Runs/ht.task.tetralith--default.CrSb_SCF.cleanup.0.unclaimed.2.finished\"" in (
-        target_dir / "amdb-0001.json"
+        target_dir / "amdb-1-0001.json"
     ).read_text(encoding="utf-8")
 
     with bz2.open(target_dir / "MAGN.bz2", "rt", encoding="utf-8") as handle:
@@ -239,7 +253,7 @@ def test_generate_material_details_parallelizes_jobs_and_serializes_parse_log(
         workers=2,
     )
 
-    assert sorted(result.material_id for result in results) == ["amdb-0001", "amdb-0002"]
+    assert sorted(result.material_id for result in results) == ["amdb-1-0001", "amdb-1-0002"]
     assert warnings == []
     parse_log_lines = (details_dir / "parse.log").read_text(encoding="utf-8").splitlines()
     assert len(parse_log_lines) == 2
@@ -320,9 +334,9 @@ def test_generate_material_details_parallel_logs_failures_serially(
         workers=2,
     )
 
-    assert [result.material_id for result in results] == ["amdb-0001"]
+    assert [result.material_id for result in results] == ["amdb-1-0001"]
     assert len(warnings) == 1
-    assert "amdb-0002" in warnings[0]
+    assert "amdb-1-0002" in warnings[0]
     records = [json.loads(line) for line in (details_dir / "parse.log").read_text(encoding="utf-8").splitlines()]
     assert sorted(record["status"] for record in records) == ["failed", "ok"]
-    assert sorted(record["material_id"] for record in records) == ["amdb-0001", "amdb-0002"]
+    assert sorted(record["material_id"] for record in records) == ["amdb-1-0001", "amdb-1-0002"]

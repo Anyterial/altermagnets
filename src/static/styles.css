@@ -130,6 +130,12 @@ h3 {
   font-size: clamp(20px, 2.1vw, 27px);
 }
 
+h4 {
+  margin: 0;
+  font-size: 18px;
+  font-family: "Fraunces", Georgia, serif;
+}
+
 p {
   line-height: 1.55;
 }
@@ -630,6 +636,35 @@ html[data-theme="dark"] .theme-icon {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.linked-entry-list {
+  display: grid;
+  gap: 12px;
+}
+
+.linked-entry-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--surface);
+}
+
+.linked-entry-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.compact-button {
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.linked-entry-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .inline-link-list,
 .message-list {
   margin: 0;
@@ -816,7 +851,8 @@ html[data-theme="dark"] .accordionPanel {
   .details-grid,
   .hero-metrics,
   .form-grid,
-  .metrics-grid {
+  .metrics-grid,
+  .linked-entry-grid {
     grid-template-columns: 1fr;
   }
 
@@ -845,6 +881,10 @@ html[data-theme="dark"] .accordionPanel {
   }
 
   .button-row {
+    flex-direction: column;
+  }
+
+  .linked-entry-header {
     flex-direction: column;
   }
 

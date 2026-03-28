@@ -87,6 +87,10 @@ def _doi_links(values: list[str]) -> list[dict[str, str]]:
     return links
 
 
+def _magndata_url(magndata_id: str) -> str:
+    return f"https://cryst.ehu.es/magndata/index.php?index={magndata_id}"
+
+
 def _decorate_linked_entry(row: dict[str, Any]) -> dict[str, Any]:
     magnetic_phases = _split_pipe(row.get("magnetic_phases_text"))
     wave_classes = _split_pipe(row.get("wave_classes_text"))
@@ -96,6 +100,7 @@ def _decorate_linked_entry(row: dict[str, Any]) -> dict[str, Any]:
         "magndata_id": row["magndata_id"],
         "source_kind": row.get("source_kind") or "",
         "source_label": CLASSIFICATION_LABELS.get(row.get("source_kind") or "", "No symmetry table entry"),
+        "magndata_url": _magndata_url(row["magndata_id"]),
         "formula": row.get("formula") or "",
         "symprec_display": _format_decimal(row.get("symprec"), digits=5),
         "symprec_variants": row.get("symprec_variants") or 0,
@@ -103,6 +108,12 @@ def _decorate_linked_entry(row: dict[str, Any]) -> dict[str, Any]:
         "wave_class_label": ", ".join(wave_classes) if wave_classes else "n/a",
         "parent_spacegroups": _split_pipe(row.get("parent_spacegroups_text")),
         "parent_spacegroup_label": ", ".join(_split_pipe(row.get("parent_spacegroups_text"))) or "n/a",
+        "bns_mcif_label": ", ".join(_split_pipe(row.get("bns_mcif_text"))) or "n/a",
+        "bns_label": ", ".join(_split_pipe(row.get("bns_text"))) or "n/a",
+        "effective_bns_label": ", ".join(_split_pipe(row.get("effective_bns_text"))) or "n/a",
+        "g_laue_class_label": ", ".join(_split_pipe(row.get("g_laue_classes_text"))) or "n/a",
+        "h_laue_class_label": ", ".join(_split_pipe(row.get("h_laue_classes_text"))) or "n/a",
+        "connecting_element_label": ", ".join(_split_pipe(row.get("connecting_elements_text"))) or "n/a",
         "spin_angle_mismatch_display": _format_decimal(row.get("spin_angle_mismatch"), digits=1, empty="n/a"),
         "spin_length_mismatch_display": _format_decimal(row.get("spin_length_mismatch"), digits=3, empty="n/a"),
         "icsd_ids": _split_pipe(row.get("icsd_ids_text")),
@@ -166,6 +177,12 @@ def execute(global_data, id: str = "", **kwargs):
                 se.magnetic_phases_text,
                 se.wave_classes_text,
                 se.parent_spacegroups_text,
+                se.bns_mcif_text,
+                se.bns_text,
+                se.effective_bns_text,
+                se.g_laue_classes_text,
+                se.h_laue_classes_text,
+                se.connecting_elements_text,
                 se.spin_angle_mismatch,
                 se.spin_length_mismatch,
                 se.icsd_ids_text,
@@ -201,6 +218,7 @@ def execute(global_data, id: str = "", **kwargs):
         "electronic_type_label": ELECTRONIC_TYPE_LABELS.get(material["electronic_type"], material["electronic_type"]),
         "magndata_ids": magndata_ids,
         "magndata_ids_display": ", ".join(magndata_ids) if magndata_ids else "n/a",
+        "magndata_links": [{"id": magndata_id, "url": _magndata_url(magndata_id)} for magndata_id in magndata_ids],
         "elements": _split_pipe(material.get("elements_text")),
         "elements_display": ", ".join(_split_pipe(material.get("elements_text"))) or "n/a",
         "magnetic_phases": magnetic_phases,

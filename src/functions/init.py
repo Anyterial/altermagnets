@@ -9,6 +9,8 @@ import duckdb
 
 ELEMENT_PATTERN = re.compile(r"[A-Z][a-z]?")
 SCREENING_RESULTS_FILENAME = "high_throughput_screening_results_fixed.csv"
+AMDB_ID_COLUMN = "AMDBId"
+AMDB_DATASET = "1"
 
 CLASSIFICATION_LABELS = {
     "collinear": "Naturally collinear",
@@ -30,6 +32,10 @@ def _default_data_dir() -> Path:
 
 def _default_details_dir() -> Path:
     return Path(__file__).resolve().parents[1] / "data" / "details"
+
+
+def _default_material_id(index: int) -> str:
+    return f"amdb-{AMDB_DATASET}-{index:04d}"
 
 
 def _resolve_data_dir() -> Path:
@@ -232,7 +238,7 @@ def _build_material_rows(
     mapping_rows: list[dict[str, Any]] = []
 
     for index, row in enumerate(screening_rows, start=1):
-        material_id = f"amdb-{index:04d}"
+        material_id = (row.get(AMDB_ID_COLUMN) or "").strip() or _default_material_id(index)
         magndata_ids = _split_magndata_ids(row.get("MAGNDATA ID", ""))
         linked_summaries: list[dict[str, Any]] = []
         for magndata_id in magndata_ids:

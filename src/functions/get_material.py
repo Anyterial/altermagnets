@@ -1,5 +1,6 @@
 import base64
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +65,7 @@ DETAIL_FIGURE_SPECS = (
         "layout_class": "",
     },
 )
+AMDB_ID_PATTERN = re.compile(r"^amdb-(?:(?P<dataset>\d+)-)?(?P<number>\d+)$")
 
 
 def _split_pipe(value: str | None) -> list[str]:
@@ -132,11 +134,23 @@ def _detail_assets_root(global_data: Any) -> Path:
     return Path(__file__).resolve().parents[1] / "data" / "details"
 
 
-def _details_dir_for_material(details_root: Path, material_id: str) -> Path | None:
-    prefix, separator, digits = material_id.partition("-")
-    if prefix != "amdb" or separator != "-" or len(digits) < 3 or not digits.isdigit():
+def _parsed_material_id(material_id: str) -> tuple[str, str] | None:
+    match = AMDB_ID_PATTERN.fullmatch(material_id.strip())
+    if match is None:
         return None
-    return details_root / digits[:1] / digits[:2] / digits[:3] / material_id
+    dataset = match.group("dataset") or "1"
+    digits = match.group("number")
+    return dataset, digits
+
+
+def _details_dir_for_material(details_root: Path, material_id: str) -> Path | None:
+    parsed = _parsed_material_id(material_id)
+    if parsed is None:
+        return None
+    dataset, digits = parsed
+    if len(digits) < 3:
+        digits = digits.zfill(3)
+    return details_root / f"amdb-{dataset}" / digits[:1] / digits[:2] / digits[:3] / material_id
 
 
 def _svg_data_url(path: Path) -> str | None:
@@ -147,10 +161,10 @@ def _svg_data_url(path: Path) -> str | None:
 
 
 def _load_detail_assets(material_id: str, global_data: Any) -> dict[str, Any]:
-    details_dir = _details_dir_for_material(_detail_assets_root(global_data), material_id)
+    details_root = _detail_assets_root(global_data)
     figures: list[dict[str, Any]] = []
     raw_path = ""
-
+    details_dir = _details_dir_for_material(details_root, material_id)
     if details_dir is None:
         return {"figures": figures, "raw_path": raw_path, "available_count": 0}
 

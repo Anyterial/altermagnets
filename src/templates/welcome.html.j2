@@ -1,18 +1,47 @@
 <article class="page-block">
-  <h2>{{ title }}</h2>
-  {{ content }}
-  <section class="highlight-grid">
-    <div class="highlight-card">
-      <h3>Server-side search</h3>
-      <p>Queries are evaluated by httk-web functions in <code>src/functions/</code>.</p>
+  <header class="hero-block">
+    <h2>{{ title }}</h2>
+    {{ content }}
+  </header>
+
+  {% if site_stats.dataset_available %}
+  <section class="hero-metrics">
+    <div class="metric-card">
+      <span class="metric-value">{{ site_stats.total_materials }}</span>
+      <span class="metric-label">screened entries</span>
     </div>
-    <div class="highlight-card">
-      <h3>Refinable workflow</h3>
-      <p>Keep refining the query from the left pane while browsing results and details.</p>
+    <div class="metric-card">
+      <span class="metric-value">{{ site_stats.classification_counts.collinear }}</span>
+      <span class="metric-label">naturally collinear</span>
     </div>
-    <div class="highlight-card">
-      <h3>Mock dataset</h3>
-      <p>This demo uses mock entries that will later be replaced with the real screening database.</p>
+    <div class="metric-card">
+      <span class="metric-value">{{ site_stats.classification_counts["noncollinear-derived"] }}</span>
+      <span class="metric-label">noncollinear-derived</span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-value">{{ site_stats.electronic_counts.semiconducting }}</span>
+      <span class="metric-label">semiconducting</span>
     </div>
   </section>
+
+  <section class="section-block">
+    <div class="section-heading">
+      <h3>Top candidates by maximum spin splitting</h3>
+      <p>The ranking follows the DFT screening table and is dominated by large nonrelativistic splittings within the ±3 eV energy window.</p>
+    </div>
+    <div class="highlight-grid">
+      {% for item in featured_materials.largest_splitting %}
+      <a class="highlight-card highlight-link" href="{{ page.relbaseurl }}/material?id={{ item.material_id }}">
+        <h3>{{ item.material }}</h3>
+        <p>{{ item.space_group }} | {{ item.classification_label }}</p>
+        <p><strong>Max SS:</strong> {{ item.max_ss_display }} eV</p>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+  {% else %}
+  <div class="notice-block">
+    <p>{{ site_stats.notice }}</p>
+  </div>
+  {% endif %}
 </article>

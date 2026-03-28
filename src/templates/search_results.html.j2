@@ -1,24 +1,96 @@
-{% if result and result|length > 0 %}
-<table class="results-table" aria-label="Search results table">
-  <thead>
-    <tr>
-      <th>Formula</th>
-      <th>Material</th>
-      <th>Space group</th>
-      <th>Order</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for item in result %}
-    <tr class="result-row" data-row-url="{{ page.relbaseurl }}/material?id={{ item.id }}" tabindex="0">
-      <td>{{ item.formula }}</td>
-      <td>{{ item.name }}</td>
-      <td>{{ item.spacegroup }}</td>
-      <td>{{ item.order }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+{% if not result.dataset_available %}
+<div class="notice-block">
+  <p>{{ site_stats.notice }}</p>
+</div>
 {% else %}
-<p class="empty">No matches found for this query.</p>
+<section class="result-summary">
+  <p>{{ result.summary }}</p>
+  {% if result.active_filters %}
+  <div class="filter-pill-row" aria-label="Active filters">
+    {% for item in result.active_filters %}
+    <span class="filter-pill"><strong>{{ item.label }}</strong> {{ item.value }}</span>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+
+{% if result["items"] and result["items"]|length > 0 %}
+<div class="table-wrap">
+  <table class="results-table" aria-label="Search results table">
+    <thead>
+      <tr>
+        <th>
+          Material
+          <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+            i
+            <span class="info-bubble" role="tooltip">
+              <span class="info-bubble-paragraph">
+                One screened material entry per row. The detail page expands the linked MAGNDATA records and symmetry metadata.
+              </span>
+            </span>
+          </span>
+        </th>
+        <th>MAGNDATA</th>
+        <th>
+          Origin
+          <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+            i
+            <span class="info-bubble" role="tooltip">
+              <span class="info-bubble-paragraph">
+                Whether the linked symmetry evidence came from naturally collinear entries, from collinearized noncollinear entries, or from a mixture of both.
+              </span>
+            </span>
+          </span>
+        </th>
+        <th>Space group</th>
+        <th>
+          Max SS
+          <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+            i
+            <span class="info-bubble" role="tooltip">
+              <span class="info-bubble-paragraph">
+                Largest spin splitting within ±3 eV of the Fermi level in the high-throughput calculation.
+              </span>
+            </span>
+          </span>
+        </th>
+        <th>Avg SS</th>
+        <th>FΔ</th>
+        <th>Gap</th>
+        <th>
+          Min abundance
+          <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+            i
+            <span class="info-bubble" role="tooltip">
+              <span class="info-bubble-paragraph">
+                Minimum crustal abundance among the constituent elements, reported in ppm as a simple scarcity proxy.
+              </span>
+            </span>
+          </span>
+        </th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in result["items"] %}
+      <tr class="result-row" data-row-url="{{ page.relbaseurl }}/material?id={{ item.material_id }}" tabindex="0">
+        <td>
+          <div class="cell-title">{{ item.material }}</div>
+          <div class="cell-meta">{{ item.magnetic_phase_label }} | wave {{ item.wave_class_label }}</div>
+        </td>
+        <td>{{ item.magndata_ids | join(", ") }}</td>
+        <td>{{ item.classification_label }}</td>
+        <td>{{ item.space_group }}</td>
+        <td>{{ item.max_ss_display }} eV</td>
+        <td>{{ item.avg_ss_display }} eV</td>
+        <td>{{ item.fdelta_display }}</td>
+        <td>{{ item.bandgap_display }} eV</td>
+        <td>{{ item.abundance_display }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="empty">No matches found for the current filter set.</p>
+{% endif %}
 {% endif %}

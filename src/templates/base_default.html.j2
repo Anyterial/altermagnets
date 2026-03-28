@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{{ title }} | Altermagnets Database (AMDB)</title>
+    <title>{{ title }} | Anyterial altermagnets</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -16,14 +16,17 @@
     <div class="app-shell">
       <header class="topbar">
         <div class="brand-row">
-	  <a href="https://www.anyterial.se">
+          <a href="https://www.anyterial.se">
             <img
               src="https://www.anyterial.se/img/anyterial_logo_color.svg"
               alt="Anyterial logo"
               class="brand-logo"
-              />
-	  </a>
-          <h1>Altermagnets Database (AMDB)</h1>
+            />
+          </a>
+          <div class="brand-copy">
+            <h1>Anyterial altermagnets</h1>
+            <p>High-throughput screening of altermagnetic candidate materials</p>
+          </div>
         </div>
         <div class="topbar-actions">
           <div class="theme-switch" role="group" aria-label="Theme">
@@ -51,18 +54,270 @@
       <div class="layout-grid">
         <aside class="sidebar panel">
           <section class="search-card">
-            <h2>Search Materials</h2>
-            <p>Filter by formula, element symbols, space group, or magnetic order.</p>
+            <div class="search-card-header">
+              <h2>Search materials</h2>
+              <p>
+                Filter the screened materials by chemistry, electronic character, and symmetry provenance.
+                Search state is carried in the URL, not in cookies.
+              </p>
+            </div>
+
             <form method="get" action="{{ page.relbaseurl }}/search" class="search-form">
-              <label for="global-search">Query</label>
-              <input
-                id="global-search"
-                name="q"
-                type="text"
-                value="{{ query.q if query.q else '' }}"
-                placeholder="e.g. Mn O, Fe, P4/nmm"
-              />
-              <button type="submit">Run search</button>
+              <div class="form-section">
+                <label for="global-search" class="field-label">
+                  Text query
+                  <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+                    i
+                    <span class="info-bubble" role="tooltip">
+                      <span class="info-bubble-paragraph">
+                        Matches material formulas, MAGNDATA identifiers, space-group strings, and symmetry labels.
+                      </span>
+                    </span>
+                  </span>
+                </label>
+                <input
+                  id="global-search"
+                  name="q"
+                  type="text"
+                  value="{{ query.q if query.q else '' }}"
+                  placeholder="e.g. CrSb, 0.528, Pnma"
+                />
+              </div>
+
+              <div class="form-section">
+                <label for="elements" class="field-label">
+                  Elements
+                  <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+                    i
+                    <span class="info-bubble" role="tooltip">
+                      <span class="info-bubble-paragraph">
+                        Require all listed element symbols to be present in the chemical formula.
+                      </span>
+                    </span>
+                  </span>
+                </label>
+                <input
+                  id="elements"
+                  name="elements"
+                  type="text"
+                  value="{{ query.elements if query.elements else '' }}"
+                  placeholder="e.g. Mn O"
+                />
+              </div>
+
+              <div class="form-grid">
+                <div class="form-section">
+                  <label for="classification" class="field-label">
+                    Provenance
+                    <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+                      i
+                      <span class="info-bubble" role="tooltip">
+                        <span class="info-bubble-paragraph">
+                          Distinguishes naturally collinear MAGNDATA entries from entries that only appear after collinearizing a noncollinear parent.
+                        </span>
+                      </span>
+                    </span>
+                  </label>
+                  <select id="classification" name="classification">
+                    {% for option in search_options.classifications %}
+                    <option value="{{ option.value }}" {% if query.classification == option.value %}selected{% endif %}>{{ option.label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+
+                <div class="form-section">
+                  <label for="electronic_type" class="field-label">
+                    Electronic type
+                    <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+                      i
+                      <span class="info-bubble" role="tooltip">
+                        <span class="info-bubble-paragraph">
+                          Derived from the reported band gap in the screening table. Zero gap is treated as metallic.
+                        </span>
+                      </span>
+                    </span>
+                  </label>
+                  <select id="electronic_type" name="electronic_type">
+                    {% for option in search_options.electronic_types %}
+                    <option value="{{ option.value }}" {% if query.electronic_type == option.value %}selected{% endif %}>{{ option.label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-grid">
+                <div class="form-section">
+                  <label for="magnetic_phase" class="field-label">
+                    Phase
+                    <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+                      i
+                      <span class="info-bubble" role="tooltip">
+                        <span class="info-bubble-paragraph">
+                          Symmetry-screening phase label from the MAGNDATA summary tables: AM for altermagnet and FiM for ferrimagnet.
+                        </span>
+                      </span>
+                    </span>
+                  </label>
+                  <select id="magnetic_phase" name="magnetic_phase">
+                    {% for option in search_options.magnetic_phases %}
+                    <option value="{{ option.value }}" {% if query.magnetic_phase == option.value %}selected{% endif %}>{{ option.label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+
+                <div class="form-section">
+                  <label for="wave_class" class="field-label">
+                    Wave class
+                    <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+                      i
+                      <span class="info-bubble" role="tooltip">
+                        <span class="info-bubble-paragraph">
+                          Symmetry wave-class shorthand derived from the parent and halving-subgroup Laue classes used in the altermagnetism analysis.
+                        </span>
+                      </span>
+                    </span>
+                  </label>
+                  <select id="wave_class" name="wave_class">
+                    {% for option in search_options.wave_classes %}
+                    <option value="{{ option.value }}" {% if query.wave_class == option.value %}selected{% endif %}>{{ option.label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-section">
+                <label for="space-group" class="field-label">
+                  Space group
+                  <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+                    i
+                    <span class="info-bubble" role="tooltip">
+                      <span class="info-bubble-paragraph">
+                        Matches the crystallographic space-group label reported for the screened material row.
+                      </span>
+                    </span>
+                  </span>
+                </label>
+                <input
+                  id="space-group"
+                  name="space_group"
+                  type="text"
+                  value="{{ query.space_group if query.space_group else '' }}"
+                  placeholder="e.g. P6_3/mmc"
+                />
+              </div>
+
+              <div class="form-section">
+                <h3>Metric thresholds</h3>
+                <p class="section-note">Tighten the search using the reported spin splitting, gap, and elemental abundance values.</p>
+                <div class="form-grid metric-input-grid">
+                  <div>
+                    <label for="min-max-ss" class="field-label">
+                      Max SS ≥
+                      <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+                        i
+                        <span class="info-bubble" role="tooltip">
+                          <span class="info-bubble-paragraph">
+                            Largest spin splitting found within ±3 eV of the Fermi level in the screening calculation.
+                          </span>
+                        </span>
+                      </span>
+                    </label>
+                    <div class="input-with-unit">
+                      <input id="min-max-ss" name="min_max_ss" type="number" step="0.001" min="0" value="{{ query.min_max_ss if query.min_max_ss else '' }}" />
+                      <span>eV</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label for="min-avg-ss" class="field-label">
+                      Avg SS ≥
+                      <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+                        i
+                        <span class="info-bubble" role="tooltip">
+                          <span class="info-bubble-paragraph">
+                            Brillouin-zone average of the largest spin splitting at each k-point within the same energy window.
+                          </span>
+                        </span>
+                      </span>
+                    </label>
+                    <div class="input-with-unit">
+                      <input id="min-avg-ss" name="min_avg_ss" type="number" step="0.001" min="0" value="{{ query.min_avg_ss if query.min_avg_ss else '' }}" />
+                      <span>eV</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label for="min-fdelta-pct" class="field-label">
+                      FΔ ≥
+                      <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+                        i
+                        <span class="info-bubble" role="tooltip">
+                          <span class="info-bubble-paragraph">
+                            Fraction of the sampled Brillouin zone and near-Fermi bands with appreciable spin splitting.
+                          </span>
+                        </span>
+                      </span>
+                    </label>
+                    <div class="input-with-unit">
+                      <input id="min-fdelta-pct" name="min_fdelta_pct" type="number" step="0.1" min="0" value="{{ query.min_fdelta_pct if query.min_fdelta_pct else '' }}" />
+                      <span>%</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label for="min-bandgap" class="field-label">
+                      Band gap ≥
+                      <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+                        i
+                        <span class="info-bubble" role="tooltip">
+                          <span class="info-bubble-paragraph">
+                            Lower bound on the calculated band gap. Use together with the upper bound to isolate semiconducting windows.
+                          </span>
+                        </span>
+                      </span>
+                    </label>
+                    <div class="input-with-unit">
+                      <input id="min-bandgap" name="min_bandgap" type="number" step="0.001" min="0" value="{{ query.min_bandgap if query.min_bandgap else '' }}" />
+                      <span>eV</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label for="max-bandgap" class="field-label">Band gap ≤</label>
+                    <div class="input-with-unit">
+                      <input id="max-bandgap" name="max_bandgap" type="number" step="0.001" min="0" value="{{ query.max_bandgap if query.max_bandgap else '' }}" />
+                      <span>eV</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label for="min-abundance" class="field-label">
+                      Min abundance ≥
+                      <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+                        i
+                        <span class="info-bubble" role="tooltip">
+                          <span class="info-bubble-paragraph">
+                            Lower bound on the least abundant constituent element, reported in parts per million in the Earth’s crust.
+                          </span>
+                        </span>
+                      </span>
+                    </label>
+                    <div class="input-with-unit">
+                      <input id="min-abundance" name="min_abundance_ppm" type="number" step="0.001" min="0" value="{{ query.min_abundance_ppm if query.min_abundance_ppm else '' }}" />
+                      <span>ppm</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="form-section">
+                <label for="sort" class="field-label">Sort results</label>
+                <select id="sort" name="sort">
+                  {% for option in search_options.sorts %}
+                  <option value="{{ option.value }}" {% if (query.sort if query.sort else 'screening_rank') == option.value %}selected{% endif %}>{{ option.label }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div class="button-row">
+                <button type="submit">Run search</button>
+                <a class="secondary-button" href="{{ page.relbaseurl }}/search">Clear filters</a>
+              </div>
             </form>
           </section>
         </aside>

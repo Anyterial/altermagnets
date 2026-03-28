@@ -36,6 +36,21 @@
     });
   });
 
+  const buildRowUrl = (rowUrl) => {
+    if (!rowUrl) {
+      return "";
+    }
+
+    const currentParams = new URLSearchParams(window.location.search);
+    currentParams.delete("id");
+    if (!currentParams.toString()) {
+      return rowUrl;
+    }
+
+    const separator = rowUrl.includes("?") ? "&" : "?";
+    return `${rowUrl}${separator}${currentParams.toString()}`;
+  };
+
   if (resultsTable) {
     resultsTable.addEventListener("click", (event) => {
       const row = event.target.closest("tr[data-row-url]");
@@ -44,7 +59,7 @@
       }
       const rowUrl = row.getAttribute("data-row-url");
       if (rowUrl) {
-        window.location.assign(rowUrl);
+        window.location.assign(buildRowUrl(rowUrl));
       }
     });
 
@@ -59,7 +74,7 @@
       event.preventDefault();
       const rowUrl = row.getAttribute("data-row-url");
       if (rowUrl) {
-        window.location.assign(rowUrl);
+        window.location.assign(buildRowUrl(rowUrl));
       }
     });
   }

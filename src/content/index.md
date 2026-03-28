@@ -1,9 +1,9 @@
 ---
-title: AMDB - Welcome
+title: Home
 template: welcome
 base_template: base_default
 ---
 
-Welcome to the Altermagnets Database
+Browse a high-throughput screening of altermagnetic candidate materials derived from MAGNDATA structures and quantified with spin-splitting metrics around the Fermi level.
 
-Use the search panel on the left to find materials by formula fragments, element symbols, magnetic order, or space group.
+Use the persistent search panel to combine chemistry, symmetry provenance, and spin-splitting thresholds while you move between the overview, results, and material-detail pages.

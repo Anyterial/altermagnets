@@ -11,6 +11,7 @@ license = "AGPL-3.0+"
 requires-python = ">=3.11"
 authors = [{ name = "Rickard Armiento", email = "gitcommits@armiento.net" }]
 dependencies = [
+  "duckdb>=1.1",
   "httk-web @ git+https://github.com/httk/httk-web",
 ]
 classifiers = [
@@ -64,5 +65,5 @@ explicit_package_bases = true
 warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
-module = ["yaml", "markdown", "docutils", "docutils.*", "httk.web", "httk.web.*"]
+ module = ["yaml", "markdown", "docutils", "docutils.*", "duckdb", "httk.web", "httk.web.*"]
 ignore_missing_imports = true

@@ -15,8 +15,7 @@
   <body>
     <div class="app-shell">
       <header class="topbar panel">
-        <div>
-          <p class="kicker">Anyterial Screening Portal</p>
+        <div class="topbar-main">
           <div class="brand-row">
             <img
               src="https://www.anyterial.se/img/anyterial_logo_color.svg"
@@ -25,21 +24,29 @@
             />
             <h1>Anyterial altermagnets</h1>
           </div>
+          <nav class="top-nav" aria-label="Primary">
+            <a href="{{ page.relbaseurl }}/index" class="top-nav-link">Welcome</a>
+            <a href="{{ page.relbaseurl }}/search" class="top-nav-link">Search</a>
+            <a href="{{ page.relbaseurl }}/about" class="top-nav-link">About</a>
+          </nav>
         </div>
-        <div class="theme-switch" role="group" aria-label="Theme">
-          <button class="theme-btn" type="button" data-theme-value="dark" title="Dark">Dark</button>
-          <button class="theme-btn" type="button" data-theme-value="twilight" title="Twilight">Twilight</button>
-          <button class="theme-btn" type="button" data-theme-value="light" title="Light">Light</button>
+        <div class="topbar-actions">
+          <div class="theme-switch" role="group" aria-label="Theme">
+            <button type="button" class="theme-btn" data-theme-option="dark" aria-label="Use dark theme" title="Dark mode">
+              <img class="theme-icon" src="{{ page.relbaseurl }}/icons/Hicon_Pack_1/moon.svg" alt="" aria-hidden="true" />
+            </button>
+            <button type="button" class="theme-btn" data-theme-option="twilight" aria-label="Use twilight theme" title="Twilight mode">
+              <img class="theme-icon" src="{{ page.relbaseurl }}/icons/Hicon_Pack_1/sun-half.svg" alt="" aria-hidden="true" />
+            </button>
+            <button type="button" class="theme-btn" data-theme-option="light" aria-label="Use light theme" title="Light mode">
+              <img class="theme-icon" src="{{ page.relbaseurl }}/icons/Hicon_Pack_1/sun.svg" alt="" aria-hidden="true" />
+            </button>
+          </div>
         </div>
       </header>
 
       <div class="layout-grid">
         <aside class="sidebar panel">
-          <nav class="nav-links" aria-label="Primary">
-            <a href="{{ page.relbaseurl }}/index" class="nav-link">Welcome</a>
-            <a href="{{ page.relbaseurl }}/search" class="nav-link">Search</a>
-          </nav>
-
           <section class="search-card">
             <h2>Search Materials</h2>
             <p>Filter by formula, element symbols, space group, or magnetic order.</p>
@@ -61,6 +68,21 @@
           {{ content }}
         </main>
       </div>
+
+      <footer class="app-footer panel">
+        <p>
+          This website does not use cookies. The data is provided under
+          <a href="https://creativecommons.org/licenses/by/4.0/">CC-BY 4.0</a>.
+          Icons provided by <a href="https://hicon.me/">hicon by cosimo scarpa</a>.
+        </p>
+        <a class="cc-badge-link" href="https://creativecommons.org/licenses/by/4.0/" aria-label="Creative Commons BY 4.0">
+          <img
+            class="cc-badge"
+            src="https://licensebuttons.net/l/by/4.0/88x31.png"
+            alt="Creative Commons Attribution 4.0 License"
+          />
+        </a>
+      </footer>
     </div>
 
     <script src="{{ page.relbaseurl }}/app.js"></script>

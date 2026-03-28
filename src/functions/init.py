@@ -8,6 +8,7 @@ from typing import Any
 import duckdb
 
 ELEMENT_PATTERN = re.compile(r"[A-Z][a-z]?")
+SCREENING_RESULTS_FILENAME = "high_throughput_screening_results_fixed.csv"
 
 CLASSIFICATION_LABELS = {
     "collinear": "Naturally collinear",
@@ -476,7 +477,7 @@ def _build_search_options() -> dict[str, Any]:
 
 def execute(global_data, **kwargs):
     data_dir = _resolve_data_dir()
-    screening_rows = _load_csv_rows(data_dir, "high_throughput_screening_results.csv", delimiter=";")
+    screening_rows = _load_csv_rows(data_dir, SCREENING_RESULTS_FILENAME, delimiter=";")
     collinear_rows = _load_csv_rows(data_dir, "altermagnets_collinear.csv")
     noncollinear_rows = _load_csv_rows(data_dir, "altermagnets_noncollinear.csv")
 

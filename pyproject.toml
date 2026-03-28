@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "example_website_httk"
+version = "0.1.0"
+description = "Example of how to use httk as a static site generator (that can be extended with a backend)."
+readme = "README.md"
+license = "AGPL-3.0+"
+requires-python = ">=3.11"
+authors = [{ name = "Rickard Armiento", email = "gitcommits@armiento.net" }]
+dependencies = [
+  "httk-web @ git+https://github.com/httk/httk-web",
+]
+classifiers = [
+  "Operating System :: OS Independent",
+  "Programming Language :: Python",
+]
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "httpx>=0.27",
+  "black",
+  "ruff",
+  "isort",
+  "pyright",
+  "mypy"
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.isort]
+profile = "black"
+
+[tool.ruff]
+target-version = "py311"
+src = ["src"]
+
+[tool.black]
+target-version = ["py311"]
+line-length = 120
+skip-string-normalization = true
+
+[tool.pyright]
+pythonVersion = "3.11"
+include = ["src", "serve_dynamic.py", "publish_static.py"]
+extraPaths = ["src"]  
+reportMissingImports = true
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src", "serve_dynamic.py", "publish_static.py"]
+mypy_path = ["src"]
+namespace_packages = true
+explicit_package_bases = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["yaml", "markdown", "docutils", "docutils.*", "httk.web", "httk.web.*"]
+ignore_missing_imports = true

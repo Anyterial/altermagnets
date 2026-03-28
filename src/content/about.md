@@ -1,21 +1,13 @@
 ---
-Title: AMDB - About
-Description: About the Altermagnets Database
+title: About this website and database
+base_template: base_default
 ---
 
-# About the Altermagnets Database
+The *Altermagnets Database* is an online interactive web application to navigate and search a dataset of materials computationally predicted to be altermangets, created by a team spanning [Lund University](https://www.lu.se/) (LU), [Luleå University of Technology](https://www.ltu.se/) (LTU), and [Linköping University](https://liu.se/) (LiU). The dataset was generated using the high-throughput toolkit, [*httk*](https://httk.org/).
 
-The *Altermagnets Database* is an online interactive web user interface to navigate and search a dataset of altermangetic materials created by a diverse team across Lund University, Luleå University of Technology, and Linköping University (more details below). The dataset was generated using the high-throughput toolkit, [*httk*](https://httk.org/).
-
-The interactive website is implemented using the [*httk-web* web user interface engine](https://docs2.httk.org/httk-web) and is maintained under the [Anyterial](https://www.anyterial.se/) umbrella of databases maintained by the [Unit of Materials Design and Informatics](https://liu.se/en/research/materials-design-and-informatics) at [Theoretical Physics](https://liu.se/en/research/theoretical-physics) at [Linköping University](https://www.liu.se) (LiU) in Sweden.
+This website is implemented using the [*httk-web* user interface engine](https://docs2.httk.org/httk-web) and is part of the [Anyterial](https://www.anyterial.se/) collection of databases maintained by the [Unit of Materials Design and Informatics at Theoretical Physics, Linköping University (LiU) in Sweden](https://liu.se/en/research/materials-design-and-informatics).
 
 <style>
-  .section {
-    margin: 1.5rem 0;
-  }
-  h2 {
-    margin: 1.5rem 0;
-  }
   .team-row {
     display: flex;
     align-items: flex-start; /* Align items to the top */
@@ -43,7 +35,7 @@ The interactive website is implemented using the [*httk-web* web user interface 
 </style>
 
 <div class="section leadership">
-  <h2>Contributors</h2>
+  <h3>Authors of the Altermagnets Database</h3>
   <div class="team-row">
     <div class="team-member">
       <img src="img/people/ali_sufyan.jpg" alt="Ali Sufyan">
@@ -75,19 +67,19 @@ The interactive website is implemented using the [*httk-web* web user interface 
 </small>
 </div>
 
-## <a name="contact"></a> Contact
+### <a name="contact"></a> Contact
 
 To get into contact with the people maintaining the Aletermagnets Database, contact us at: rickard.armiento&#64;liu.se
 
 For help and discussions, please use [the Altermagnets Database discussion forum](https://github.com/orgs/anyterial/discussions/categories/amdb).
 
-## <a name="news"></a> News and announcements
+### <a name="news"></a> News and announcements
 
 The AMDB uses the [Anyterial announcement section](https://github.com/orgs/anyterial/discussions/categories/announcements) of our GitHub discussion forum to announce new features, availability of new data, and events we organize related to materials design and discovery (e.g., workshops). You can subscribe to these announcements via a third-party email list service at this [**subscription link**](https://pages.anyterial.se/subscribe).
 
 The announcements are also available via this [RSS link.](https://github.com/anyterial/discussions/discussions/categories/announcements.atom)
 
-## <a name="legal"></a> Legal and privacy information
+### <a name="legal"></a> Legal and privacy information
 
 **Database licensing**
 
@@ -108,7 +100,7 @@ For licensing information for these software packages, please refer to, e.g., th
 
 **Website visitor analytics.** We occasionally review aggregated anonymized usage statistics based on webserver log data.
 
-## Acknowledgements
+### Acknowledgements
 
 The main part of our computations has been performed at the Swedish National Infrastructure for Computing (SNIC) and National Academic Infrastructure for Super­computing in Sweden (NAISS).
 

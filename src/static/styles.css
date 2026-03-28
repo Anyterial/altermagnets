@@ -112,18 +112,19 @@ a {
 h1,
 h2,
 h3 {
-  margin: 0;
+  margin: 0.75ex 0 0.75ex 0;
   font-family: "Fraunces", Georgia, serif;
   line-height: 1.1;
 }
 
 h1 {
   font-size: clamp(28px, 4.5vw, 46px);
+  margin: 0 0 0 0;
 }
 
 h2 {
   font-size: clamp(24px, 3vw, 34px);
-  margin-bottom: 10px;
+  margin: 0 0 0.5ex 0;
 }
 
 h3 {

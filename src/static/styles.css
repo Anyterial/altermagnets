@@ -582,6 +582,18 @@ html[data-theme="dark"] .theme-icon {
   gap: 10px;
 }
 
+.path-chip {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
 .detail-sections {
   display: grid;
   gap: 14px;
@@ -634,6 +646,84 @@ html[data-theme="dark"] .theme-icon {
 
 .metrics-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.detail-figure-heading {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.figure-path-label {
+  display: inline-block;
+  margin: 0 8px 0 12px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.figure-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.figure-card {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--surface);
+  display: grid;
+  gap: 12px;
+}
+
+.figure-card--wide {
+  grid-column: 1 / -1;
+}
+
+.figure-caption {
+  display: grid;
+  gap: 6px;
+}
+
+.figure-caption p {
+  margin: 0;
+  color: var(--ink-soft);
+}
+
+.figure-visual,
+.figure-placeholder {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 18% 16%, rgba(var(--accent-rgb), 0.08), transparent 34%),
+    linear-gradient(180deg, var(--surface), var(--surface-muted));
+}
+
+.figure-visual {
+  overflow: hidden;
+  padding: 10px;
+}
+
+.figure-visual img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.figure-placeholder {
+  min-height: 240px;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+  color: var(--ink-soft);
+  border-style: dashed;
+}
+
+.figure-card.is-missing {
+  opacity: 0.9;
 }
 
 .linked-entry-list {
@@ -849,6 +939,7 @@ html[data-theme="dark"] .accordionPanel {
 
   .highlight-grid,
   .details-grid,
+  .figure-grid,
   .hero-metrics,
   .form-grid,
   .metrics-grid,

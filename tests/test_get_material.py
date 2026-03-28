@@ -1,0 +1,42 @@
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+MODULE_PATH = ROOT / "src" / "functions" / "get_material.py"
+sys.path.insert(0, str(MODULE_PATH.parent))
+SPEC = importlib.util.spec_from_file_location("get_material", MODULE_PATH)
+assert SPEC is not None and SPEC.loader is not None
+MODULE = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = MODULE
+SPEC.loader.exec_module(MODULE)
+
+
+def test_load_detail_assets_reads_sharded_svg_outputs(tmp_path: Path) -> None:
+    details_root = tmp_path / "details"
+    target_dir = details_root / "0" / "00" / "000" / "amdb-0001"
+    target_dir.mkdir(parents=True)
+    (target_dir / "amdb-0001.json").write_text(
+        json.dumps({"raw_path": "2/Runs/ht.task.tetralith--default.CrSb_SCF.cleanup.0.unclaimed.3.finished"})
+        + "\n",
+        encoding="utf-8",
+    )
+    (target_dir / "band.svg").write_text(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><text>band</text></svg>",
+        encoding="utf-8",
+    )
+    (target_dir / "structure.svg").write_text(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><text>structure</text></svg>",
+        encoding="utf-8",
+    )
+
+    assets = MODULE._load_detail_assets("amdb-0001", {"detail_assets_root": details_root})
+
+    assert assets["raw_path"] == "2/Runs/ht.task.tetralith--default.CrSb_SCF.cleanup.0.unclaimed.3.finished"
+    assert assets["available_count"] == 2
+    figures = {figure["key"]: figure for figure in assets["figures"]}
+    assert figures["band"]["available"] is True
+    assert figures["band"]["data_url"].startswith("data:image/svg+xml;base64,")
+    assert figures["structure"]["available"] is True
+    assert figures["bz"]["available"] is False

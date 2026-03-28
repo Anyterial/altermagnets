@@ -6,6 +6,7 @@ from httk.web import create_asgi_app
 
 ROOT = Path(__file__).resolve().parents[1]
 DATASET_PATH = ROOT / "data" / "tables" / "high_throughput_screening_results_fixed.csv"
+DETAIL_ASSET_PATH = ROOT / "data" / "details" / "0" / "00" / "000" / "amdb-0001" / "band.svg"
 
 
 def test_home_page_renders_without_cookies() -> None:
@@ -45,5 +46,9 @@ def test_material_detail_page_handles_local_dataset_or_missing_mount() -> None:
     if DATASET_PATH.exists():
         assert "MAGNDATA" in response.text
         assert "index=0.528" in response.text
+        if DETAIL_ASSET_PATH.exists():
+            assert "Calculated figures" in response.text
+            assert "Spin-split band structure" in response.text
+            assert "data:image/svg+xml;base64," in response.text
     else:
         assert "screening tables are not mounted" in response.text.lower()

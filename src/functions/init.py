@@ -28,6 +28,10 @@ def _default_data_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "data" / "tables"
 
 
+def _default_details_dir() -> Path:
+    return Path(__file__).resolve().parents[1] / "data" / "details"
+
+
 def _resolve_data_dir() -> Path:
     override = os.environ.get("ALTERMAGNETS_DATA_DIR", "").strip()
     if override:
@@ -576,6 +580,7 @@ def execute(global_data, **kwargs):
 
     global_data["materials_db"] = connection
     global_data["materials_db_lock"] = threading.Lock()
+    global_data["detail_assets_root"] = _default_details_dir()
     global_data["site_stats"] = _build_site_stats(
         materials,
         data_available=bool(materials),

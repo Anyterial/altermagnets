@@ -105,6 +105,38 @@
     </section>
 
     <section class="detail-subcard">
+      <div class="detail-figure-heading">
+        <h3>Calculated figures</h3>
+        <p class="section-note">
+          {{ result.detail_figure_count }} of {{ result.detail_figure_total }} detail figures available from the mounted calculation archive.
+          {% if result.detail_raw_path %}
+          <span class="figure-path-label">Raw run</span>
+          <code class="path-chip">{{ result.detail_raw_path }}</code>
+          {% endif %}
+        </p>
+      </div>
+      <div class="figure-grid">
+        {% for figure in result.detail_figures %}
+        <figure class="figure-card {{ figure.layout_class }}{% if not figure.available %} is-missing{% endif %}">
+          <figcaption class="figure-caption">
+            <h4>{{ figure.title }}</h4>
+            <p>{{ figure.summary }}</p>
+          </figcaption>
+          {% if figure.available %}
+          <div class="figure-visual">
+            <img src="{{ figure.data_url }}" alt="{{ figure.alt }}" loading="lazy" />
+          </div>
+          {% else %}
+          <div class="figure-placeholder">
+            <p>{{ figure.empty_message }}</p>
+          </div>
+          {% endif %}
+        </figure>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="detail-subcard">
       <h3>Spin-splitting metrics</h3>
       <dl class="metrics-grid">
         <div class="metric-panel">

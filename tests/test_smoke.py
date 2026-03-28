@@ -24,10 +24,13 @@ def test_search_page_handles_local_dataset_or_missing_mount() -> None:
 
     with TestClient(app) as client:
         response = client.get("/search", params={"q": "CrSb"})
+        trailing_zero_response = client.get("/search", params={"q": "0.800"})
 
     assert response.status_code == 200
     if DATASET_PATH.exists():
         assert "CrSb" in response.text
+        assert trailing_zero_response.status_code == 200
+        assert "0.800" in trailing_zero_response.text
     else:
         assert "screening tables are not mounted" in response.text.lower()
 
@@ -41,5 +44,6 @@ def test_material_detail_page_handles_local_dataset_or_missing_mount() -> None:
     assert response.status_code == 200
     if DATASET_PATH.exists():
         assert "MAGNDATA" in response.text
+        assert "index=0.528" in response.text
     else:
         assert "screening tables are not mounted" in response.text.lower()

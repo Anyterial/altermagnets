@@ -53,8 +53,8 @@ def _clean_display_text(value: str) -> str:
     text = re.sub(r"\\mathrm\{([^}]*)\}", r"\1", text)
     text = re.sub(r"\\overline\{([^}]*)\}", lambda match: f"-{match.group(1)}", text)
     text = re.sub(r"_\{([^}]*)\}", r"_\1", text)
-    text = re.sub(r"\^\{\\prime\}", "'", text)
-    text = text.replace("\\prime", "'")
+    text = re.sub(r"\^\{\\prime\}", "′", text)
+    text = text.replace("\\prime", "′")
     text = text.replace("$", "")
     text = text.replace("{", "")
     text = text.replace("}", "")
@@ -64,6 +64,7 @@ def _clean_display_text(value: str) -> str:
 
 
 def _split_magndata_ids(value: str) -> list[str]:
+    # MAGNDATA identifiers are opaque strings, not numeric values.
     return [part.strip() for part in (value or "").split(",") if part.strip()]
 
 
@@ -167,6 +168,20 @@ def _summarize_symmetry_rows(
                 "wave_classes_full": _dedupe([_clean_display_text(row.get("WaveClass", "")) for row in group_rows]),
                 "parent_spacegroups": _dedupe(
                     [_clean_display_text(row.get("ParentSpacegroup", "")) for row in group_rows]
+                ),
+                "bns_mcif_labels": _dedupe([_clean_display_text(row.get("BNSmcif", "")) for row in group_rows]),
+                "bns_labels": _dedupe([_clean_display_text(row.get("BNS", "")) for row in group_rows]),
+                "effective_bns_labels": _dedupe(
+                    [_clean_display_text(row.get("EffectiveBNS", "")) for row in group_rows]
+                ),
+                "g_laue_classes": _dedupe(
+                    [_clean_display_text(row.get("GMagneticSystemLaueClass", "")) for row in group_rows]
+                ),
+                "h_laue_classes": _dedupe(
+                    [_clean_display_text(row.get("HHalvingSubgroupLaueClass", "")) for row in group_rows]
+                ),
+                "connecting_elements": _dedupe(
+                    [_clean_display_text(row.get("AGenopConnectingElement", "")) for row in group_rows]
                 ),
                 "spin_angle_mismatch": max(
                     (
@@ -342,6 +357,12 @@ def _create_empty_db() -> Any:
             wave_classes_text TEXT,
             wave_classes_full_text TEXT,
             parent_spacegroups_text TEXT,
+            bns_mcif_text TEXT,
+            bns_text TEXT,
+            effective_bns_text TEXT,
+            g_laue_classes_text TEXT,
+            h_laue_classes_text TEXT,
+            connecting_elements_text TEXT,
             spin_angle_mismatch DOUBLE,
             spin_length_mismatch DOUBLE,
             icsd_ids_text TEXT,
@@ -523,7 +544,7 @@ def execute(global_data, **kwargs):
 
     if symmetry_entries:
         connection.executemany(
-            "INSERT INTO symmetry_entries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO symmetry_entries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (
                     entry["magndata_id"],
@@ -535,6 +556,12 @@ def execute(global_data, **kwargs):
                     _join_pipe(entry["wave_classes"]),
                     _join_pipe(entry["wave_classes_full"]),
                     _join_pipe(entry["parent_spacegroups"]),
+                    _join_pipe(entry["bns_mcif_labels"]),
+                    _join_pipe(entry["bns_labels"]),
+                    _join_pipe(entry["effective_bns_labels"]),
+                    _join_pipe(entry["g_laue_classes"]),
+                    _join_pipe(entry["h_laue_classes"]),
+                    _join_pipe(entry["connecting_elements"]),
                     entry["spin_angle_mismatch"],
                     entry["spin_length_mismatch"],
                     _join_pipe(entry["icsd_ids"]),

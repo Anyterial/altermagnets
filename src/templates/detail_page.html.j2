@@ -1,10 +1,16 @@
 <article class="page-block">
   {% if material %}
   {{ material }}
+  {% elif not site_stats.dataset_available %}
+  <div class="notice-block">
+    <p>{{ site_stats.notice }}</p>
+  </div>
+  {% elif query.id %}
+  <p class="empty">The requested material entry could not be found.</p>
   {% else %}
   <h2>{{ title }}</h2>
   <p class="empty">
-    No material selected. Open a record from <a href="{{ page.relbaseurl }}/search">search results</a>.
+    No material selected. Open an entry from <a href="{{ page.relbaseurl }}/search">the search results</a>.
   </p>
   {% endif %}
 </article>

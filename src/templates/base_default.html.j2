@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{{ title }} | Anyterial altermagnets</title>
+    <title>{{ title }} | Altermagnets Database (AMDB)</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -14,21 +14,16 @@
   </head>
   <body>
     <div class="app-shell">
-      <header class="topbar panel">
-        <div class="topbar-main">
-          <div class="brand-row">
+      <header class="topbar">
+        <div class="brand-row">
+	  <a href="https://www.anyterial.se">
             <img
               src="https://www.anyterial.se/img/anyterial_logo_color.svg"
               alt="Anyterial logo"
               class="brand-logo"
-            />
-            <h1>Anyterial altermagnets</h1>
-          </div>
-          <nav class="top-nav" aria-label="Primary">
-            <a href="{{ page.relbaseurl }}/index" class="top-nav-link">Welcome</a>
-            <a href="{{ page.relbaseurl }}/search" class="top-nav-link">Search</a>
-            <a href="{{ page.relbaseurl }}/about" class="top-nav-link">About</a>
-          </nav>
+              />
+	  </a>
+          <h1>Altermagnets Database (AMDB)</h1>
         </div>
         <div class="topbar-actions">
           <div class="theme-switch" role="group" aria-label="Theme">
@@ -44,6 +39,14 @@
           </div>
         </div>
       </header>
+
+      <nav class="page-tabs" aria-label="Primary">
+        <a href="{{ page.relbaseurl }}/index" class="page-tab">Home</a>
+        <a href="{{ page.relbaseurl }}/search" class="page-tab">Search</a>
+        <a href="{{ page.relbaseurl }}/highlights" class="page-tab">Highlights</a>
+        <a href="{{ page.relbaseurl }}/about" class="page-tab">About</a>
+        <a href="{{ page.relbaseurl }}/how-to-cite" class="page-tab">How to cite</a>
+      </nav>
 
       <div class="layout-grid">
         <aside class="sidebar panel">

@@ -63,4 +63,29 @@
       }
     });
   }
+
+  window.toggleBlock = (windowId, buttonId) => {
+    const panel = document.getElementById(windowId);
+    const button = document.getElementById(buttonId);
+    if (!panel || !button) {
+      return;
+    }
+
+    const marker = button.querySelector("b");
+    const isOpen = panel.style.display !== "none";
+    if (isOpen) {
+      panel.style.display = "none";
+      button.classList.remove("active");
+      if (marker) {
+        marker.textContent = "+";
+      }
+      return;
+    }
+
+    panel.style.display = "block";
+    button.classList.add("active");
+    if (marker) {
+      marker.textContent = "-";
+    }
+  };
 })();

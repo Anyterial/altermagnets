@@ -1,0 +1,26 @@
+{% if result and result|length > 0 %}
+<table class="results-table">
+  <thead>
+    <tr>
+      <th>Formula</th>
+      <th>Material</th>
+      <th>Space group</th>
+      <th>Order</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in result %}
+    <tr>
+      <td>{{ item.formula }}</td>
+      <td>{{ item.name }}</td>
+      <td>{{ item.spacegroup }}</td>
+      <td>{{ item.order }}</td>
+      <td><a href="{{ page.relbaseurl }}/material?id={{ item.id }}">View</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No matches found for this query.</p>
+{% endif %}

@@ -1,0 +1,9 @@
+<article class="page-block">
+  <h2>{{ title }}</h2>
+  <p class="search-note">Showing matches for: <strong>{{ query.q if query.q else "(all entries)" }}</strong></p>
+  {% if results %}
+  {{ results }}
+  {% else %}
+  <p class="empty">No results yet. Enter a query in the left sidebar.</p>
+  {% endif %}
+</article>

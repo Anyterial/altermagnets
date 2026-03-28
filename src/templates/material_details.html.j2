@@ -1,0 +1,28 @@
+{% if result %}
+<section class="material-card">
+  <header>
+    <h3>{{ result.name }}</h3>
+    <p class="meta-line">{{ result.formula }} | {{ result.spacegroup }} | {{ result.order }}</p>
+  </header>
+  <dl class="details-grid">
+    <div>
+      <dt>ID</dt>
+      <dd>{{ result.id }}</dd>
+    </div>
+    <div>
+      <dt>Elements</dt>
+      <dd>{{ result.elements | join(", ") }}</dd>
+    </div>
+    <div>
+      <dt>Néel temperature (mock)</dt>
+      <dd>{{ result.neel_temperature }}</dd>
+    </div>
+    <div>
+      <dt>Notes</dt>
+      <dd>{{ result.notes }}</dd>
+    </div>
+  </dl>
+</section>
+{% else %}
+<p class="empty">Material id not found.</p>
+{% endif %}

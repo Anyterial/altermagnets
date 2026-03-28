@@ -1,0 +1,10 @@
+<article class="page-block">
+  <h2>{{ title }}</h2>
+  {% if material %}
+  {{ material }}
+  {% else %}
+  <p class="empty">
+    No material selected. Open a record from <a href="{{ page.relbaseurl }}/search">search results</a>.
+  </p>
+  {% endif %}
+</article>

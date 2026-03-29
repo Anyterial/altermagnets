@@ -70,10 +70,24 @@ DETAIL_FIGURE_SPECS = (
 )
 AMDB_ID_PATTERN = re.compile(r"^amdb-(?:(?P<dataset>\d+)-)?(?P<number>\d+)$")
 SVG_DARK_LIGHT_COLOR = "#f2f5fb"
+SVG_DARK_TEXT_STYLE = (
+    '<style id="httk-dark-svg-text">'
+    'g[id^="text_"] path, g[id^="text_"] use, '
+    'g[id^="legend_"] path, g[id^="legend_"] use, '
+    "text, tspan {"
+    f"fill: {SVG_DARK_LIGHT_COLOR} !important; "
+    f"color: {SVG_DARK_LIGHT_COLOR} !important;"
+    "}"
+    "</style>"
+)
 SVG_DARK_BLACK_COLOR_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?i)(?<![0-9a-f])#000000(?![0-9a-f])"),
     re.compile(r"(?i)(?<![0-9a-f])#000(?![0-9a-f])"),
+    re.compile(r"(?i)(?<![0-9a-f])#000000ff(?![0-9a-f])"),
+    re.compile(r"(?i)(?<![0-9a-f])#000f(?![0-9a-f])"),
     re.compile(r"(?i)\brgb\(\s*0%\s*,\s*0%\s*,\s*0%\s*\)\b"),
+    re.compile(r"(?i)\brgb\(\s*0\s*,\s*0\s*,\s*0\s*\)\b"),
+    re.compile(r"(?i)\brgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*1(?:\.0+)?\s*\)\b"),
     re.compile(r"(?i)\bblack\b"),
     re.compile(r"(?i)(?<![0-9a-f])#262626(?![0-9a-f])"),
     re.compile(r"(?i)(?<![0-9a-f])#1f1f1f(?![0-9a-f])"),
@@ -220,6 +234,8 @@ def _svg_dark_variant(svg_text: str) -> str:
         transformed = pattern.sub(replacement, transformed)
     for pattern in SVG_DARK_BLACK_COLOR_PATTERNS:
         transformed = pattern.sub(SVG_DARK_LIGHT_COLOR, transformed)
+    if 'id="httk-dark-svg-text"' not in transformed:
+        transformed = re.sub(r"(<svg\b[^>]*>)", r"\1" + SVG_DARK_TEXT_STYLE, transformed, count=1)
     return transformed
 
 

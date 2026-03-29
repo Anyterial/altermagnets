@@ -108,3 +108,16 @@ def test_load_detail_assets_respects_configured_max_svg_bytes(tmp_path: Path) ->
     high_figures = {figure["key"]: figure for figure in high_cap_assets["figures"]}
     assert low_figures["band"]["available"] is False
     assert high_figures["band"]["available"] is True
+
+
+def test_svg_dark_variant_injects_text_style_for_default_black_glyphs() -> None:
+    svg = """<svg xmlns='http://www.w3.org/2000/svg'>
+  <g id='text_1'>
+    <defs><path id='glyph_a' d='M 0 0 L 1 1'/></defs>
+    <use xlink:href='#glyph_a'/>
+  </g>
+</svg>"""
+    dark_svg = MODULE._svg_dark_variant(svg)
+    assert 'id="httk-dark-svg-text"' in dark_svg
+    assert 'g[id^="text_"] path' in dark_svg
+    assert MODULE.SVG_DARK_LIGHT_COLOR in dark_svg

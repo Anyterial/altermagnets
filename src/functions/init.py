@@ -525,7 +525,7 @@ def _build_search_options() -> dict[str, Any]:
             {"value": "unclassified", "label": "Not classified yet"},
         ],
         "electronic_types": [
-            {"value": "", "label": "Any electronic type"},
+            {"value": "", "label": "Any type"},
             {"value": "metallic", "label": "Metallic"},
             {"value": "semiconducting", "label": "Semiconducting"},
             {"value": "unknown", "label": "Band gap unavailable"},

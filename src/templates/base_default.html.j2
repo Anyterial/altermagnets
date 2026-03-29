@@ -122,7 +122,7 @@
                       i
                       <span class="info-bubble" role="tooltip">
                         <span class="info-bubble-paragraph">
-                          Distinguishes naturally collinear MAGNDATA entries from entries that only appear after collinearizing a noncollinear parent, or from a combination of both.
+                          Distinguishes collinear MAGNDATA entries from entries that have been constructed from a noncollinear entry.
                         </span>
                       </span>
                     </span>
@@ -136,12 +136,12 @@
 
                 <div class="form-section">
                   <label for="electronic_type" class="field-label">
-                    Electronic type
+                    Conductivity
                     <span tabindex="0" class="info-dot" role="button" aria-label="More information">
                       i
                       <span class="info-bubble" role="tooltip">
                         <span class="info-bubble-paragraph">
-                          Derived from the reported band gap in the screening table. Zero gap is treated as metallic.
+                          Conducitivity classification based on the calculated DFT band gap using the PBE xc functional; where a zero gap is interpreted as metallic (despite the tendency of the PBE gap to be smaller than the experimental band gap).
                         </span>
                       </span>
                     </span>
@@ -162,7 +162,7 @@
                       i
                       <span class="info-bubble" role="tooltip">
                         <span class="info-bubble-paragraph">
-                          Symmetry-screening phase label from the MAGNDATA summary tables: AM for altermagnet and FiM for ferrimagnet.
+                          Some materials also have non-altermagnetic (AM) phases predicted; AM for altermagnet and FiM for ferrimagnet.
                         </span>
                       </span>
                     </span>
@@ -201,7 +201,7 @@
                     i
                     <span class="info-bubble" role="tooltip">
                       <span class="info-bubble-paragraph">
-                        Matches the crystallographic space-group label reported for the screened material row.
+                        Parent crystallographic space-group.
                       </span>
                     </span>
                   </span>
@@ -296,7 +296,7 @@
                   </div>
                   <div>
                     <label for="min-abundance" class="field-label">
-                      Min abundance ≥
+                      Min abund. ≥
                       <span tabindex="0" class="info-dot" role="button" aria-label="More information">
                         i
                         <span class="info-bubble" role="tooltip">

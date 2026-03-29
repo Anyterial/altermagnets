@@ -23,11 +23,31 @@
         <dd>{{ result.elements_display }}</dd>
       </div>
       <div>
-        <dt>Space group</dt>
+        <dt>
+          Space group
+          <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+            i
+            <span class="info-bubble" role="tooltip">
+              <span class="info-bubble-paragraph">
+                Parent crystallographic space-group.
+              </span>
+            </span>
+          </span>
+        </dt>
         <dd>{{ result.space_group_label }}</dd>
       </div>
       <div>
-        <dt>MAGNDATA IDs</dt>
+        <dt>
+          MAGNDATA IDs
+          <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+            i
+            <span class="info-bubble" role="tooltip">
+              <span class="info-bubble-paragraph">
+                A screened entry may correspond to one or more entries in the MAGNDATA database.
+              </span>
+            </span>
+          </span>
+        </dt>
         <dd>
           {% if result.magndata_links %}
           <ul class="comma-link-list">
@@ -89,7 +109,17 @@
     <h3>Properties</h3>
     <dl class="details-grid">
       <div>
-        <dt>Band gap</dt>
+        <dt>
+          Band gap
+          <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+            i
+            <span class="info-bubble" role="tooltip">
+              <span class="info-bubble-paragraph">
+                DFT Band gap calculated with the PBE xc functional (which is known to yield band gaps below the experimental band gap).
+              </span>
+            </span>
+          </span>
+        </dt>
         <dd>{{ result.bandgap_display }} eV</dd>
       </div>
       <div>
@@ -97,7 +127,17 @@
         <dd>{{ result.electronic_type_label }}</dd>
       </div>
       <div class="details-wide">
-        <dt>Min abundance</dt>
+        <dt>
+          Min abundance
+          <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+            i
+            <span class="info-bubble" role="tooltip">
+              <span class="info-bubble-paragraph">
+                Minimum crustal abundance among the constituent elements, reported in ppm as a simple scarcity proxy.
+              </span>
+            </span>
+          </span>
+        </dt>
         <dd>{{ result.abundance_display }}</dd>
       </div>
     </dl>
@@ -113,7 +153,7 @@
             i
             <span class="info-bubble" role="tooltip">
               <span class="info-bubble-paragraph">
-                Largest spin splitting identified within ±3 eV of the Fermi level in the high-throughput DFT workflow.
+                Largest spin splitting within ±3 eV of the Fermi level in the high-throughput calculation.
               </span>
             </span>
           </span>
@@ -127,7 +167,7 @@
             i
             <span class="info-bubble" role="tooltip">
               <span class="info-bubble-paragraph">
-                Brillouin-zone average of the largest spin splitting at each sampled k-point in the same energy window.
+                Brillouin-zone average of the largest spin splitting at each k-point within the same energy window.
               </span>
             </span>
           </span>
@@ -141,7 +181,7 @@
             i
             <span class="info-bubble" role="tooltip">
               <span class="info-bubble-paragraph">
-                Fraction of near-Fermi bands and sampled k-space showing appreciable spin splitting after the numerical noise cutoff.
+                Fraction of the sampled Brillouin zone and near-Fermi bands with appreciable spin splitting.
               </span>
             </span>
           </span>
@@ -201,9 +241,39 @@
         <thead>
           <tr>
             <th>MAGNDATA ID</th>
-            <th>Collinearity</th>
-            <th>Phase</th>
-            <th>Wave</th>
+            <th>
+              Collinearity
+              <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+                i
+                <span class="info-bubble" role="tooltip">
+                  <span class="info-bubble-paragraph">
+                    Whether the magnetic configuration was collinear in MAGNDATA or constructed from a noncollinear entry.
+                  </span>
+                </span>
+              </span>
+            </th>
+            <th>
+              Phase
+              <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+                i
+                <span class="info-bubble" role="tooltip">
+                  <span class="info-bubble-paragraph">
+                    Some materials also have non-altermagnetic (AM) phases predicted; AM for altermagnet and FiM for ferrimagnet.
+                  </span>
+                </span>
+              </span>
+            </th>
+            <th>
+              Wave
+              <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+                i
+                <span class="info-bubble" role="tooltip">
+                  <span class="info-bubble-paragraph">
+                    Symmetry wave-class shorthand derived from the parent and halving-subgroup Laue classes used in the altermagnetism analysis.
+                  </span>
+                </span>
+              </span>
+            </th>
             <th>
               SYMPREC
               <span tabindex="0" class="info-dot" role="button" aria-label="More information">

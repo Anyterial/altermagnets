@@ -6,28 +6,42 @@
 
   {% if site_stats.dataset_available %}
   <section class="hero-metrics">
-    <div class="metric-card">
+    <a class="metric-card metric-link" href="{{ page.relbaseurl }}/search">
       <span class="metric-value">{{ site_stats.total_materials }}</span>
       <span class="metric-label">screened entries</span>
-    </div>
-    <div class="metric-card">
+    </a>
+    <a class="metric-card metric-link" href="{{ page.relbaseurl }}/search?classification=collinear">
       <span class="metric-value">{{ site_stats.classification_counts.collinear }}</span>
       <span class="metric-label">naturally collinear</span>
-    </div>
-    <div class="metric-card">
+    </a>
+    <a class="metric-card metric-link" href="{{ page.relbaseurl }}/search?classification=noncollinear-derived">
       <span class="metric-value">{{ site_stats.classification_counts["noncollinear-derived"] }}</span>
       <span class="metric-label">noncollinear-derived</span>
-    </div>
-    <div class="metric-card">
+    </a>
+    <a class="metric-card metric-link" href="{{ page.relbaseurl }}/search?electronic_type=semiconducting">
       <span class="metric-value">{{ site_stats.electronic_counts.semiconducting }}</span>
       <span class="metric-label">semiconducting</span>
+    </a>
+  </section>
+
+  <section class="section-block">
+    <div class="section-heading">
+      <h3>Picked interesting altermagnets</h3>
+    </div>
+    <div class="highlight-grid">
+      {% for item in featured_materials.picked_interesting %}
+      <a class="highlight-card highlight-link" href="{{ page.relbaseurl }}/material?id={{ item.material_id }}">
+        <h3>{{ item.material }}</h3>
+        <p>{{ item.space_group }} | {{ item.classification_label }}</p>
+        <p><strong>Max SS:</strong> {{ item.max_ss_display }} eV</p>
+      </a>
+      {% endfor %}
     </div>
   </section>
 
   <section class="section-block">
     <div class="section-heading">
-      <h3>Top candidates by maximum spin splitting</h3>
-      <p>The ranking follows the DFT screening table and is dominated by large nonrelativistic splittings within the ±3 eV energy window.</p>
+      <h3>Altermagnets with maximum spin splitting</h3>
     </div>
     <div class="highlight-grid">
       {% for item in featured_materials.largest_splitting %}

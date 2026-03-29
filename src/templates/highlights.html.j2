@@ -5,6 +5,23 @@
   </header>
 
   {% if site_stats.dataset_available %}
+  {% if featured_materials.picked_interesting %}
+  <section class="section-block">
+    <div class="section-heading">
+      <h3>Picked interesting altermagnets</h3>
+    </div>
+    <div class="highlight-grid">
+      {% for item in featured_materials.picked_interesting %}
+      <a class="highlight-card highlight-link" href="{{ page.relbaseurl }}/material?id={{ item.material_id }}">
+        <h3>{{ item.material }}</h3>
+        <p>{{ item.space_group }} | {{ item.classification_label }}</p>
+        <p><strong>Max SS:</strong> {{ item.max_ss_display }} eV</p>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
   <section class="section-block">
     <div class="section-heading">
       <h3>Largest spin splitting</h3>

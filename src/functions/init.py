@@ -19,6 +19,12 @@ CLASSIFICATION_LABELS = {
     "unclassified": "Not classified yet",
 }
 
+PAPER_PICKED_MATERIALS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("UCr2Si2C", ("ucr2si2c",)),
+    ("NbMnP", ("nbmnp", "mnnbp")),
+    ("YRuO3", ("yruo3",)),
+)
+
 ELECTRONIC_TYPE_LABELS = {
     "metallic": "Metallic",
     "semiconducting": "Semiconducting",
@@ -398,6 +404,15 @@ def _material_card(entry: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_featured_materials(materials: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    by_name = {str(entry.get("material", "")).strip().lower(): entry for entry in materials}
+    picked_interesting: list[dict[str, Any]] = []
+    for _label, aliases in PAPER_PICKED_MATERIALS:
+        for alias in aliases:
+            entry = by_name.get(alias)
+            if entry is not None:
+                picked_interesting.append(_material_card(entry))
+                break
+
     by_max_ss = sorted(
         materials,
         key=lambda entry: (entry["max_ss"] is None, -(entry["max_ss"] or 0), entry["screening_rank"]),
@@ -412,6 +427,7 @@ def _build_featured_materials(materials: list[dict[str, Any]]) -> dict[str, list
     )
 
     return {
+        "picked_interesting": picked_interesting,
         "largest_splitting": [_material_card(entry) for entry in by_max_ss[:3]],
         "wide_gap": [_material_card(entry) for entry in by_bandgap[:3]],
         "earth_abundant": [_material_card(entry) for entry in by_abundance[:3]],

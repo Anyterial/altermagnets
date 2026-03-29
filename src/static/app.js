@@ -6,6 +6,7 @@
   const root = document.documentElement;
   const themeButtons = Array.from(document.querySelectorAll("[data-theme-option]"));
   const resultsTable = document.querySelector(".results-table tbody");
+  const themeAwareFigures = Array.from(document.querySelectorAll("img.theme-aware-figure"));
 
   const normalizeTheme = (value) => {
     if (typeof value !== "string") {
@@ -22,6 +23,14 @@
       const option = normalizeTheme(btn.getAttribute("data-theme-option"));
       btn.classList.toggle("is-active", option === active);
       btn.setAttribute("aria-pressed", option === active ? "true" : "false");
+    });
+    themeAwareFigures.forEach((image) => {
+      const lightSrc = image.getAttribute("data-src-light") || image.getAttribute("src") || "";
+      const darkSrc = image.getAttribute("data-src-dark") || lightSrc;
+      const selected = active === "dark" ? darkSrc : lightSrc;
+      if (selected && image.getAttribute("src") !== selected) {
+        image.setAttribute("src", selected);
+      }
     });
   };
 

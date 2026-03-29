@@ -5,8 +5,8 @@ from formula_katex import katex_formula_inline
 from input_sanitize import sanitize_search_inputs
 
 CLASSIFICATION_LABELS = {
-    "collinear": "Naturally collinear",
-    "noncollinear-derived": "Noncollinear-derived",
+    "collinear": "Collinear",
+    "noncollinear-derived": "Based on noncollinear",
     "mixed": "Both",
     "unclassified": "Not classified yet",
 }

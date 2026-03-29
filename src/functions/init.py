@@ -14,8 +14,8 @@ AMDB_ID_COLUMN = "AMDBId"
 AMDB_DATASET = "1"
 
 CLASSIFICATION_LABELS = {
-    "collinear": "Naturally collinear",
-    "noncollinear-derived": "Noncollinear-derived",
+    "collinear": "Collinear",
+    "noncollinear-derived": "Based on noncollinear",
     "mixed": "Both",
     "unclassified": "Not classified yet",
 }
@@ -519,8 +519,8 @@ def _build_search_options() -> dict[str, Any]:
     return {
         "classifications": [
             {"value": "", "label": "Any collinearity"},
-            {"value": "collinear", "label": "Naturally collinear"},
-            {"value": "noncollinear-derived", "label": "Noncollinear-derived"},
+            {"value": "collinear", "label": "Collinear"},
+            {"value": "noncollinear-derived", "label": "Based on noncollinear"},
             {"value": "mixed", "label": "Both"},
             {"value": "unclassified", "label": "Not classified yet"},
         ],

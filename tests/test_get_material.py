@@ -70,3 +70,18 @@ def test_load_detail_assets_handles_binary_svg_and_bad_metadata_safely(tmp_path:
     figures = {figure["key"]: figure for figure in assets["figures"]}
     assert figures["band"]["available"] is True
     assert figures["band"]["data_url"].startswith("data:image/svg+xml;base64,")
+
+
+def test_load_detail_assets_ignores_oversized_svg_files(tmp_path: Path) -> None:
+    details_root = tmp_path / "details"
+    target_dir = details_root / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001"
+    target_dir.mkdir(parents=True)
+
+    oversized_bytes = b"<svg>" + (b"a" * (MODULE.MAX_SVG_BYTES + 1)) + b"</svg>"
+    (target_dir / "band.svg").write_bytes(oversized_bytes)
+
+    assets = MODULE._load_detail_assets("amdb-1-0001", {"detail_assets_root": details_root})
+
+    figures = {figure["key"]: figure for figure in assets["figures"]}
+    assert figures["band"]["available"] is False
+    assert figures["band"]["data_url"] == ""

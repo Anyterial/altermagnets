@@ -1,3 +1,4 @@
+from math import isfinite
 from typing import Any
 
 CLASSIFICATION_LABELS = {
@@ -21,13 +22,32 @@ SORT_SQL = {
     "abundance_desc": "min_abund_ppm DESC NULLS LAST, max_ss DESC NULLS LAST, screening_rank ASC",
 }
 
+MAX_TEXT_TOKEN_LENGTH = 64
+MAX_TEXT_TOKENS = 12
+MAX_ELEMENT_TOKEN_LENGTH = 8
+MAX_ELEMENT_TOKENS = 16
+MAX_PREDICATES = 40
 
-def _canonical_element_tokens(value: str) -> list[str]:
+
+def _bounded_tokens(value: str, *, max_tokens: int, max_token_length: int) -> list[str]:
     tokens: list[str] = []
     for raw in value.replace(",", " ").split():
         cleaned = raw.strip()
         if not cleaned:
             continue
+        tokens.append(cleaned[:max_token_length])
+        if len(tokens) >= max_tokens:
+            break
+    return tokens
+
+
+def _canonical_element_tokens(value: str) -> list[str]:
+    tokens: list[str] = []
+    for cleaned in _bounded_tokens(
+        value,
+        max_tokens=MAX_ELEMENT_TOKENS,
+        max_token_length=MAX_ELEMENT_TOKEN_LENGTH,
+    ):
         tokens.append(cleaned[:1].upper() + cleaned[1:].lower())
     return tokens
 
@@ -37,9 +57,12 @@ def _parse_float(value: str) -> float | None:
     if not text:
         return None
     try:
-        return float(text)
+        parsed = float(text)
     except ValueError:
         return None
+    if not isfinite(parsed):
+        return None
+    return parsed
 
 
 def _split_pipe(value: str | None) -> list[str]:
@@ -74,6 +97,14 @@ def _fetch_all(connection: Any, sql: str, params: list[Any]) -> list[dict[str, A
     cursor = connection.execute(sql, params)
     columns = [column[0] for column in cursor.description]
     return [dict(zip(columns, row, strict=False)) for row in cursor.fetchall()]
+
+
+def _text_tokens(value: str) -> list[str]:
+    return _bounded_tokens(
+        value.lower(),
+        max_tokens=MAX_TEXT_TOKENS,
+        max_token_length=MAX_TEXT_TOKEN_LENGTH,
+    )
 
 
 def _decorate_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -203,33 +234,46 @@ def execute(
         """]
     params: list[Any] = []
 
-    for token in q.lower().replace(",", " ").split():
+    predicate_count = 0
+
+    for token in _text_tokens(q):
+        if predicate_count >= MAX_PREDICATES:
+            break
         sql.append("AND search_text LIKE ?")
         params.append(f"%{token}%")
+        predicate_count += 1
 
     for element in _canonical_element_tokens(elements):
+        if predicate_count >= MAX_PREDICATES:
+            break
         sql.append("AND list_contains(string_split(elements_text, '|'), ?)")
         params.append(element)
+        predicate_count += 1
 
     if classification:
         sql.append("AND classification = ?")
         params.append(classification)
+        predicate_count += 1
 
     if electronic_type:
         sql.append("AND electronic_type = ?")
         params.append(electronic_type)
+        predicate_count += 1
 
     if magnetic_phase:
         sql.append("AND list_contains(string_split(magnetic_phases_text, '|'), ?)")
         params.append(magnetic_phase)
+        predicate_count += 1
 
     if wave_class:
         sql.append("AND list_contains(string_split(wave_classes_text, '|'), ?)")
         params.append(wave_class)
+        predicate_count += 1
 
     if space_group.strip():
         sql.append("AND lower(space_group) LIKE ?")
         params.append(f"%{space_group.strip().lower()}%")
+        predicate_count += 1
 
     numeric_filters = [
         ("max_ss", min_max_ss, ">="),
@@ -240,11 +284,14 @@ def execute(
         ("min_abund_ppm", min_abundance_ppm, ">="),
     ]
     for column, raw_value, operator in numeric_filters:
+        if predicate_count >= MAX_PREDICATES:
+            break
         parsed = _parse_float(raw_value)
         if parsed is None:
             continue
         sql.append(f"AND {column} {operator} ?")
         params.append(parsed)
+        predicate_count += 1
 
     order_sql = SORT_SQL.get(sort, SORT_SQL["screening_rank"])
     sql.append(f"ORDER BY {order_sql}")

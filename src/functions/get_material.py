@@ -1,5 +1,6 @@
 import base64
 import json
+import math
 import os
 import re
 from pathlib import Path
@@ -11,7 +12,7 @@ from input_sanitize import sanitize_material_id
 CLASSIFICATION_LABELS = {
     "collinear": "Naturally collinear",
     "noncollinear-derived": "Noncollinear-derived",
-    "mixed": "Mixed provenance",
+    "mixed": "Both",
     "unclassified": "Not classified yet",
 }
 
@@ -148,6 +149,18 @@ def _katex_inline(text: str) -> str:
 def _katex_join_pipe(value: str | None) -> str:
     parts = [_katex_inline(part) for part in _split_pipe(value) if _katex_inline(part)]
     return ", ".join(parts) if parts else "n/a"
+
+
+def _format_symprec_katex(value: float | None) -> str:
+    if value is None or value <= 0:
+        return "n/a"
+    exponent = math.log10(value)
+    rounded_exponent = round(exponent)
+    if abs(exponent - rounded_exponent) < 1e-9:
+        exponent_text = str(int(rounded_exponent))
+    else:
+        exponent_text = f"{exponent:.3f}".rstrip("0").rstrip(".")
+    return f"$10^{{{exponent_text}}}$"
 
 
 def _fetch_one(connection: Any, sql: str, params: list[Any]) -> dict[str, Any] | None:
@@ -330,16 +343,14 @@ def _decorate_linked_entry(row: dict[str, Any]) -> dict[str, Any]:
         "magndata_url": _magndata_url(row["magndata_id"]),
         "formula": formula,
         "formula_label": katex_formula_inline(formula) or formula,
-        "symprec_display": _format_decimal(row.get("symprec"), digits=5),
+        "symprec_label": _format_symprec_katex(row.get("symprec")),
         "symprec_variants": row.get("symprec_variants") or 0,
         "phase_label": ", ".join(magnetic_phases) if magnetic_phases else "n/a",
         "wave_class_label": ", ".join(wave_classes) if wave_classes else "n/a",
-        "wave_class_full_label": ", ".join(_split_pipe(row.get("wave_classes_full_text"))) or "n/a",
         "parent_spacegroups": _split_pipe(row.get("parent_spacegroups_text")),
         "parent_spacegroup_label": _katex_join_pipe(row.get("parent_spacegroups_latex_text")),
         "bns_mcif_label": _katex_join_pipe(row.get("bns_mcif_latex_text")),
         "bns_label": _katex_join_pipe(row.get("bns_latex_text")),
-        "effective_bns_label": _katex_join_pipe(row.get("effective_bns_latex_text")),
         "g_laue_class_label": ", ".join(_split_pipe(row.get("g_laue_classes_text"))) or "n/a",
         "h_laue_class_label": ", ".join(_split_pipe(row.get("h_laue_classes_text"))) or "n/a",
         "connecting_element_label": _katex_join_pipe(row.get("connecting_elements_latex_text")),

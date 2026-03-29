@@ -554,6 +554,21 @@ html[data-theme="dark"] .theme-icon {
   border-radius: 14px;
 }
 
+.result-summary {
+  position: relative;
+  z-index: 1;
+}
+
+.search-table-wrap {
+  position: relative;
+  z-index: 4;
+}
+
+.search-table-wrap .info-dot,
+.search-table-wrap .info-bubble {
+  z-index: 40;
+}
+
 .results-table {
   width: 100%;
   border-collapse: collapse;

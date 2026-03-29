@@ -19,6 +19,6 @@ Please acknowledge the use of the Altermagnets Database when using this website 
   year = {2025},
   url = {https://doi.org/10.48550/arXiv.2509.14729},
   doi = {10.48550/arXiv.2509.14729},
-  author = {Sufyan, Ali and Marfoua, Brahim and Larsson, J. Andreas and can Loon, Erik and Armiento, Rickard}
+  author = {Sufyan, Ali and Marfoua, Brahim and Larsson, J. Andreas and van Loon, Erik and Armiento, Rickard}
 }</textarea>
 </div>

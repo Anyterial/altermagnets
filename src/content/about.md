@@ -40,27 +40,27 @@ This website is implemented using the [*httk-web* user interface engine](https:/
     <div class="team-member">
       <img src="img/people/ali_sufyan.jpg" alt="Ali Sufyan">
       <p><strong><a href="https://portal.research.lu.se/en/persons/ali-sufyan/">Ali Sufyan</a></strong></p>
-      <p>NanoLund and Division of Mathematical Physics, Department of Physics, Lund University.</p>
+      <small><small><p>NanoLund and Division of Mathematical Physics, Department of Physics, Lund University.</p></small></small>
     </div>
     <div class="team-member">
       <img src="img/people/brahim_marfoua.jpg" alt="Brahim Marfoua">
       <p><strong><a href="https://liu.se/medarbetare/brmar92">Brahim Marfoua</a></strong></p>
-      <p>Materials Design and Informatics, Theoretical Physics, Dept. of Physics, Chemistry and Biology, Linköping University.</p>
+      <small><small><p>Materials Design and Informatics, Theoretical Physics, Dept. of Physics, Chemistry and Biology, Linköping University.</p></small></small>
     </div>
     <div class="team-member">
       <img src="img/people/andreas_larsson.jpg" alt="Andreas Larsson">
       <p><strong><a href="https://www.ltu.se/personal/l/andreas-larsson">Andreas Larsson</a></strong></p>
-      <p>Applied Physics, Division of Materials Science, Department of Engineering Sciences and Mathematics, Luleå University of Technology.</p>
+      <small><small><p>Applied Physics, Division of Materials Science, Department of Engineering Sciences and Mathematics, Luleå University of Technology.</p></small></small>
     </div>
     <div class="team-member">
       <img src="img/people/erik_van_loon.jpg" alt="Erik van Loon">
       <p><strong><a href="https://www.matfys.lu.se/staff/faculty/erik-van-loon/">Erik van Loon</a></strong></p>
-      <p>NanoLund and Division of Mathematical Physics, Department of Physics, Lund University.</p>
-    </div>    
+      <small><small><p>NanoLund and Division of Mathematical Physics, Department of Physics, Lund University.</p></small></small>
+    </div>
     <div class="team-member">
       <img src="img/people/rickard_armiento.jpg" alt="Rickard Armiento">
       <p><strong><a href="https://liu.se/en/employee/ricar47">Rickard Armiento</a></strong></p>
-      <p>Materials Design and Informatics, Theoretical Physics, Dept. of Physics, Chemistry and Biology, Linköping University.</p>     
+      <small><small><p>Materials Design and Informatics, Theoretical Physics, Dept. of Physics, Chemistry and Biology, Linköping University.</p></small></small>
     </div>
   </div>
   <small>
@@ -100,17 +100,35 @@ For licensing information for these software packages, please refer to, e.g., th
 
 **Website visitor analytics.** We occasionally review aggregated anonymized usage statistics based on webserver log data.
 
+### Use of AI
+
+Software used in our projects, e.g., for executing computations, analyzing results, disseminating research data, and as part of computational pipelines generating data, are created by humans that use generative and other forms of AI as part of their tools. Generative AI based on large language models (LLMs) can greatly speed up many tasks in programming and data processing, but the final outcome is almost always a result of many iterations with substantial human input to instruct and control these tools.
+
 ### Acknowledgements
 
-The main part of our computations has been performed at the Swedish National Infrastructure for Computing (SNIC) and National Academic Infrastructure for Super­computing in Sweden (NAISS).
+**Research generating data for the *Altermagnets Database* has partially been financially supported by:**
 
-We are grateful for funding provided by:
+* The [Swedish e-science Research Centre (SeRC)](https://e-science.se/).
 
-* [Swedish e-science Research Centre (SeRC)](https://e-science.se/).
+* The [Wallenberg Initiative Materials Science for Sustainability (WISE)](https://wise-materials.org/) funded by the [Knut and Alice Wallenberg Foundation](https://kaw.wallenberg.org/).
 
-And computational resources:
+* The [Swedish Research Council (Vetenskapsrådet, VR)](https://www.vr.se/) grant no. [2022-03090](https://www.vr.se/swecris.html#/project/2022-03090_VR) and [2023-03894](https://www.vr.se/swecris.html#/project/2023-03894_VR).
 
-* The computations were enabled by resources provided by the National Academic Infrastructure for Supercomputing in Sweden (NAISS) and the Swedish National Infrastructure for Computing (SNIC) at NSC and PDC partially funded by the Swedish Research Council through grant agreements no. 2022-06725 and no. 2018-05973.
+* [Royal Physiographic Society in Lund](https://www.fysiografen.se/) and by [eSSENCE, a strategic research area for e-Science](https://www.essenceofescience.se/), grant number eSSENCE@LU 9:1.
+
+* [Kempe-stiftelserna](https://www.kempe.com/)
+
+* [Olle Engkvists stiftelse](https://oes.se/), project 207-0582.
+
+**The *httk* software used for high-throughput calculations and the framework for this web application has partially been financially supported by:**
+
+* The [Swedish e-science Research Centre (SeRC)](https://e-science.se/).
+
+* The [Swedish Research Council (Vetenskapsrådet, VR)](https://www.vr.se/) grant no. [2020-05402](https://www.vr.se/swecris.html#/project/2020-05402_VR) and [2011-042449](https://www.vr.se/swecris.html#/project/2011-04249_VR).
+
+**Computational resources:**
+
+* The computations were enabled by resources provided by the National Academic Infrastructure for Supercomputing in Sweden (NAISS), partially funded by the Swedish Research Council through grant agreement no. 2022-06725.
 
 <br/>
 <br/>

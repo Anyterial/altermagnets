@@ -12,7 +12,7 @@ requires-python = ">=3.11"
 authors = [{ name = "Rickard Armiento", email = "gitcommits@armiento.net" }]
 dependencies = [
   "duckdb>=1.1",
-  "httk-web @ git+https://github.com/httk/httk-web",
+  "httk-web @ git+https://github.com/httk/httk-web@develop",
 ]
 classifiers = [
   "Operating System :: OS Independent",

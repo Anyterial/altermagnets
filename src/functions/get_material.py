@@ -77,10 +77,13 @@ SVG_COLOR_REPLACEMENTS_DARK: tuple[tuple[str, str], ...] = (
 )
 SVG_BACKGROUND_REPLACEMENTS: tuple[tuple[str, str], ...] = (
     ('fill="#ffffff"', 'fill="none"'),
+    ('fill: #ffffff', "fill: none"),
     ("fill:#ffffff", "fill:none"),
     ('fill="#fff"', 'fill="none"'),
+    ('fill: #fff', "fill: none"),
     ("fill:#fff", "fill:none"),
     ('fill="white"', 'fill="none"'),
+    ("fill: white", "fill: none"),
     ("fill:white", "fill:none"),
 )
 

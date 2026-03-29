@@ -65,6 +65,52 @@ def test_formula_from_task_label_strips_variant_suffix() -> None:
     assert MODULE.formula_from_task_label("CrSb") == "CrSb"
 
 
+def test_save_svg_with_png_fallback_writes_png_for_large_svg(tmp_path: Path) -> None:
+    class FakeFigure:
+        def savefig(self, path, format=None, **kwargs):
+            target = Path(path)
+            if format == "svg":
+                target.write_bytes(b"<svg>" + (b"a" * 200) + b"</svg>")
+            elif format == "png":
+                target.write_bytes(b"\x89PNG\r\n\x1a\n")
+            else:
+                raise ValueError(f"Unexpected format: {format}")
+
+    svg_path = tmp_path / "band.svg"
+    wrote_png = MODULE.save_svg_with_png_fallback(
+        FakeFigure(),
+        svg_path,
+        svg_to_png_fallback_bytes=64,
+    )
+
+    assert wrote_png is True
+    assert svg_path.exists()
+    assert (tmp_path / "band.png").exists()
+
+
+def test_save_svg_with_png_fallback_skips_png_for_small_svg(tmp_path: Path) -> None:
+    class FakeFigure:
+        def savefig(self, path, format=None, **kwargs):
+            target = Path(path)
+            if format == "svg":
+                target.write_bytes(b"<svg/>")
+            elif format == "png":
+                target.write_bytes(b"\x89PNG\r\n\x1a\n")
+            else:
+                raise ValueError(f"Unexpected format: {format}")
+
+    svg_path = tmp_path / "bz.svg"
+    wrote_png = MODULE.save_svg_with_png_fallback(
+        FakeFigure(),
+        svg_path,
+        svg_to_png_fallback_bytes=64,
+    )
+
+    assert wrote_png is False
+    assert svg_path.exists()
+    assert not (tmp_path / "bz.png").exists()
+
+
 def test_preferred_task_favors_canonical_runs_path() -> None:
     canonical = MODULE.RawTask(
         task_root=Path("/tmp/raw/2/Runs/canonical"),

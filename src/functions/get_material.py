@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -84,6 +85,7 @@ SVG_DARK_WHITE_FILL_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?i)\bfill\s*:\s*(?:#ffffff|#fff|white)\b"), "fill: none"),
 )
 MAX_SVG_BYTES = 1_500_000
+DEFAULT_MAX_SVG_BYTES = MAX_SVG_BYTES * 100
 
 
 def _split_pipe(value: str | None) -> list[str]:
@@ -166,6 +168,19 @@ def _detail_assets_root(global_data: Any) -> Path:
     return Path(__file__).resolve().parents[1] / "data" / "details"
 
 
+def _max_svg_bytes(global_data: Any) -> int:
+    configured = global_data.get("max_svg_bytes")
+    if configured is None:
+        configured = os.environ.get("ALTERMAGNETS_MAX_SVG_BYTES", "").strip()
+    if configured in {"", None}:
+        return DEFAULT_MAX_SVG_BYTES
+    try:
+        parsed = int(configured)
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_SVG_BYTES
+    return parsed if parsed > 0 else DEFAULT_MAX_SVG_BYTES
+
+
 def _parsed_material_id(material_id: str) -> tuple[str, str] | None:
     match = AMDB_ID_PATTERN.fullmatch(material_id.strip())
     if match is None:
@@ -185,10 +200,10 @@ def _details_dir_for_material(details_root: Path, material_id: str) -> Path | No
     return details_root / f"amdb-{dataset}" / digits[:1] / digits[:2] / digits[:3] / material_id
 
 
-def _svg_data_url(path: Path) -> str | None:
+def _svg_data_url(path: Path, *, max_svg_bytes: int) -> str | None:
     if not path.exists() or not path.is_file():
         return None
-    if path.stat().st_size > MAX_SVG_BYTES:
+    if path.stat().st_size > max_svg_bytes:
         return None
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     return f"data:image/svg+xml;base64,{encoded}"
@@ -208,10 +223,10 @@ def _svg_dark_variant(svg_text: str) -> str:
     return transformed
 
 
-def _svg_data_urls(path: Path) -> tuple[str | None, str | None]:
+def _svg_data_urls(path: Path, *, max_svg_bytes: int) -> tuple[str | None, str | None]:
     if not path.exists() or not path.is_file():
         return (None, None)
-    if path.stat().st_size > MAX_SVG_BYTES:
+    if path.stat().st_size > max_svg_bytes:
         return (None, None)
     raw = path.read_text(encoding="utf-8", errors="replace")
     return (_svg_data_url_from_text(raw), _svg_data_url_from_text(_svg_dark_variant(raw)))
@@ -219,6 +234,7 @@ def _svg_data_urls(path: Path) -> tuple[str | None, str | None]:
 
 def _load_detail_assets(material_id: str, global_data: Any) -> dict[str, Any]:
     details_root = _detail_assets_root(global_data)
+    max_svg_bytes = _max_svg_bytes(global_data)
     figures: list[dict[str, Any]] = []
     raw_path = ""
     details_dir = _details_dir_for_material(details_root, material_id)
@@ -235,11 +251,11 @@ def _load_detail_assets(material_id: str, global_data: Any) -> dict[str, Any]:
 
     available_count = 0
     for spec in DETAIL_FIGURE_SPECS:
-        light_data_url, dark_data_url = _svg_data_urls(details_dir / spec["filename"])
+        light_data_url, dark_data_url = _svg_data_urls(details_dir / spec["filename"], max_svg_bytes=max_svg_bytes)
         if light_data_url is None:
             # Backward-compatible support for separately generated dark variants.
             dark_filename = f"{Path(spec['filename']).stem}_dark.svg"
-            dark_data_url = _svg_data_url(details_dir / dark_filename)
+            dark_data_url = _svg_data_url(details_dir / dark_filename, max_svg_bytes=max_svg_bytes)
         available = light_data_url is not None
         if available:
             available_count += 1

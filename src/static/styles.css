@@ -590,7 +590,7 @@ html[data-theme="dark"] .theme-icon {
 }
 
 .search-results-table .col-material {
-  min-width: 190px;
+  min-width: 80px;
 }
 
 .search-results-table .cell-title {
@@ -599,7 +599,7 @@ html[data-theme="dark"] .theme-icon {
 }
 
 .search-results-table .col-magndata {
-  min-width: 138px;
+  min-width: 80px;
 }
 
 .search-results-table .col-collinearity {
@@ -607,14 +607,14 @@ html[data-theme="dark"] .theme-icon {
 }
 
 .search-results-table .col-spacegroup {
-  min-width: 86px;
+  min-width: 80px;
 }
 
 .search-results-table .col-maxss,
 .search-results-table .col-avgss,
 .search-results-table .col-fdelta,
 .search-results-table .col-gap {
-  min-width: 72px;
+  min-width: 80px;
 }
 
 .search-results-table .col-abundance {

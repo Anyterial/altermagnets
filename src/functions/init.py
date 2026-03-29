@@ -539,7 +539,6 @@ def _build_search_options() -> dict[str, Any]:
             {"value": "", "label": "Any wave class"},
             {"value": "d", "label": "d"},
             {"value": "g", "label": "g"},
-            {"value": "d/g", "label": "d/g"},
             {"value": "s", "label": "s"},
         ],
         "sorts": [

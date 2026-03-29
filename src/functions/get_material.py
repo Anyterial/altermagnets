@@ -111,6 +111,20 @@ def _format_abundance(value: float | None) -> str:
     return f"{value:.3f} ppm"
 
 
+def _katex_inline(text: str) -> str:
+    value = (text or "").strip()
+    if not value:
+        return ""
+    if "$" in value:
+        return value
+    return f"${value}$"
+
+
+def _katex_join_pipe(value: str | None) -> str:
+    parts = [_katex_inline(part) for part in _split_pipe(value) if _katex_inline(part)]
+    return ", ".join(parts) if parts else "n/a"
+
+
 def _fetch_one(connection: Any, sql: str, params: list[Any]) -> dict[str, Any] | None:
     cursor = connection.execute(sql, params)
     row = cursor.fetchone()
@@ -260,13 +274,13 @@ def _decorate_linked_entry(row: dict[str, Any]) -> dict[str, Any]:
         "wave_class_label": ", ".join(wave_classes) if wave_classes else "n/a",
         "wave_class_full_label": ", ".join(_split_pipe(row.get("wave_classes_full_text"))) or "n/a",
         "parent_spacegroups": _split_pipe(row.get("parent_spacegroups_text")),
-        "parent_spacegroup_label": ", ".join(_split_pipe(row.get("parent_spacegroups_text"))) or "n/a",
-        "bns_mcif_label": ", ".join(_split_pipe(row.get("bns_mcif_text"))) or "n/a",
-        "bns_label": ", ".join(_split_pipe(row.get("bns_text"))) or "n/a",
-        "effective_bns_label": ", ".join(_split_pipe(row.get("effective_bns_text"))) or "n/a",
+        "parent_spacegroup_label": _katex_join_pipe(row.get("parent_spacegroups_latex_text")),
+        "bns_mcif_label": _katex_join_pipe(row.get("bns_mcif_latex_text")),
+        "bns_label": _katex_join_pipe(row.get("bns_latex_text")),
+        "effective_bns_label": _katex_join_pipe(row.get("effective_bns_latex_text")),
         "g_laue_class_label": ", ".join(_split_pipe(row.get("g_laue_classes_text"))) or "n/a",
         "h_laue_class_label": ", ".join(_split_pipe(row.get("h_laue_classes_text"))) or "n/a",
-        "connecting_element_label": ", ".join(_split_pipe(row.get("connecting_elements_text"))) or "n/a",
+        "connecting_element_label": _katex_join_pipe(row.get("connecting_elements_latex_text")),
         "spin_angle_mismatch_display": _format_decimal(row.get("spin_angle_mismatch"), digits=1, empty="n/a"),
         "spin_length_mismatch_display": _format_decimal(row.get("spin_length_mismatch"), digits=3, empty="n/a"),
         "icsd_ids": _split_pipe(row.get("icsd_ids_text")),
@@ -303,6 +317,7 @@ def execute(global_data, id: str = "", **kwargs):
                 magnetic_phases_text,
                 wave_classes_text,
                 parent_spacegroups_text,
+                parent_spacegroups_latex_text,
                 max_ss,
                 avg_ss,
                 fdelta_pct,
@@ -331,12 +346,17 @@ def execute(global_data, id: str = "", **kwargs):
                 se.wave_classes_text,
                 se.wave_classes_full_text,
                 se.parent_spacegroups_text,
+                se.parent_spacegroups_latex_text,
                 se.bns_mcif_text,
+                se.bns_mcif_latex_text,
                 se.bns_text,
+                se.bns_latex_text,
                 se.effective_bns_text,
+                se.effective_bns_latex_text,
                 se.g_laue_classes_text,
                 se.h_laue_classes_text,
                 se.connecting_elements_text,
+                se.connecting_elements_latex_text,
                 se.spin_angle_mismatch,
                 se.spin_length_mismatch,
                 se.icsd_ids_text,
@@ -362,6 +382,7 @@ def execute(global_data, id: str = "", **kwargs):
     magnetic_phases = _split_pipe(material.get("magnetic_phases_text"))
     wave_classes = _split_pipe(material.get("wave_classes_text"))
     parent_spacegroups = _split_pipe(material.get("parent_spacegroups_text"))
+    parent_spacegroups_latex = _split_pipe(material.get("parent_spacegroups_latex_text"))
     magndata_ids = _split_pipe(material.get("magndata_ids_text"))
     icsd_ids = _split_pipe(material.get("icsd_ids_text"))
     doi_values = _split_pipe(material.get("doi_text"))
@@ -381,7 +402,12 @@ def execute(global_data, id: str = "", **kwargs):
         "wave_classes": wave_classes,
         "wave_class_label": ", ".join(wave_classes) if wave_classes else "n/a",
         "parent_spacegroups": parent_spacegroups,
-        "parent_spacegroup_label": ", ".join(parent_spacegroups) if parent_spacegroups else "n/a",
+        "space_group_label": (
+            _katex_join_pipe(material.get("parent_spacegroups_latex_text"))
+            if parent_spacegroups_latex
+            else _katex_inline(material.get("space_group") or "") or "n/a"
+        ),
+        "parent_spacegroup_label": _katex_join_pipe(material.get("parent_spacegroups_latex_text")),
         "max_ss_display": _format_decimal(material.get("max_ss")),
         "avg_ss_display": _format_decimal(material.get("avg_ss")),
         "fdelta_display": _format_percent(material.get("fdelta_pct")),

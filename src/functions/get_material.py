@@ -4,6 +4,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from input_sanitize import sanitize_material_id
+
 CLASSIFICATION_LABELS = {
     "collinear": "Naturally collinear",
     "noncollinear-derived": "Noncollinear-derived",
@@ -301,7 +303,7 @@ def execute(global_data, id: str = "", **kwargs):
     if connection is None or lock is None:
         return None
 
-    material_id = (id or "").strip()
+    material_id = sanitize_material_id(id)
     if not material_id:
         return None
 

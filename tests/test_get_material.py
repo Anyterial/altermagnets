@@ -50,3 +50,23 @@ def test_load_detail_assets_returns_empty_for_missing_detail_directory(tmp_path:
     assert assets["raw_path"] == ""
     assert assets["available_count"] == 0
     assert all(figure["available"] is False for figure in assets["figures"])
+
+
+def test_load_detail_assets_handles_binary_svg_and_bad_metadata_safely(tmp_path: Path) -> None:
+    details_root = tmp_path / "details"
+    target_dir = details_root / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001"
+    target_dir.mkdir(parents=True)
+
+    # Metadata file contains invalid JSON and should be ignored safely.
+    (target_dir / "amdb-1-0001.json").write_text("{not valid json", encoding="utf-8")
+
+    # SVG file contains arbitrary binary-like payload with invalid UTF-8 bytes.
+    (target_dir / "band.svg").write_bytes(b"\x89\xff\x00<svg>\xfe\xfa</svg>")
+
+    assets = MODULE._load_detail_assets("amdb-1-0001", {"detail_assets_root": details_root})
+
+    assert assets["raw_path"] == ""
+    assert assets["available_count"] == 1
+    figures = {figure["key"]: figure for figure in assets["figures"]}
+    assert figures["band"]["available"] is True
+    assert figures["band"]["data_url"].startswith("data:image/svg+xml;base64,")

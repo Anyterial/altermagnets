@@ -584,12 +584,12 @@ html[data-theme="dark"] .theme-icon {
   font-size: 12px;
 }
 
-.search-results-table .col-material {
-  min-width: 190px;
+.search-results-table .cell-meta-id {
+  letter-spacing: 0.01em;
 }
 
-.search-results-table .col-amdb {
-  min-width: 126px;
+.search-results-table .col-material {
+  min-width: 220px;
 }
 
 .search-results-table .col-magndata {

@@ -158,6 +158,7 @@ def test_save_svg_with_png_fallback_writes_png_for_large_svg(tmp_path: Path) -> 
     assert wrote_png is True
     assert svg_path.exists()
     assert (tmp_path / "band.png").exists()
+    assert (tmp_path / "band_dark.png").exists()
 
 
 def test_save_svg_with_png_fallback_skips_png_for_small_svg(tmp_path: Path) -> None:
@@ -181,6 +182,7 @@ def test_save_svg_with_png_fallback_skips_png_for_small_svg(tmp_path: Path) -> N
     assert wrote_png is False
     assert svg_path.exists()
     assert not (tmp_path / "bz.png").exists()
+    assert not (tmp_path / "bz_dark.png").exists()
 
 
 def test_preferred_task_favors_canonical_runs_path() -> None:

@@ -297,8 +297,12 @@ def _load_detail_assets(material_id: str, global_data: Any) -> dict[str, Any]:
     for spec in DETAIL_FIGURE_SPECS:
         svg_path = details_dir / spec["filename"]
         png_path = svg_path.with_suffix(".png")
+        dark_png_path = png_path.with_name(f"{png_path.stem}_dark{png_path.suffix}")
         light_data_url = _png_data_url(png_path, max_bytes=max_svg_bytes)
-        dark_data_url = light_data_url
+        dark_data_url = _png_data_url(dark_png_path, max_bytes=max_svg_bytes)
+        if light_data_url is None or dark_data_url is None:
+            light_data_url = None
+            dark_data_url = None
 
         if light_data_url is None:
             light_data_url, dark_data_url = _svg_data_urls(svg_path, max_svg_bytes=max_svg_bytes)

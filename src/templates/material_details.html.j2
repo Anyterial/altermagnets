@@ -1,7 +1,13 @@
 {% if result %}
 <article class="material-detail">
   <header class="material-header">
-    <h2>{{ result.material_label if result.material_label else result.material }}</h2>
+    <div class="material-header-top">
+      <h2>{{ result.material_label if result.material_label else result.material }}</h2>
+      <div class="material-id-chip">
+        <span class="material-id-label">AMDB ID</span>
+        <strong class="material-id-value">{{ result.material_id }}</strong>
+      </div>
+    </div>
     <p class="meta-line">{{ result.space_group }} | {{ result.classification_label }} | {{ result.electronic_type_label }}</p>
     <div class="badge-row">
       <span class="badge">{{ result.magnetic_phase_label }}</span>

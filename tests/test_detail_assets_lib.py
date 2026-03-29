@@ -210,6 +210,45 @@ def test_preferred_task_favors_canonical_runs_path() -> None:
     assert MODULE.preferred_task([failed_job, canonical]) == canonical
 
 
+def test_should_warn_duplicate_tasks_only_when_top_rank_is_ambiguous() -> None:
+    canonical = MODULE.RawTask(
+        task_root=Path("/tmp/raw/3/band_step/Runs/canonical"),
+        deepest_run_dir=Path("/tmp/raw/3/band_step/Runs/canonical/ht.run.1"),
+        raw_relpath="3/band_step/Runs/ht.task.tetralith--default.Cu2O3Cl-2_SCF_BAND.cleanup.0.unclaimed.3.finished",
+        task_label="Cu2O3Cl-2",
+        kind="SCF_BAND",
+        batch_number=3,
+        latest_run_token="ht.run.2025-01-01_00.00.00",
+        formula="Cu2O3Cl",
+        space_group="P2_1/c",
+    )
+    lower_priority = MODULE.RawTask(
+        task_root=Path("/tmp/raw/3/band_step/check/Runs/check"),
+        deepest_run_dir=Path("/tmp/raw/3/band_step/check/Runs/check/ht.run.1"),
+        raw_relpath="3/band_step/check/Runs/ht.task.tetralith--default.Cu2O3Cl-2_SCF_BAND.cleanup.0.unclaimed.3.finished",
+        task_label="Cu2O3Cl-2",
+        kind="SCF_BAND",
+        batch_number=3,
+        latest_run_token="ht.run.2025-01-01_00.00.00",
+        formula="Cu2O3Cl",
+        space_group="P2_1/c",
+    )
+    another_top_rank = MODULE.RawTask(
+        task_root=Path("/tmp/raw/4/band_step/Runs/alt"),
+        deepest_run_dir=Path("/tmp/raw/4/band_step/Runs/alt/ht.run.1"),
+        raw_relpath="4/band_step/Runs/ht.task.tetralith--default.Cu2O3Cl-2_SCF_BAND.cleanup.0.unclaimed.3.finished",
+        task_label="Cu2O3Cl-2",
+        kind="SCF_BAND",
+        batch_number=4,
+        latest_run_token="ht.run.2025-01-01_00.00.00",
+        formula="Cu2O3Cl",
+        space_group="P2_1/c",
+    )
+
+    assert MODULE.should_warn_duplicate_tasks([canonical, lower_priority]) is False
+    assert MODULE.should_warn_duplicate_tasks([canonical, another_top_rank]) is True
+
+
 def test_load_screening_entries_prefers_explicit_amdb_id_column(tmp_path: Path) -> None:
     tables_dir = tmp_path / "tables"
     tables_dir.mkdir()

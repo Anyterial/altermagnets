@@ -6,6 +6,7 @@
   const root = document.documentElement;
   const themeButtons = Array.from(document.querySelectorAll("[data-theme-option]"));
   const resultsTable = document.querySelector(".results-table tbody");
+  const sidebar = document.querySelector(".sidebar");
   const themeAwareFigures = Array.from(document.querySelectorAll("img.theme-aware-figure"));
 
   const normalizeTheme = (value) => {
@@ -87,6 +88,80 @@
       }
     });
   }
+
+  const initBidirectionalSidebar = () => {
+    if (!sidebar) {
+      return;
+    }
+
+    const topGap = 20;
+    const bottomGap = 20;
+    const mobileQuery = window.matchMedia("(max-width: 980px)");
+    let active = false;
+    let minOffset = topGap;
+    let currentOffset = topGap;
+    let lastScrollY = window.scrollY || window.pageYOffset || 0;
+
+    const applyOffset = () => {
+      sidebar.style.setProperty("--sidebar-sticky-offset", `${currentOffset}px`);
+    };
+
+    const recalc = () => {
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+      const sidebarHeight = sidebar.offsetHeight;
+      const fitsViewport = sidebarHeight + topGap + bottomGap <= viewportHeight;
+
+      if (mobileQuery.matches || fitsViewport || viewportHeight <= 0) {
+        active = false;
+        minOffset = topGap;
+        currentOffset = topGap;
+        applyOffset();
+        lastScrollY = window.scrollY || window.pageYOffset || 0;
+        return;
+      }
+
+      active = true;
+      minOffset = viewportHeight - sidebarHeight - bottomGap;
+      currentOffset = Math.min(topGap, Math.max(minOffset, currentOffset));
+      applyOffset();
+      lastScrollY = window.scrollY || window.pageYOffset || 0;
+    };
+
+    const onScroll = () => {
+      if (!active) {
+        lastScrollY = window.scrollY || window.pageYOffset || 0;
+        return;
+      }
+
+      const nextScrollY = window.scrollY || window.pageYOffset || 0;
+      const delta = nextScrollY - lastScrollY;
+      lastScrollY = nextScrollY;
+      if (delta === 0) {
+        return;
+      }
+
+      const nextOffset = Math.min(topGap, Math.max(minOffset, currentOffset - delta));
+      if (nextOffset === currentOffset) {
+        return;
+      }
+      currentOffset = nextOffset;
+      applyOffset();
+    };
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", recalc, { passive: true });
+    if (typeof mobileQuery.addEventListener === "function") {
+      mobileQuery.addEventListener("change", recalc);
+    }
+    window.addEventListener("load", recalc);
+    if (document.fonts && typeof document.fonts.addEventListener === "function") {
+      document.fonts.addEventListener("loadingdone", recalc);
+    }
+
+    recalc();
+  };
+
+  initBidirectionalSidebar();
 
   if (typeof window.renderMathInElement === "function") {
     window.renderMathInElement(document.body, {

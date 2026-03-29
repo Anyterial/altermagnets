@@ -73,10 +73,14 @@ SVG_DARK_LIGHT_COLOR = "#f2f5fb"
 SVG_DARK_TEXT_STYLE = (
     '<style id="httk-dark-svg-text">'
     'g[id^="text_"] path, g[id^="text_"] use, '
-    'g[id^="legend_"] path, g[id^="legend_"] use, '
     "text, tspan {"
     f"fill: {SVG_DARK_LIGHT_COLOR} !important; "
     f"color: {SVG_DARK_LIGHT_COLOR} !important;"
+    "} "
+    'g[id^="legend_"] g[id^="patch_"] path {'
+    "fill: rgba(28, 33, 40, 0.88) !important; "
+    "stroke: #7e8793 !important; "
+    "opacity: 1 !important;"
     "}"
     "</style>"
 )

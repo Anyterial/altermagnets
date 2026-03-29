@@ -77,11 +77,34 @@ def test_load_detail_assets_ignores_oversized_svg_files(tmp_path: Path) -> None:
     target_dir = details_root / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001"
     target_dir.mkdir(parents=True)
 
-    oversized_bytes = b"<svg>" + (b"a" * (MODULE.MAX_SVG_BYTES + 1)) + b"</svg>"
+    oversized_bytes = b"<svg>" + (b"a" * 120) + b"</svg>"
     (target_dir / "band.svg").write_bytes(oversized_bytes)
 
-    assets = MODULE._load_detail_assets("amdb-1-0001", {"detail_assets_root": details_root})
+    assets = MODULE._load_detail_assets("amdb-1-0001", {"detail_assets_root": details_root, "max_svg_bytes": 64})
 
     figures = {figure["key"]: figure for figure in assets["figures"]}
     assert figures["band"]["available"] is False
     assert figures["band"]["data_url"] == ""
+
+
+def test_load_detail_assets_respects_configured_max_svg_bytes(tmp_path: Path) -> None:
+    details_root = tmp_path / "details"
+    target_dir = details_root / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001"
+    target_dir.mkdir(parents=True)
+
+    svg_bytes = b"<svg>" + (b"a" * 120) + b"</svg>"
+    (target_dir / "band.svg").write_bytes(svg_bytes)
+
+    low_cap_assets = MODULE._load_detail_assets(
+        "amdb-1-0001",
+        {"detail_assets_root": details_root, "max_svg_bytes": 64},
+    )
+    high_cap_assets = MODULE._load_detail_assets(
+        "amdb-1-0001",
+        {"detail_assets_root": details_root, "max_svg_bytes": 4096},
+    )
+
+    low_figures = {figure["key"]: figure for figure in low_cap_assets["figures"]}
+    high_figures = {figure["key"]: figure for figure in high_cap_assets["figures"]}
+    assert low_figures["band"]["available"] is False
+    assert high_figures["band"]["available"] is True

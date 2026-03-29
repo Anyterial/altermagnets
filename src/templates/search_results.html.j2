@@ -21,23 +21,24 @@
       <tr>
         <th class="col-material">
           Material
+        </th>
+        <th class="col-magndata">MAGNDATA IDs
           <span tabindex="0" class="info-dot" role="button" aria-label="More information">
             i
             <span class="info-bubble" role="tooltip">
               <span class="info-bubble-paragraph">
-                One screened material entry per row. The detail page expands the linked MAGNDATA records and symmetry metadata.
+                A screened entry may correspond to one or more entries in the MAGNDATA database.
               </span>
             </span>
           </span>
         </th>
-        <th class="col-magndata">MAGNDATA</th>
         <th class="col-collinearity">
           Collinearity
           <span tabindex="0" class="info-dot" role="button" aria-label="More information">
             i
             <span class="info-bubble" role="tooltip">
               <span class="info-bubble-paragraph">
-                Whether the linked symmetry evidence came from naturally collinear entries, from collinearized noncollinear entries, or both.
+                Whether the magnetic configuration was collinear in MAGNDATA or constructed from a noncollinear entry.
               </span>
             </span>
           </span>
@@ -54,9 +55,36 @@
             </span>
           </span>
         </th>
-        <th class="col-avgss">Avg SS</th>
-        <th class="col-fdelta">FΔ</th>
-        <th class="col-gap">Gap</th>
+        <th class="col-avgss">Avg SS
+          <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+            i
+            <span class="info-bubble" role="tooltip">
+              <span class="info-bubble-paragraph">
+                Brillouin-zone average of the largest spin splitting at each k-point within the same energy window.
+              </span>
+            </span>
+          </span>
+        </th>
+        <th class="col-fdelta">FΔ
+          <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+            i
+            <span class="info-bubble" role="tooltip">
+              <span class="info-bubble-paragraph">
+              Fraction of the sampled Brillouin zone and near-Fermi bands with appreciable spin splitting.
+              </span>
+            </span>
+          </span>
+        </th>
+        <th class="col-gap">Band Gap
+          <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+            i
+            <span class="info-bubble" role="tooltip">
+              <span class="info-bubble-paragraph">
+              DFT Band gap calculated with the PBE xc functional (which is known to yield band gaps below the experimental band gap).
+              </span>
+            </span>
+          </span>
+        </th>
         <th class="col-abundance">
           Min abundance
           <span tabindex="0" class="info-dot" role="button" aria-label="More information">

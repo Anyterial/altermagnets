@@ -79,6 +79,18 @@
     });
   }
 
+  if (typeof window.renderMathInElement === "function") {
+    window.renderMathInElement(document.body, {
+      delimiters: [
+        { left: "$$", right: "$$", display: true },
+        { left: "$", right: "$", display: false },
+        { left: "\\(", right: "\\)", display: false },
+        { left: "\\[", right: "\\]", display: true },
+      ],
+      throwOnError: false,
+    });
+  }
+
   window.toggleBlock = (windowId, buttonId) => {
     const panel = document.getElementById(windowId);
     const button = document.getElementById(buttonId);

@@ -77,7 +77,8 @@ SVG_DARK_TEXT_STYLE = (
     f"fill: {SVG_DARK_LIGHT_COLOR} !important; "
     f"color: {SVG_DARK_LIGHT_COLOR} !important;"
     "} "
-    'g[id^="legend_"] g[id^="patch_"] path {'
+    'g[id^="legend_"] g[id^="patch_"] path[style*="opacity: 0.8"], '
+    'g[id^="legend_"] g[id^="patch_"] path[style*="opacity:0.8"] {'
     "fill: rgba(28, 33, 40, 0.88) !important; "
     "stroke: #7e8793 !important; "
     "opacity: 1 !important;"

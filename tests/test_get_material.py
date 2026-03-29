@@ -120,5 +120,18 @@ def test_svg_dark_variant_injects_text_style_for_default_black_glyphs() -> None:
     dark_svg = MODULE._svg_dark_variant(svg)
     assert 'id="httk-dark-svg-text"' in dark_svg
     assert 'g[id^="text_"] path' in dark_svg
-    assert 'g[id^="legend_"] g[id^="patch_"] path' in dark_svg
+    assert 'g[id^="legend_"] g[id^="patch_"] path[style*="opacity: 0.8"]' in dark_svg
     assert MODULE.SVG_DARK_LIGHT_COLOR in dark_svg
+
+
+def test_svg_dark_variant_legend_background_rule_does_not_target_all_legend_patches() -> None:
+    svg = """<svg xmlns='http://www.w3.org/2000/svg'>
+  <g id='legend_1'>
+    <g id='patch_1'><path style='fill: #ffffff; opacity: 0.8; stroke: #cccccc;'/></g>
+    <g id='patch_2'><path style='fill: #ff0000; stroke: #ff0000;'/></g>
+  </g>
+</svg>"""
+    dark_svg = MODULE._svg_dark_variant(svg)
+    assert 'path[style*="opacity: 0.8"]' in dark_svg
+    assert 'path[style*="opacity:0.8"]' in dark_svg
+    assert 'g[id^="legend_"] g[id^="patch_"] path {' not in dark_svg

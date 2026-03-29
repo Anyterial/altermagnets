@@ -9,7 +9,7 @@ SEARCH_ENUMS: dict[str, set[str]] = {
     "classification": {"", "collinear", "noncollinear-derived", "mixed", "unclassified"},
     "electronic_type": {"", "metallic", "semiconducting", "unknown"},
     "magnetic_phase": {"", "AM", "Luttinger ferrimagnet", "weakly-canted AFM", "FiM", "non-AM"},
-    "wave_class": {"", "a", "b", "c", "d", "e", "f"},
+    "wave_class": {"", "a", "b", "c", "d", "e", "f", "g", "d/g", "s"},
     "sort": {"screening_rank", "max_ss_desc", "avg_ss_desc", "bandgap_desc", "abundance_desc"},
 }
 

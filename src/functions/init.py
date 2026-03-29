@@ -16,7 +16,7 @@ AMDB_DATASET = "1"
 CLASSIFICATION_LABELS = {
     "collinear": "Naturally collinear",
     "noncollinear-derived": "Noncollinear-derived",
-    "mixed": "Mixed provenance",
+    "mixed": "Both",
     "unclassified": "Not classified yet",
 }
 
@@ -196,7 +196,7 @@ def _summarize_symmetry_rows(
                         [_clean_display_text(row.get("MagneticPhaseShort", "")) for row in variant_rows]
                     ),
                     "wave_classes": _dedupe(
-                        [_clean_display_text(row.get("WaveClassSimple", "")) for row in variant_rows]
+                        [_clean_display_text(row.get("WaveClass", "")) for row in variant_rows]
                     ),
                     "wave_classes_full": _dedupe(
                         [_clean_display_text(row.get("WaveClass", "")) for row in variant_rows]
@@ -518,10 +518,10 @@ def _build_site_stats(materials: list[dict[str, Any]], *, data_available: bool, 
 def _build_search_options() -> dict[str, Any]:
     return {
         "classifications": [
-            {"value": "", "label": "Any provenance"},
+            {"value": "", "label": "Any collinearity"},
             {"value": "collinear", "label": "Naturally collinear"},
             {"value": "noncollinear-derived", "label": "Noncollinear-derived"},
-            {"value": "mixed", "label": "Mixed provenance"},
+            {"value": "mixed", "label": "Both"},
             {"value": "unclassified", "label": "Not classified yet"},
         ],
         "electronic_types": [

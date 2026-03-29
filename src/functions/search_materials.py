@@ -7,7 +7,7 @@ from input_sanitize import sanitize_search_inputs
 CLASSIFICATION_LABELS = {
     "collinear": "Naturally collinear",
     "noncollinear-derived": "Noncollinear-derived",
-    "mixed": "Mixed provenance",
+    "mixed": "Both",
     "unclassified": "Not classified yet",
 }
 
@@ -157,7 +157,7 @@ def _active_filters(
     if elements.strip():
         filters.append({"label": "Elements", "value": ", ".join(_canonical_element_tokens(elements))})
     if classification:
-        filters.append({"label": "Origin", "value": CLASSIFICATION_LABELS.get(classification, classification)})
+        filters.append({"label": "Collinearity", "value": CLASSIFICATION_LABELS.get(classification, classification)})
     if electronic_type:
         filters.append(
             {"label": "Electronic type", "value": ELECTRONIC_TYPE_LABELS.get(electronic_type, electronic_type)}

@@ -195,10 +195,31 @@
         <thead>
           <tr>
             <th>MAGNDATA ID</th>
-            <th>Origin</th>
+            <th>Collinearity</th>
             <th>Phase</th>
             <th>Wave</th>
-            <th>BNS (mcif)</th>
+            <th>
+              SYMPREC
+              <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+                i
+                <span class="info-bubble" role="tooltip">
+                  <span class="info-bubble-paragraph">
+                    Spglib symmetry tolerance <code>symprec</code>, shown as an exponential base-10 value.
+                  </span>
+                </span>
+              </span>
+            </th>
+            <th>
+              BNS (MCIF)
+              <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+                i
+                <span class="info-bubble" role="tooltip">
+                  <span class="info-bubble-paragraph">
+                    BNS setting indicated in the source MCIF file.
+                  </span>
+                </span>
+              </span>
+            </th>
             <th>G</th>
             <th>H</th>
           </tr>
@@ -215,6 +236,7 @@
             <td>{{ entry.source_label }}</td>
             <td>{{ entry.phase_label }}</td>
             <td>{{ entry.wave_class_label }}</td>
+            <td>{{ entry.symprec_label }}</td>
             <td>{{ entry.bns_mcif_label }}</td>
             <td>{{ entry.g_laue_class_label }}</td>
             <td>{{ entry.h_laue_class_label }}</td>
@@ -240,7 +262,7 @@
 
         <div class="linked-entry-facts">
           <div class="linked-entry-fact">
-            <span class="fact-label">Origin</span>
+            <span class="fact-label">Collinearity</span>
             <strong>{{ entry.source_label }}</strong>
           </div>
           <div class="linked-entry-fact">
@@ -250,15 +272,22 @@
           <div class="linked-entry-fact">
             <span class="fact-label">Wave</span>
             <strong>{{ entry.wave_class_label }}</strong>
-            {% if entry.wave_class_full_label != "n/a" %}
-            <span class="fact-note">{{ entry.wave_class_full_label }}</span>
-            {% endif %}
           </div>
         </div>
 
         <dl class="details-grid linked-entry-grid">
           <div>
-            <dt>BNS (mcif)</dt>
+            <dt>
+              BNS (MCIF)
+              <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+                i
+                <span class="info-bubble" role="tooltip">
+                  <span class="info-bubble-paragraph">
+                    BNS setting indicated in the source MCIF file.
+                  </span>
+                </span>
+              </span>
+            </dt>
             <dd>{{ entry.bns_mcif_label }}</dd>
           </div>
           <div>
@@ -266,16 +295,22 @@
             <dd>{{ entry.bns_label }}</dd>
           </div>
           <div>
-            <dt>Effective BNS</dt>
-            <dd>{{ entry.effective_bns_label }}</dd>
-          </div>
-          <div>
             <dt>Parent SG</dt>
             <dd>{{ entry.parent_spacegroup_label }}</dd>
           </div>
           <div>
-            <dt>SP</dt>
-            <dd>{{ entry.symprec_display }}</dd>
+            <dt>
+              SYMPREC
+              <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+                i
+                <span class="info-bubble" role="tooltip">
+                  <span class="info-bubble-paragraph">
+                    Spglib symmetry tolerance <code>symprec</code>, shown as an exponential base-10 value.
+                  </span>
+                </span>
+              </span>
+            </dt>
+            <dd>{{ entry.symprec_label }}</dd>
           </div>
           <div>
             <dt>Connecting element</dt>

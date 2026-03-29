@@ -81,6 +81,7 @@ SVG_DARK_WHITE_FILL_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?i)\bfill\s*=\s*'(?:#ffffff|#fff|white)'"), "fill='none'"),
     (re.compile(r"(?i)\bfill\s*:\s*(?:#ffffff|#fff|white)\b"), "fill: none"),
 )
+MAX_SVG_BYTES = 1_500_000
 
 
 def _split_pipe(value: str | None) -> list[str]:
@@ -185,6 +186,8 @@ def _details_dir_for_material(details_root: Path, material_id: str) -> Path | No
 def _svg_data_url(path: Path) -> str | None:
     if not path.exists() or not path.is_file():
         return None
+    if path.stat().st_size > MAX_SVG_BYTES:
+        return None
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     return f"data:image/svg+xml;base64,{encoded}"
 
@@ -206,6 +209,8 @@ def _svg_dark_variant(svg_text: str) -> str:
 def _svg_data_urls(path: Path) -> tuple[str | None, str | None]:
     if not path.exists() or not path.is_file():
         return (None, None)
+    if path.stat().st_size > MAX_SVG_BYTES:
+        return (None, None)
     raw = path.read_text(encoding="utf-8", errors="replace")
     return (_svg_data_url_from_text(raw), _svg_data_url_from_text(_svg_dark_variant(raw)))
 
@@ -222,7 +227,7 @@ def _load_detail_assets(material_id: str, global_data: Any) -> dict[str, Any]:
     if metadata_path.exists() and metadata_path.is_file():
         try:
             payload = json.loads(metadata_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
+        except (UnicodeDecodeError, json.JSONDecodeError):
             payload = {}
         raw_path = str(payload.get("raw_path", "")).strip()
 

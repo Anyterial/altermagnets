@@ -16,10 +16,10 @@
 
 {% if result["items"] and result["items"]|length > 0 %}
 <div class="table-wrap">
-  <table class="results-table" aria-label="Search results table">
+  <table class="results-table search-results-table" aria-label="Search results table">
     <thead>
       <tr>
-        <th>
+        <th class="col-material">
           Material
           <span tabindex="0" class="info-dot" role="button" aria-label="More information">
             i
@@ -30,8 +30,9 @@
             </span>
           </span>
         </th>
-        <th>MAGNDATA</th>
-        <th>
+        <th class="col-amdb">AMDB ID</th>
+        <th class="col-magndata">MAGNDATA</th>
+        <th class="col-collinearity">
           Collinearity
           <span tabindex="0" class="info-dot" role="button" aria-label="More information">
             i
@@ -42,8 +43,8 @@
             </span>
           </span>
         </th>
-        <th>Space group</th>
-        <th>
+        <th class="col-spacegroup">Space group</th>
+        <th class="col-maxss">
           Max SS
           <span tabindex="0" class="info-dot" role="button" aria-label="More information">
             i
@@ -54,10 +55,10 @@
             </span>
           </span>
         </th>
-        <th>Avg SS</th>
-        <th>FΔ</th>
-        <th>Gap</th>
-        <th>
+        <th class="col-avgss">Avg SS</th>
+        <th class="col-fdelta">FΔ</th>
+        <th class="col-gap">Gap</th>
+        <th class="col-abundance">
           Min abundance
           <span tabindex="0" class="info-dot" role="button" aria-label="More information">
             i
@@ -73,18 +74,19 @@
     <tbody>
       {% for item in result["items"] %}
       <tr class="result-row" data-row-url="{{ page.relbaseurl }}/material?id={{ item.material_id }}" tabindex="0">
-        <td>
+        <td class="col-material">
           <div class="cell-title">{{ item.material_label if item.material_label else item.material }}</div>
           <div class="cell-meta">{{ item.magnetic_phase_label }} | wave {{ item.wave_class_label }}</div>
         </td>
-        <td>{{ item.magndata_ids | join(", ") }}</td>
-        <td>{{ item.classification_label }}</td>
-        <td>{{ item.space_group }}</td>
-        <td>{{ item.max_ss_display }} eV</td>
-        <td>{{ item.avg_ss_display }} eV</td>
-        <td>{{ item.fdelta_display }}</td>
-        <td>{{ item.bandgap_display }} eV</td>
-        <td>{{ item.abundance_display }}</td>
+        <td class="col-amdb"><span class="id-mono">{{ item.material_id }}</span></td>
+        <td class="col-magndata">{{ item.magndata_ids | join(", ") }}</td>
+        <td class="col-collinearity">{{ item.classification_label }}</td>
+        <td class="col-spacegroup">{{ item.space_group }}</td>
+        <td class="col-maxss">{{ item.max_ss_display }} eV</td>
+        <td class="col-avgss">{{ item.avg_ss_display }} eV</td>
+        <td class="col-fdelta">{{ item.fdelta_display }}</td>
+        <td class="col-gap">{{ item.bandgap_display }} eV</td>
+        <td class="col-abundance">{{ item.abundance_display }}</td>
       </tr>
       {% endfor %}
     </tbody>

@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DATASET_PATH = ROOT / "data" / "tables" / "high_throughput_screening_results_fixed.csv"
 DETAIL_ASSET_PATHS = [
     ROOT / "data" / "details" / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001" / "band.svg",
+    ROOT / "data" / "details" / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001" / "band.png",
 ]
 
 

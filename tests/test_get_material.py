@@ -42,6 +42,26 @@ def test_load_detail_assets_reads_sharded_svg_outputs(tmp_path: Path) -> None:
     assert figures["bz"]["available"] is False
 
 
+def test_load_detail_assets_prefers_png_when_present(tmp_path: Path) -> None:
+    details_root = tmp_path / "details"
+    target_dir = details_root / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001"
+    target_dir.mkdir(parents=True)
+    (target_dir / "amdb-1-0001.json").write_text("{}", encoding="utf-8")
+    (target_dir / "band.svg").write_text(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><text>svg</text></svg>",
+        encoding="utf-8",
+    )
+    # Minimal PNG signature bytes are enough for data-url transport tests.
+    (target_dir / "band.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    assets = MODULE._load_detail_assets("amdb-1-0001", {"detail_assets_root": details_root})
+
+    figures = {figure["key"]: figure for figure in assets["figures"]}
+    assert figures["band"]["available"] is True
+    assert figures["band"]["data_url"].startswith("data:image/png;base64,")
+    assert figures["band"]["dark_data_url"].startswith("data:image/png;base64,")
+
+
 def test_load_detail_assets_returns_empty_for_missing_detail_directory(tmp_path: Path) -> None:
     details_root = tmp_path / "details"
 

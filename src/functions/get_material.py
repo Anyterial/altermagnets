@@ -229,6 +229,15 @@ def _svg_data_url(path: Path, *, max_svg_bytes: int) -> str | None:
     return f"data:image/svg+xml;base64,{encoded}"
 
 
+def _png_data_url(path: Path, *, max_bytes: int) -> str | None:
+    if not path.exists() or not path.is_file():
+        return None
+    if path.stat().st_size > max_bytes:
+        return None
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
 def _svg_data_url_from_text(svg_text: str) -> str:
     encoded = base64.b64encode(svg_text.encode("utf-8")).decode("ascii")
     return f"data:image/svg+xml;base64,{encoded}"
@@ -273,11 +282,17 @@ def _load_detail_assets(material_id: str, global_data: Any) -> dict[str, Any]:
 
     available_count = 0
     for spec in DETAIL_FIGURE_SPECS:
-        light_data_url, dark_data_url = _svg_data_urls(details_dir / spec["filename"], max_svg_bytes=max_svg_bytes)
+        svg_path = details_dir / spec["filename"]
+        png_path = svg_path.with_suffix(".png")
+        light_data_url = _png_data_url(png_path, max_bytes=max_svg_bytes)
+        dark_data_url = light_data_url
+
         if light_data_url is None:
-            # Backward-compatible support for separately generated dark variants.
-            dark_filename = f"{Path(spec['filename']).stem}_dark.svg"
-            dark_data_url = _svg_data_url(details_dir / dark_filename, max_svg_bytes=max_svg_bytes)
+            light_data_url, dark_data_url = _svg_data_urls(svg_path, max_svg_bytes=max_svg_bytes)
+            if light_data_url is None:
+                # Backward-compatible support for separately generated dark variants.
+                dark_filename = f"{Path(spec['filename']).stem}_dark.svg"
+                dark_data_url = _svg_data_url(details_dir / dark_filename, max_svg_bytes=max_svg_bytes)
         available = light_data_url is not None
         if available:
             available_count += 1

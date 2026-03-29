@@ -66,25 +66,20 @@ DETAIL_FIGURE_SPECS = (
     },
 )
 AMDB_ID_PATTERN = re.compile(r"^amdb-(?:(?P<dataset>\d+)-)?(?P<number>\d+)$")
-SVG_COLOR_REPLACEMENTS_DARK: tuple[tuple[str, str], ...] = (
-    ("#000000", "#f2f5fb"),
-    ("#000", "#f2f5fb"),
-    ("black", "#f2f5fb"),
-    ("rgb(0%,0%,0%)", "rgb(94.9%,96.1%,98.4%)"),
-    ("#262626", "#f2f5fb"),
-    ("#1f1f1f", "#f2f5fb"),
-    ("#333333", "#f2f5fb"),
+SVG_DARK_LIGHT_COLOR = "#f2f5fb"
+SVG_DARK_BLACK_COLOR_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?i)(?<![0-9a-f])#000000(?![0-9a-f])"),
+    re.compile(r"(?i)(?<![0-9a-f])#000(?![0-9a-f])"),
+    re.compile(r"(?i)\brgb\(\s*0%\s*,\s*0%\s*,\s*0%\s*\)\b"),
+    re.compile(r"(?i)\bblack\b"),
+    re.compile(r"(?i)(?<![0-9a-f])#262626(?![0-9a-f])"),
+    re.compile(r"(?i)(?<![0-9a-f])#1f1f1f(?![0-9a-f])"),
+    re.compile(r"(?i)(?<![0-9a-f])#333333(?![0-9a-f])"),
 )
-SVG_BACKGROUND_REPLACEMENTS: tuple[tuple[str, str], ...] = (
-    ('fill="#ffffff"', 'fill="none"'),
-    ('fill: #ffffff', "fill: none"),
-    ("fill:#ffffff", "fill:none"),
-    ('fill="#fff"', 'fill="none"'),
-    ('fill: #fff', "fill: none"),
-    ("fill:#fff", "fill:none"),
-    ('fill="white"', 'fill="none"'),
-    ("fill: white", "fill: none"),
-    ("fill:white", "fill:none"),
+SVG_DARK_WHITE_FILL_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r'(?i)\bfill\s*=\s*"(?:#ffffff|#fff|white)"'), 'fill="none"'),
+    (re.compile(r"(?i)\bfill\s*=\s*'(?:#ffffff|#fff|white)'"), "fill='none'"),
+    (re.compile(r"(?i)\bfill\s*:\s*(?:#ffffff|#fff|white)\b"), "fill: none"),
 )
 
 
@@ -187,10 +182,10 @@ def _svg_data_url_from_text(svg_text: str) -> str:
 
 def _svg_dark_variant(svg_text: str) -> str:
     transformed = svg_text
-    for source, target in SVG_BACKGROUND_REPLACEMENTS:
-        transformed = transformed.replace(source, target)
-    for source, target in SVG_COLOR_REPLACEMENTS_DARK:
-        transformed = transformed.replace(source, target)
+    for pattern, replacement in SVG_DARK_WHITE_FILL_PATTERNS:
+        transformed = pattern.sub(replacement, transformed)
+    for pattern in SVG_DARK_BLACK_COLOR_PATTERNS:
+        transformed = pattern.sub(SVG_DARK_LIGHT_COLOR, transformed)
     return transformed
 
 

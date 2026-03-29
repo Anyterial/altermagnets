@@ -1,6 +1,8 @@
 from math import isfinite
 from typing import Any
 
+from input_sanitize import sanitize_search_inputs
+
 CLASSIFICATION_LABELS = {
     "collinear": "Naturally collinear",
     "noncollinear-derived": "Noncollinear-derived",
@@ -197,6 +199,39 @@ def execute(
     sort: str = "screening_rank",
     **kwargs,
 ):
+    sanitized = sanitize_search_inputs(
+        {
+            "q": q,
+            "elements": elements,
+            "classification": classification,
+            "electronic_type": electronic_type,
+            "magnetic_phase": magnetic_phase,
+            "wave_class": wave_class,
+            "space_group": space_group,
+            "min_max_ss": min_max_ss,
+            "min_avg_ss": min_avg_ss,
+            "min_fdelta_pct": min_fdelta_pct,
+            "min_bandgap": min_bandgap,
+            "max_bandgap": max_bandgap,
+            "min_abundance_ppm": min_abundance_ppm,
+            "sort": sort,
+        }
+    )
+    q = sanitized["q"]
+    elements = sanitized["elements"]
+    classification = sanitized["classification"]
+    electronic_type = sanitized["electronic_type"]
+    magnetic_phase = sanitized["magnetic_phase"]
+    wave_class = sanitized["wave_class"]
+    space_group = sanitized["space_group"]
+    min_max_ss = sanitized["min_max_ss"]
+    min_avg_ss = sanitized["min_avg_ss"]
+    min_fdelta_pct = sanitized["min_fdelta_pct"]
+    min_bandgap = sanitized["min_bandgap"]
+    max_bandgap = sanitized["max_bandgap"]
+    min_abundance_ppm = sanitized["min_abundance_ppm"]
+    sort = sanitized["sort"]
+
     site_stats = global_data.get("site_stats", {})
     connection = global_data.get("materials_db")
     lock = global_data.get("materials_db_lock")

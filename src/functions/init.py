@@ -172,77 +172,98 @@ def _summarize_symmetry_rows(
 
     summaries: list[dict[str, Any]] = []
     for magndata_id, group_rows in grouped.items():
-        symprecs = [_parse_float(row.get("Symprec", "")) for row in group_rows]
-        summaries.append(
-            {
-                "magndata_id": magndata_id,
-                "source_kind": source_kind,
-                "formula": _clean_display_text(
-                    next((row.get("ChemicalFormula", "") for row in group_rows if row.get("ChemicalFormula")), "")
-                ),
-                "symprec": (
-                    min(value for value in symprecs if value is not None)
-                    if any(value is not None for value in symprecs)
-                    else None
-                ),
-                "symprec_variants": len(group_rows),
-                "magnetic_phases": _dedupe(
-                    [_clean_display_text(row.get("MagneticPhaseShort", "")) for row in group_rows]
-                ),
-                "wave_classes": _dedupe([_clean_display_text(row.get("WaveClassSimple", "")) for row in group_rows]),
-                "wave_classes_full": _dedupe([_clean_display_text(row.get("WaveClass", "")) for row in group_rows]),
-                "parent_spacegroups": _dedupe(
-                    [_clean_display_text(row.get("ParentSpacegroup", "")) for row in group_rows]
-                ),
-                "parent_spacegroups_latex": _dedupe(
-                    [_clean_latex_text(row.get("ParentSpacegroup", "")) for row in group_rows]
-                ),
-                "bns_mcif_labels": _dedupe([_clean_display_text(row.get("BNSmcif", "")) for row in group_rows]),
-                "bns_mcif_labels_latex": _dedupe([_clean_latex_text(row.get("BNSmcif", "")) for row in group_rows]),
-                "bns_labels": _dedupe([_clean_display_text(row.get("BNS", "")) for row in group_rows]),
-                "bns_labels_latex": _dedupe([_clean_latex_text(row.get("BNS", "")) for row in group_rows]),
-                "effective_bns_labels": _dedupe(
-                    [_clean_display_text(row.get("EffectiveBNS", "")) for row in group_rows]
-                ),
-                "effective_bns_labels_latex": _dedupe(
-                    [_clean_latex_text(row.get("EffectiveBNS", "")) for row in group_rows]
-                ),
-                "g_laue_classes": _dedupe(
-                    [_clean_display_text(row.get("GMagneticSystemLaueClass", "")) for row in group_rows]
-                ),
-                "h_laue_classes": _dedupe(
-                    [_clean_display_text(row.get("HHalvingSubgroupLaueClass", "")) for row in group_rows]
-                ),
-                "connecting_elements": _dedupe(
-                    [_clean_display_text(row.get("AGenopConnectingElement", "")) for row in group_rows]
-                ),
-                "connecting_elements_latex": _dedupe(
-                    [_clean_latex_text(row.get("AGenopConnectingElement", "")) for row in group_rows]
-                ),
-                "spin_angle_mismatch": max(
-                    (
-                        value
-                        for value in (_parse_float(row.get("SpinAngleMismatch", "")) for row in group_rows)
-                        if value is not None
-                    ),
-                    default=None,
-                ),
-                "spin_length_mismatch": max(
-                    (
-                        value
-                        for value in (_parse_float(row.get("SpinLengthMismatch", "")) for row in group_rows)
-                        if value is not None
-                    ),
-                    default=None,
-                ),
-                "icsd_ids": _dedupe([_clean_display_text(row.get("ICSDId", "")) for row in group_rows]),
-                "reference_dois": _dedupe([_clean_display_text(row.get("ReferenceDOI", "")) for row in group_rows]),
-                "warnings": _dedupe([_clean_display_text(row.get("Warnings", "")) for row in group_rows]),
-                "notes": _dedupe([_clean_display_text(row.get("Notes", "")) for row in group_rows]),
-            }
-        )
+        # Preserve per-symprec detail so the UI can show one row/card per distinct
+        # spglib tolerance used in the source summary tables.
+        rows_by_symprec: dict[float | None, list[dict[str, str]]] = {}
+        for row in group_rows:
+            symprec = _parse_float(row.get("Symprec", ""))
+            rows_by_symprec.setdefault(symprec, []).append(row)
 
-    return sorted(summaries, key=lambda item: item["magndata_id"])
+        for symprec, variant_rows in rows_by_symprec.items():
+            summaries.append(
+                {
+                    "magndata_id": magndata_id,
+                    "source_kind": source_kind,
+                    "formula": _clean_display_text(
+                        next(
+                            (row.get("ChemicalFormula", "") for row in variant_rows if row.get("ChemicalFormula")),
+                            "",
+                        )
+                    ),
+                    "symprec": symprec,
+                    "symprec_variants": len(variant_rows),
+                    "magnetic_phases": _dedupe(
+                        [_clean_display_text(row.get("MagneticPhaseShort", "")) for row in variant_rows]
+                    ),
+                    "wave_classes": _dedupe(
+                        [_clean_display_text(row.get("WaveClassSimple", "")) for row in variant_rows]
+                    ),
+                    "wave_classes_full": _dedupe(
+                        [_clean_display_text(row.get("WaveClass", "")) for row in variant_rows]
+                    ),
+                    "parent_spacegroups": _dedupe(
+                        [_clean_display_text(row.get("ParentSpacegroup", "")) for row in variant_rows]
+                    ),
+                    "parent_spacegroups_latex": _dedupe(
+                        [_clean_latex_text(row.get("ParentSpacegroup", "")) for row in variant_rows]
+                    ),
+                    "bns_mcif_labels": _dedupe([_clean_display_text(row.get("BNSmcif", "")) for row in variant_rows]),
+                    "bns_mcif_labels_latex": _dedupe(
+                        [_clean_latex_text(row.get("BNSmcif", "")) for row in variant_rows]
+                    ),
+                    "bns_labels": _dedupe([_clean_display_text(row.get("BNS", "")) for row in variant_rows]),
+                    "bns_labels_latex": _dedupe([_clean_latex_text(row.get("BNS", "")) for row in variant_rows]),
+                    "effective_bns_labels": _dedupe(
+                        [_clean_display_text(row.get("EffectiveBNS", "")) for row in variant_rows]
+                    ),
+                    "effective_bns_labels_latex": _dedupe(
+                        [_clean_latex_text(row.get("EffectiveBNS", "")) for row in variant_rows]
+                    ),
+                    "g_laue_classes": _dedupe(
+                        [_clean_display_text(row.get("GMagneticSystemLaueClass", "")) for row in variant_rows]
+                    ),
+                    "h_laue_classes": _dedupe(
+                        [_clean_display_text(row.get("HHalvingSubgroupLaueClass", "")) for row in variant_rows]
+                    ),
+                    "connecting_elements": _dedupe(
+                        [_clean_display_text(row.get("AGenopConnectingElement", "")) for row in variant_rows]
+                    ),
+                    "connecting_elements_latex": _dedupe(
+                        [_clean_latex_text(row.get("AGenopConnectingElement", "")) for row in variant_rows]
+                    ),
+                    "spin_angle_mismatch": max(
+                        (
+                            value
+                            for value in (_parse_float(row.get("SpinAngleMismatch", "")) for row in variant_rows)
+                            if value is not None
+                        ),
+                        default=None,
+                    ),
+                    "spin_length_mismatch": max(
+                        (
+                            value
+                            for value in (_parse_float(row.get("SpinLengthMismatch", "")) for row in variant_rows)
+                            if value is not None
+                        ),
+                        default=None,
+                    ),
+                    "icsd_ids": _dedupe([_clean_display_text(row.get("ICSDId", "")) for row in variant_rows]),
+                    "reference_dois": _dedupe(
+                        [_clean_display_text(row.get("ReferenceDOI", "")) for row in variant_rows]
+                    ),
+                    "warnings": _dedupe([_clean_display_text(row.get("Warnings", "")) for row in variant_rows]),
+                    "notes": _dedupe([_clean_display_text(row.get("Notes", "")) for row in variant_rows]),
+                }
+            )
+
+    return sorted(
+        summaries,
+        key=lambda item: (
+            item["magndata_id"],
+            1 if item["symprec"] is None else 0,
+            float(item["symprec"] or 0.0),
+        ),
+    )
 
 
 def _classification_from_sources(has_collinear: bool, has_noncollinear: bool) -> str:

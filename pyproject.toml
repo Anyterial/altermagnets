@@ -71,7 +71,7 @@ reportMissingImports = true
 [tool.mypy]
 python_version = "3.11"
 files = ["src/functions", "serve_dynamic.py", "publish_static.py"]
-mypy_path = ["src"]
+mypy_path = ["src", "src/functions"]
 namespace_packages = true
 explicit_package_bases = true
 warn_unused_ignores = true

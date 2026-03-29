@@ -1,5 +1,5 @@
-import string
 import re
+import string
 
 # Keep the base policy strict against control chars and obvious HTML/script vectors.
 BASE_EXCLUDED_CHARS = {"`", "\\", "<", ">"}

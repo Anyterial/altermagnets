@@ -65,6 +65,78 @@ def test_formula_from_task_label_strips_variant_suffix() -> None:
     assert MODULE.formula_from_task_label("CrSb") == "CrSb"
 
 
+def test_formula_match_key_equates_composition_equivalent_formulas() -> None:
+    assert MODULE.formula_match_key("Ca(Al2Fe)4") == MODULE.formula_match_key("CaFe4Al8")
+
+
+def test_iter_task_roots_prefilter_accepts_composition_equivalent_task_labels(tmp_path: Path) -> None:
+    raw_dir = tmp_path / "raw"
+    runs_dir = raw_dir / "1" / "Runs"
+    runs_dir.mkdir(parents=True)
+    task_dir = runs_dir / "ht.task.tetralith--default.CaFe4Al8_SCF.cleanup.0.unclaimed.3.finished"
+    task_dir.mkdir()
+
+    material_formulas = {MODULE.formula_match_key("Ca(Al2Fe)4")}
+    discovered = list(MODULE.iter_task_roots(raw_dir, kind="SCF", material_formulas=material_formulas))
+
+    assert discovered == [task_dir]
+
+
+def test_sync_detail_raw_paths_creates_per_material_metadata(tmp_path: Path, monkeypatch) -> None:
+    tables_dir = tmp_path / "tables"
+    raw_dir = tmp_path / "raw"
+    details_dir = tmp_path / "details"
+    tables_dir.mkdir()
+    (tables_dir / "high_throughput_screening_results_fixed.csv").write_text(
+        "AMDBId;MAGNDATA ID;Material;Space group;FdeltaPct;MaxSS;AvgSS;Bandgap;MinAbundPpm\n"
+        "amdb-1-0006;0.528;Ca(Al2Fe)4;I4/mmm;34.375;1.8724;0.763170313;0.0;0.2\n"
+        "amdb-1-0007;0.607;MnNbP;P6_3/mmc;25.0;0.8654;0.350574667;0.0;0.001\n",
+        encoding="utf-8",
+    )
+
+    matched_task = MODULE.RawTask(
+        task_root=raw_dir / "1" / "Runs" / "ht.task.tetralith--default.CaFe4Al8_SCF.cleanup.0.unclaimed.3.finished",
+        deepest_run_dir=raw_dir
+        / "1"
+        / "Runs"
+        / "ht.task.tetralith--default.CaFe4Al8_SCF.cleanup.0.unclaimed.3.finished",
+        raw_relpath="1/Runs/ht.task.tetralith--default.CaFe4Al8_SCF.cleanup.0.unclaimed.3.finished",
+        task_label="CaFe4Al8",
+        kind="SCF",
+        batch_number=1,
+        latest_run_token="",
+        formula="Ca(Al2Fe)4",
+        space_group="I4/mmm",
+    )
+
+    entries = MODULE.load_screening_entries(tables_dir)
+    target_entry = next(entry for entry in entries if entry.material_id == "amdb-1-0006")
+
+    def fake_discover_tasks(raw_root: Path, *, kind: str, material_formulas=None):
+        if kind == "SCF":
+            return ({target_entry.key(): matched_task}, {})
+        return ({}, {})
+
+    monkeypatch.setattr(MODULE, "discover_tasks", fake_discover_tasks)
+
+    results, warnings = MODULE.sync_detail_raw_paths(
+        tables_dir=tables_dir,
+        raw_dir=raw_dir,
+        details_dir=details_dir,
+    )
+
+    assert warnings == []
+    assert len(results) == 2
+    metadata_0006 = json.loads(
+        (details_dir / "amdb-1" / "0" / "00" / "000" / "amdb-1-0006" / "amdb-1-0006.json").read_text(encoding="utf-8")
+    )
+    metadata_0007 = json.loads(
+        (details_dir / "amdb-1" / "0" / "00" / "000" / "amdb-1-0007" / "amdb-1-0007.json").read_text(encoding="utf-8")
+    )
+    assert metadata_0006["raw_path"] == matched_task.raw_relpath
+    assert metadata_0007["raw_path"] == ""
+
+
 def test_save_svg_with_png_fallback_writes_png_for_large_svg(tmp_path: Path) -> None:
     class FakeFigure:
         def savefig(self, path, format=None, **kwargs):
@@ -152,12 +224,18 @@ def test_load_screening_entries_prefers_explicit_amdb_id_column(tmp_path: Path) 
     assert [entry.material_id for entry in entries] == ["amdb-1-9001"]
 
 
-def test_generate_material_details_writes_sharded_raw_artifacts(tmp_path: Path, monkeypatch) -> None:
+def test_generate_material_details_writes_sharded_raw_artifacts(tmp_path: Path) -> None:
     tables_dir = tmp_path / "tables"
     raw_dir = tmp_path / "raw"
     details_dir = tmp_path / "details"
     tables_dir.mkdir()
-    deepest_run_dir = raw_dir / "2" / "Runs" / "ht.task.tetralith--default.CrSb_SCF.cleanup.0.unclaimed.2.finished" / "ht.run.2025-01-01_00.00.00"
+    deepest_run_dir = (
+        raw_dir
+        / "2"
+        / "Runs"
+        / "ht.task.tetralith--default.CrSb_SCF.cleanup.0.unclaimed.2.finished"
+        / "ht.run.2025-01-01_00.00.00"
+    )
     deepest_run_dir.mkdir(parents=True)
 
     (tables_dir / "high_throughput_screening_results_fixed.csv").write_text(
@@ -181,24 +259,13 @@ def test_generate_material_details_writes_sharded_raw_artifacts(tmp_path: Path, 
             "\n"
         )
 
-    fake_task = MODULE.RawTask(
-        task_root=deepest_run_dir.parent,
-        deepest_run_dir=deepest_run_dir,
-        raw_relpath="2/Runs/ht.task.tetralith--default.CrSb_SCF.cleanup.0.unclaimed.2.finished",
-        task_label="CrSb",
-        kind="SCF",
-        batch_number=2,
-        latest_run_token="ht.run.2025-01-01_00.00.00",
-        formula="CrSb",
-        space_group="P6_3/mmc",
+    target_dir = details_dir / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    (target_dir / "amdb-1-0001.json").write_text(
+        json.dumps({"raw_path": "2/Runs/ht.task.tetralith--default.CrSb_SCF.cleanup.0.unclaimed.2.finished"}, indent=2)
+        + "\n",
+        encoding="utf-8",
     )
-
-    def fake_discover_tasks(raw_root: Path, *, kind: str, material_formulas=None):
-        if kind == "SCF":
-            return ({fake_task.key(): fake_task}, {})
-        return ({}, {})
-
-    monkeypatch.setattr(MODULE, "discover_tasks", fake_discover_tasks)
 
     results, warnings = MODULE.generate_material_details(
         tables_dir=tables_dir,
@@ -207,7 +274,6 @@ def test_generate_material_details_writes_sharded_raw_artifacts(tmp_path: Path, 
         render_plots=False,
     )
 
-    target_dir = details_dir / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001"
     assert len(results) == 1
     assert results[0].details_dir == target_dir
     assert warnings == []
@@ -236,7 +302,6 @@ def test_generate_material_details_writes_sharded_raw_artifacts(tmp_path: Path, 
 
 def test_generate_material_details_parallelizes_jobs_and_serializes_parse_log(
     tmp_path: Path,
-    monkeypatch,
 ) -> None:
     tables_dir = tmp_path / "tables"
     raw_dir = tmp_path / "raw"
@@ -250,7 +315,13 @@ def test_generate_material_details_parallelizes_jobs_and_serializes_parse_log(
     )
 
     def make_fake_task(batch: str, label: str, formula: str, space_group: str) -> MODULE.RawTask:
-        deepest_run_dir = raw_dir / batch / "Runs" / f"ht.task.tetralith--default.{label}_SCF.cleanup.0.unclaimed.2.finished" / "ht.run.2025-01-01_00.00.00"
+        deepest_run_dir = (
+            raw_dir
+            / batch
+            / "Runs"
+            / f"ht.task.tetralith--default.{label}_SCF.cleanup.0.unclaimed.2.finished"
+            / "ht.run.2025-01-01_00.00.00"
+        )
         deepest_run_dir.mkdir(parents=True)
         with bz2.open(deepest_run_dir / "POSCAR.bz2", "wt", encoding="utf-8") as handle:
             handle.write("POSCAR placeholder\n")
@@ -280,16 +351,18 @@ def test_generate_material_details_parallelizes_jobs_and_serializes_parse_log(
 
     fake_crsb = make_fake_task("2", "CrSb", "CrSb", "P6_3/mmc")
     fake_ruo2 = make_fake_task("3", "RuO2", "RuO2", "P4_2/mnm")
-
-    def fake_discover_tasks(raw_root: Path, *, kind: str, material_formulas=None):
-        if kind == "SCF":
-            return (
-                {fake_crsb.key(): fake_crsb, fake_ruo2.key(): fake_ruo2},
-                {},
-            )
-        return ({}, {})
-
-    monkeypatch.setattr(MODULE, "discover_tasks", fake_discover_tasks)
+    details_dir_for_crsb = details_dir / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001"
+    details_dir_for_ruo2 = details_dir / "amdb-1" / "0" / "00" / "000" / "amdb-1-0002"
+    details_dir_for_crsb.mkdir(parents=True, exist_ok=True)
+    details_dir_for_ruo2.mkdir(parents=True, exist_ok=True)
+    (details_dir_for_crsb / "amdb-1-0001.json").write_text(
+        json.dumps({"raw_path": fake_crsb.raw_relpath}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (details_dir_for_ruo2 / "amdb-1-0002.json").write_text(
+        json.dumps({"raw_path": fake_ruo2.raw_relpath}, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
     results, warnings = MODULE.generate_material_details(
         tables_dir=tables_dir,
@@ -307,7 +380,6 @@ def test_generate_material_details_parallelizes_jobs_and_serializes_parse_log(
 
 def test_generate_material_details_parallel_logs_failures_serially(
     tmp_path: Path,
-    monkeypatch,
 ) -> None:
     tables_dir = tmp_path / "tables"
     raw_dir = tmp_path / "raw"
@@ -328,7 +400,13 @@ def test_generate_material_details_parallel_logs_failures_serially(
         *,
         valid_outcar: bool,
     ) -> MODULE.RawTask:
-        deepest_run_dir = raw_dir / batch / "Runs" / f"ht.task.tetralith--default.{label}_SCF.cleanup.0.unclaimed.2.finished" / "ht.run.2025-01-01_00.00.00"
+        deepest_run_dir = (
+            raw_dir
+            / batch
+            / "Runs"
+            / f"ht.task.tetralith--default.{label}_SCF.cleanup.0.unclaimed.2.finished"
+            / "ht.run.2025-01-01_00.00.00"
+        )
         deepest_run_dir.mkdir(parents=True)
         with bz2.open(deepest_run_dir / "POSCAR.bz2", "wt", encoding="utf-8") as handle:
             handle.write("POSCAR placeholder\n")
@@ -361,16 +439,18 @@ def test_generate_material_details_parallel_logs_failures_serially(
 
     fake_crsb = make_fake_task("2", "CrSb", "CrSb", "P6_3/mmc", valid_outcar=True)
     fake_ruo2 = make_fake_task("3", "RuO2", "RuO2", "P4_2/mnm", valid_outcar=False)
-
-    def fake_discover_tasks(raw_root: Path, *, kind: str, material_formulas=None):
-        if kind == "SCF":
-            return (
-                {fake_crsb.key(): fake_crsb, fake_ruo2.key(): fake_ruo2},
-                {},
-            )
-        return ({}, {})
-
-    monkeypatch.setattr(MODULE, "discover_tasks", fake_discover_tasks)
+    details_dir_for_crsb = details_dir / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001"
+    details_dir_for_ruo2 = details_dir / "amdb-1" / "0" / "00" / "000" / "amdb-1-0002"
+    details_dir_for_crsb.mkdir(parents=True, exist_ok=True)
+    details_dir_for_ruo2.mkdir(parents=True, exist_ok=True)
+    (details_dir_for_crsb / "amdb-1-0001.json").write_text(
+        json.dumps({"raw_path": fake_crsb.raw_relpath}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (details_dir_for_ruo2 / "amdb-1-0002.json").write_text(
+        json.dumps({"raw_path": fake_ruo2.raw_relpath}, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
     results, warnings = MODULE.generate_material_details(
         tables_dir=tables_dir,

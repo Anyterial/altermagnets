@@ -1,7 +1,7 @@
 PYTHON ?= python3
 PY_SOURCES := src/functions serve_dynamic.py publish_static.py
 
-.PHONY: docs docs-live docs-clean clean format format-check typecheck typecheck_pyright lint test test_fastfail audit generate_details
+.PHONY: docs docs-live docs-clean clean format format-check typecheck typecheck_pyright lint test test_fastfail audit generate_details sync_detail_raw_paths
 
 serve:
 	python3 ./serve_dynamic.py
@@ -9,7 +9,10 @@ serve:
 generate:
 	python3 ./publish_static.py
 
-generate_details:
+sync_detail_raw_paths:
+	python3 ./tools/sync_detail_raw_paths.py
+
+generate_details: sync_detail_raw_paths
 	python3 ./tools/generate_material_details.py
 
 serve_static: generate

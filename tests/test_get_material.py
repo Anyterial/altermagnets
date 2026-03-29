@@ -120,4 +120,5 @@ def test_svg_dark_variant_injects_text_style_for_default_black_glyphs() -> None:
     dark_svg = MODULE._svg_dark_variant(svg)
     assert 'id="httk-dark-svg-text"' in dark_svg
     assert 'g[id^="text_"] path' in dark_svg
+    assert 'g[id^="legend_"] g[id^="patch_"] path' in dark_svg
     assert MODULE.SVG_DARK_LIGHT_COLOR in dark_svg

@@ -9,8 +9,6 @@
     </div>
   </header>
 
-  <p class="section-note material-summary">{{ result.classification_note }}</p>
-
   <section class="detail-section">
     <h3>Identity</h3>
     <dl class="details-grid">
@@ -152,10 +150,6 @@
       <h3>Figures</h3>
       <p class="section-note">
         {{ result.detail_figure_count }} of {{ result.detail_figure_total }} detail figures available from the mounted calculation archive.
-        {% if result.detail_raw_path %}
-        <span class="figure-path-label">Raw run</span>
-        <code class="path-chip">{{ result.detail_raw_path }}</code>
-        {% endif %}
       </p>
     </div>
     <div class="figure-grid">
@@ -163,11 +157,20 @@
       <figure class="figure-card {{ figure.layout_class }}{% if not figure.available %} is-missing{% endif %}">
         <figcaption class="figure-caption">
           <h4>{{ figure.title }}</h4>
+          {% if figure.summary %}
           <p>{{ figure.summary }}</p>
+          {% endif %}
         </figcaption>
         {% if figure.available %}
         <div class="figure-visual">
-          <img src="{{ figure.data_url }}" alt="{{ figure.alt }}" loading="lazy" />
+          <img
+            src="{{ figure.data_url }}"
+            data-src-light="{{ figure.data_url }}"
+            data-src-dark="{{ figure.dark_data_url if figure.dark_data_url else figure.data_url }}"
+            class="theme-aware-figure"
+            alt="{{ figure.alt }}"
+            loading="lazy"
+          />
         </div>
         {% else %}
         <div class="figure-placeholder">

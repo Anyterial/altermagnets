@@ -40,8 +40,8 @@ DETAIL_FIGURE_SPECS = (
     {
         "key": "band",
         "filename": "band.svg",
-        "title": "Spin-split band structure",
-        "summary": "Line-mode bands from the SCF_BAND run, plotted relative to the Fermi level.",
+        "title": "Band structure",
+        "summary": "",
         "empty_message": "Band structure has not been generated for this material yet.",
         "alt": "Spin-split band structure",
         "layout_class": "figure-card--wide",
@@ -50,7 +50,7 @@ DETAIL_FIGURE_SPECS = (
         "key": "structure",
         "filename": "structure.svg",
         "title": "Crystal structure",
-        "summary": "Replicated relaxed cell from the final SCF structure, shown with element-resolved colouring.",
+        "summary": "",
         "empty_message": "Crystal structure figure has not been generated for this material yet.",
         "alt": "Crystal structure view",
         "layout_class": "",
@@ -66,6 +66,23 @@ DETAIL_FIGURE_SPECS = (
     },
 )
 AMDB_ID_PATTERN = re.compile(r"^amdb-(?:(?P<dataset>\d+)-)?(?P<number>\d+)$")
+SVG_COLOR_REPLACEMENTS_DARK: tuple[tuple[str, str], ...] = (
+    ("#000000", "#f2f5fb"),
+    ("#000", "#f2f5fb"),
+    ("black", "#f2f5fb"),
+    ("rgb(0%,0%,0%)", "rgb(94.9%,96.1%,98.4%)"),
+    ("#262626", "#f2f5fb"),
+    ("#1f1f1f", "#f2f5fb"),
+    ("#333333", "#f2f5fb"),
+)
+SVG_BACKGROUND_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    ('fill="#ffffff"', 'fill="none"'),
+    ("fill:#ffffff", "fill:none"),
+    ('fill="#fff"', 'fill="none"'),
+    ("fill:#fff", "fill:none"),
+    ('fill="white"', 'fill="none"'),
+    ("fill:white", "fill:none"),
+)
 
 
 def _split_pipe(value: str | None) -> list[str]:
@@ -160,6 +177,27 @@ def _svg_data_url(path: Path) -> str | None:
     return f"data:image/svg+xml;base64,{encoded}"
 
 
+def _svg_data_url_from_text(svg_text: str) -> str:
+    encoded = base64.b64encode(svg_text.encode("utf-8")).decode("ascii")
+    return f"data:image/svg+xml;base64,{encoded}"
+
+
+def _svg_dark_variant(svg_text: str) -> str:
+    transformed = svg_text
+    for source, target in SVG_BACKGROUND_REPLACEMENTS:
+        transformed = transformed.replace(source, target)
+    for source, target in SVG_COLOR_REPLACEMENTS_DARK:
+        transformed = transformed.replace(source, target)
+    return transformed
+
+
+def _svg_data_urls(path: Path) -> tuple[str | None, str | None]:
+    if not path.exists() or not path.is_file():
+        return (None, None)
+    raw = path.read_text(encoding="utf-8", errors="replace")
+    return (_svg_data_url_from_text(raw), _svg_data_url_from_text(_svg_dark_variant(raw)))
+
+
 def _load_detail_assets(material_id: str, global_data: Any) -> dict[str, Any]:
     details_root = _detail_assets_root(global_data)
     figures: list[dict[str, Any]] = []
@@ -178,8 +216,12 @@ def _load_detail_assets(material_id: str, global_data: Any) -> dict[str, Any]:
 
     available_count = 0
     for spec in DETAIL_FIGURE_SPECS:
-        data_url = _svg_data_url(details_dir / spec["filename"])
-        available = data_url is not None
+        light_data_url, dark_data_url = _svg_data_urls(details_dir / spec["filename"])
+        if light_data_url is None:
+            # Backward-compatible support for separately generated dark variants.
+            dark_filename = f"{Path(spec['filename']).stem}_dark.svg"
+            dark_data_url = _svg_data_url(details_dir / dark_filename)
+        available = light_data_url is not None
         if available:
             available_count += 1
         figures.append(
@@ -191,7 +233,8 @@ def _load_detail_assets(material_id: str, global_data: Any) -> dict[str, Any]:
                 "alt": spec["alt"],
                 "layout_class": spec["layout_class"],
                 "available": available,
-                "data_url": data_url or "",
+                "data_url": light_data_url or "",
+                "dark_data_url": dark_data_url or "",
             }
         )
 

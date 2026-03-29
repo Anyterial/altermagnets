@@ -44,12 +44,21 @@
         </div>
       </header>
 
+      {% set current_page = page.relurl if page.relurl else 'index' %}
+      {% if current_page == 'material' %}
+      {% set current_section = 'search' %}
+      {% elif current_page == 'index' %}
+      {% set current_section = 'home' %}
+      {% else %}
+      {% set current_section = current_page %}
+      {% endif %}
+
       <nav class="page-tabs" aria-label="Primary">
-        <a href="{{ page.relbaseurl }}/index" class="page-tab">Home</a>
-        <a href="{{ page.relbaseurl }}/search" class="page-tab">Search</a>
-        <a href="{{ page.relbaseurl }}/highlights" class="page-tab">Highlights</a>
-        <a href="{{ page.relbaseurl }}/about" class="page-tab">About</a>
-        <a href="{{ page.relbaseurl }}/how-to-cite" class="page-tab">How to cite</a>
+        <a href="{{ page.relbaseurl }}/index" class="page-tab{% if current_section == 'home' %} is-active{% endif %}">Home</a>
+        <a href="{{ page.relbaseurl }}/search" class="page-tab{% if current_section == 'search' %} is-active{% endif %}">Search</a>
+        <a href="{{ page.relbaseurl }}/highlights" class="page-tab{% if current_section == 'highlights' %} is-active{% endif %}">Highlights</a>
+        <a href="{{ page.relbaseurl }}/about" class="page-tab{% if current_section == 'about' %} is-active{% endif %}">About</a>
+        <a href="{{ page.relbaseurl }}/how-to-cite" class="page-tab{% if current_section == 'how-to-cite' %} is-active{% endif %}">How to cite</a>
       </nav>
 
       <div class="layout-grid">

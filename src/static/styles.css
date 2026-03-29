@@ -343,7 +343,9 @@ html[data-theme="dark"] .theme-icon {
   background: var(--surface);
   color: var(--ink);
   font-size: 15px;
+  line-height: 1.2;
   padding: 12px 14px;
+  min-height: 46px;
   width: 100%;
 }
 

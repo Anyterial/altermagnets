@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
+from formula_katex import katex_formula_inline
 
 ELEMENT_PATTERN = re.compile(r"[A-Z][a-z]?")
 SCREENING_RESULTS_FILENAME = "high_throughput_screening_results_fixed.csv"
@@ -423,6 +424,7 @@ def _material_card(entry: dict[str, Any]) -> dict[str, Any]:
     return {
         "material_id": entry["material_id"],
         "material": entry["material"],
+        "material_label": katex_formula_inline(entry.get("formula") or entry["material"]) or entry["material"],
         "space_group": entry["space_group"],
         "classification_label": _classification_label(entry["classification"]),
         "max_ss_display": _format_decimal(entry["max_ss"]),

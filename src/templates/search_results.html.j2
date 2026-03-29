@@ -74,7 +74,7 @@
       {% for item in result["items"] %}
       <tr class="result-row" data-row-url="{{ page.relbaseurl }}/material?id={{ item.material_id }}" tabindex="0">
         <td>
-          <div class="cell-title">{{ item.material }}</div>
+          <div class="cell-title">{{ item.material_label if item.material_label else item.material }}</div>
           <div class="cell-meta">{{ item.magnetic_phase_label }} | wave {{ item.wave_class_label }}</div>
         </td>
         <td>{{ item.magndata_ids | join(", ") }}</td>

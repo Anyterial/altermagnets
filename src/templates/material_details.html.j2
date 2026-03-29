@@ -1,7 +1,7 @@
 {% if result %}
 <article class="material-detail">
   <header class="material-header">
-    <h2>{{ result.material }}</h2>
+    <h2>{{ result.material_label if result.material_label else result.material }}</h2>
     <p class="meta-line">{{ result.space_group }} | {{ result.classification_label }} | {{ result.electronic_type_label }}</p>
     <div class="badge-row">
       <span class="badge">{{ result.magnetic_phase_label }}</span>
@@ -229,7 +229,7 @@
         <div class="linked-entry-header">
           <div>
             <h4>MAGNDATA {{ entry.magndata_id }}</h4>
-            <p class="section-note">{{ entry.formula }}</p>
+            <p class="section-note">{{ entry.formula_label if entry.formula_label else entry.formula }}</p>
           </div>
           <a class="secondary-button compact-button" href="{{ entry.magndata_url }}">
             Open entry

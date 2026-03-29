@@ -1,6 +1,7 @@
 from math import isfinite
 from typing import Any
 
+from formula_katex import katex_formula_inline
 from input_sanitize import sanitize_search_inputs
 
 CLASSIFICATION_LABELS = {
@@ -112,8 +113,11 @@ def _text_tokens(value: str) -> list[str]:
 def _decorate_row(row: dict[str, Any]) -> dict[str, Any]:
     magnetic_phases = _split_pipe(row.get("magnetic_phases_text"))
     wave_classes = _split_pipe(row.get("wave_classes_text"))
+    material = row.get("material") or ""
+    formula = row.get("formula") or material
     return {
         **row,
+        "material_label": katex_formula_inline(formula) or material,
         "classification_label": CLASSIFICATION_LABELS.get(row["classification"], row["classification"]),
         "electronic_type_label": ELECTRONIC_TYPE_LABELS.get(row["electronic_type"], row["electronic_type"]),
         "magndata_ids": _split_pipe(row.get("magndata_ids_text")),

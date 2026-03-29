@@ -13,7 +13,7 @@
     <div class="highlight-grid">
       {% for item in featured_materials.picked_interesting %}
       <a class="highlight-card highlight-link" href="{{ page.relbaseurl }}/material?id={{ item.material_id }}">
-        <h3>{{ item.material }}</h3>
+        <h3>{{ item.material_label if item.material_label else item.material }}</h3>
         <p>{{ item.space_group }} | {{ item.classification_label }}</p>
         <p><strong>Max SS:</strong> {{ item.max_ss_display }} eV</p>
       </a>
@@ -30,7 +30,7 @@
     <div class="highlight-grid">
       {% for item in featured_materials.largest_splitting %}
       <a class="highlight-card highlight-link" href="{{ page.relbaseurl }}/material?id={{ item.material_id }}">
-        <h3>{{ item.material }}</h3>
+        <h3>{{ item.material_label if item.material_label else item.material }}</h3>
         <p>{{ item.space_group }} | {{ item.classification_label }}</p>
         <p><strong>Max SS:</strong> {{ item.max_ss_display }} eV</p>
       </a>
@@ -46,7 +46,7 @@
     <div class="highlight-grid">
       {% for item in featured_materials.wide_gap %}
       <a class="highlight-card highlight-link" href="{{ page.relbaseurl }}/material?id={{ item.material_id }}">
-        <h3>{{ item.material }}</h3>
+        <h3>{{ item.material_label if item.material_label else item.material }}</h3>
         <p>{{ item.space_group }} | {{ item.classification_label }}</p>
         <p><strong>Band gap:</strong> {{ item.bandgap_display }} eV</p>
       </a>
@@ -62,7 +62,7 @@
     <div class="highlight-grid">
       {% for item in featured_materials.earth_abundant %}
       <a class="highlight-card highlight-link" href="{{ page.relbaseurl }}/material?id={{ item.material_id }}">
-        <h3>{{ item.material }}</h3>
+        <h3>{{ item.material_label if item.material_label else item.material }}</h3>
         <p>{{ item.space_group }} | {{ item.classification_label }}</p>
         <p><strong>Min abundance:</strong> {{ item.abundance_display }}</p>
       </a>

@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from formula_katex import katex_formula_inline
 from input_sanitize import sanitize_material_id
 
 CLASSIFICATION_LABELS = {
@@ -306,12 +307,14 @@ def _decorate_linked_entry(row: dict[str, Any]) -> dict[str, Any]:
     wave_classes = _split_pipe(row.get("wave_classes_text"))
     warnings = _split_pipe(row.get("warnings_text"))
     notes = _split_pipe(row.get("notes_text"))
+    formula = row.get("formula") or ""
     return {
         "magndata_id": row["magndata_id"],
         "source_kind": row.get("source_kind") or "",
         "source_label": CLASSIFICATION_LABELS.get(row.get("source_kind") or "", "No symmetry table entry"),
         "magndata_url": _magndata_url(row["magndata_id"]),
-        "formula": row.get("formula") or "",
+        "formula": formula,
+        "formula_label": katex_formula_inline(formula) or formula,
         "symprec_display": _format_decimal(row.get("symprec"), digits=5),
         "symprec_variants": row.get("symprec_variants") or 0,
         "phase_label": ", ".join(magnetic_phases) if magnetic_phases else "n/a",
@@ -430,9 +433,12 @@ def execute(global_data, id: str = "", **kwargs):
     magndata_ids = _split_pipe(material.get("magndata_ids_text"))
     icsd_ids = _split_pipe(material.get("icsd_ids_text"))
     doi_values = _split_pipe(material.get("doi_text"))
+    material_formula = material.get("formula") or material.get("material") or ""
+    material_label = katex_formula_inline(material_formula) or material.get("material") or ""
 
     return {
         **material,
+        "material_label": material_label,
         "classification_label": CLASSIFICATION_LABELS.get(material["classification"], material["classification"]),
         "classification_note": CLASSIFICATION_NOTES.get(material["classification"], ""),
         "electronic_type_label": ELECTRONIC_TYPE_LABELS.get(material["electronic_type"], material["electronic_type"]),

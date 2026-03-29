@@ -1,6 +1,7 @@
+import asyncio
 from pathlib import Path
 
-from starlette.testclient import TestClient
+import httpx
 
 from httk.web import create_asgi_app
 
@@ -11,11 +12,19 @@ DETAIL_ASSET_PATHS = [
 ]
 
 
-def test_home_page_renders_without_cookies() -> None:
+def _request(path: str, *, params: dict[str, str] | None = None) -> httpx.Response:
     app = create_asgi_app(ROOT / "src", config_name="config_dynamic")
 
-    with TestClient(app) as client:
-        response = client.get("/")
+    async def _call() -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.get(path, params=params)
+
+    return asyncio.run(_call())
+
+
+def test_home_page_renders_without_cookies() -> None:
+    response = _request("/")
 
     assert response.status_code == 200
     assert "Altermagnets Database" in response.text
@@ -23,11 +32,8 @@ def test_home_page_renders_without_cookies() -> None:
 
 
 def test_search_page_handles_local_dataset_or_missing_mount() -> None:
-    app = create_asgi_app(ROOT / "src", config_name="config_dynamic")
-
-    with TestClient(app) as client:
-        response = client.get("/search", params={"q": "CrSb"})
-        trailing_zero_response = client.get("/search", params={"q": "0.800"})
+    response = _request("/search", params={"q": "CrSb"})
+    trailing_zero_response = _request("/search", params={"q": "0.800"})
 
     assert response.status_code == 200
     if DATASET_PATH.exists():
@@ -39,10 +45,7 @@ def test_search_page_handles_local_dataset_or_missing_mount() -> None:
 
 
 def test_material_detail_page_handles_local_dataset_or_missing_mount() -> None:
-    app = create_asgi_app(ROOT / "src", config_name="config_dynamic")
-
-    with TestClient(app) as client:
-        response = client.get("/material", params={"id": "amdb-1-0001"})
+    response = _request("/material", params={"id": "amdb-1-0001"})
 
     assert response.status_code == 200
     if DATASET_PATH.exists():
@@ -57,8 +60,6 @@ def test_material_detail_page_handles_local_dataset_or_missing_mount() -> None:
 
 
 def test_search_handles_unexpected_query_payloads_without_crashing() -> None:
-    app = create_asgi_app(ROOT / "src", config_name="config_dynamic")
-
     weird_query = "''; DROP TABLE materials; -- \x00 \xff \\u202e"
     params = {
         "q": weird_query,
@@ -71,8 +72,7 @@ def test_search_handles_unexpected_query_payloads_without_crashing() -> None:
         "sort": "screening_rank; DROP TABLE materials;",
     }
 
-    with TestClient(app) as client:
-        response = client.get("/search", params=params)
+    response = _request("/search", params=params)
 
     assert response.status_code == 200
     assert response.headers.get("set-cookie") is None
@@ -83,8 +83,6 @@ def test_search_handles_unexpected_query_payloads_without_crashing() -> None:
 
 
 def test_search_handles_numeric_edge_case_inputs_without_crashing() -> None:
-    app = create_asgi_app(ROOT / "src", config_name="config_dynamic")
-
     params = {
         "min_max_ss": "nan",
         "min_avg_ss": "inf",
@@ -94,8 +92,7 @@ def test_search_handles_numeric_edge_case_inputs_without_crashing() -> None:
         "min_abundance_ppm": "nan",
     }
 
-    with TestClient(app) as client:
-        response = client.get("/search", params=params)
+    response = _request("/search", params=params)
 
     assert response.status_code == 200
     if DATASET_PATH.exists():
@@ -105,10 +102,7 @@ def test_search_handles_numeric_edge_case_inputs_without_crashing() -> None:
 
 
 def test_material_detail_handles_path_traversal_like_identifier_safely() -> None:
-    app = create_asgi_app(ROOT / "src", config_name="config_dynamic")
-
-    with TestClient(app) as client:
-        response = client.get("/material", params={"id": "../../etc/passwd"})
+    response = _request("/material", params={"id": "../../etc/passwd"})
 
     assert response.status_code == 200
     assert "Material id not found." in response.text

@@ -185,8 +185,9 @@
   <section class="detail-section">
     <h3>Symmetry screening</h3>
     <p class="section-note">
-      The summary table gives the compact result for each linked MAGNDATA entry. The expanded records below retain the
-      more detailed symmetry quantities, including wave classification and noncollinear-to-collinear mismatch metrics.
+      The summary table shows one row per linked MAGNDATA record and symmetry-precision variant. If a MAGNDATA ID has
+      multiple Spglib <code>symprec</code> values in the source data, it appears on multiple rows. The cards below keep
+      the same expanded per-variant detail view, including wave classification and mismatch metrics.
     </p>
     {% if result.linked_entries %}
     <div class="table-wrap symmetry-table-wrap">

@@ -414,7 +414,10 @@ def execute(global_data, id: str = "", **kwargs):
             LEFT JOIN symmetry_entries AS se
                 ON se.magndata_id = mm.magndata_id
             WHERE mm.material_id = ?
-            ORDER BY mm.ordinal ASC, se.source_kind ASC
+            ORDER BY
+                mm.ordinal ASC,
+                se.source_kind ASC,
+                se.symprec ASC NULLS LAST
             """,
             [material_id],
         )

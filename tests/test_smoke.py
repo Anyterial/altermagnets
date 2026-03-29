@@ -18,7 +18,7 @@ def test_home_page_renders_without_cookies() -> None:
         response = client.get("/")
 
     assert response.status_code == 200
-    assert "Anyterial altermagnets" in response.text
+    assert "Altermagnets Database" in response.text
     assert response.headers.get("set-cookie") is None
 
 
@@ -49,7 +49,7 @@ def test_material_detail_page_handles_local_dataset_or_missing_mount() -> None:
         assert "MAGNDATA" in response.text
         assert "index=0.528" in response.text
         if any(path.exists() for path in DETAIL_ASSET_PATHS):
-            assert "Calculated figures" in response.text
+            assert "Figures" in response.text
             assert "Spin-split band structure" in response.text
             assert "data:image/svg+xml;base64," in response.text
     else:

@@ -1,293 +1,340 @@
 {% if result %}
-<section class="material-card">
+<article class="material-detail">
   <header class="material-header">
     <h2>{{ result.material }}</h2>
-    <p class="meta-line">{{ result.space_group }} | {{ result.classification_label }} | MAGNDATA {{ result.magndata_ids_display }}</p>
+    <p class="meta-line">{{ result.space_group }} | {{ result.classification_label }} | {{ result.electronic_type_label }}</p>
     <div class="badge-row">
-      <span class="badge">{{ result.electronic_type_label }}</span>
       <span class="badge">{{ result.magnetic_phase_label }}</span>
       <span class="badge">wave {{ result.wave_class_label }}</span>
     </div>
   </header>
 
-  <div class="detail-sections">
-    <section class="detail-subcard">
-      <h3>Identity</h3>
-      <p class="section-note">{{ result.classification_note }}</p>
-      <dl class="details-grid">
-        <div>
-          <dt>MAGNDATA IDs</dt>
-          <dd>{{ result.magndata_ids_display }}</dd>
-        </div>
-        <div>
-          <dt>MAGNDATA links</dt>
-          <dd>
-            {% if result.magndata_links %}
-            <ul class="inline-link-list">
-              {% for link in result.magndata_links %}
-              <li>
-                <a href="{{ link.url }}">
-                  {{ link.id }}
-                  <img class="inline-icon" src="{{ page.relbaseurl }}/icons/Hicon_Pack_1/external-link.svg" alt="" aria-hidden="true" />
-                </a>
-              </li>
-              {% endfor %}
-            </ul>
-            {% else %}
-            n/a
-            {% endif %}
-          </dd>
-        </div>
-        <div>
-          <dt>Elements</dt>
-          <dd>{{ result.elements_display }}</dd>
-        </div>
-        <div>
-          <dt>Space group</dt>
-          <dd>{{ result.space_group }}</dd>
-        </div>
-        <div class="details-wide">
-          <dt>
-            Parent space group(s)
-            <span tabindex="0" class="info-dot" role="button" aria-label="More information">
-              i
-              <span class="info-bubble" role="tooltip">
-                <span class="info-bubble-paragraph">
-                  Parent nonmagnetic space group(s) reported by the MAGNDATA-based symmetry analysis after Spglib standardisation.
-                </span>
-              </span>
-            </span>
-          </dt>
-          <dd>{{ result.parent_spacegroup_label }}</dd>
-        </div>
-        <div class="details-wide">
-          <dt>ICSD IDs</dt>
-          <dd>{% if result.icsd_ids %}{{ result.icsd_ids | join(", ") }}{% else %}n/a{% endif %}</dd>
-        </div>
-        <div class="details-wide">
-          <dt>References</dt>
-          <dd>
-            {% if result.doi_links %}
-            <ul class="inline-link-list">
-              {% for link in result.doi_links %}
-              <li>
-                <a href="{{ link.url }}">
-                  {{ link.label }}
-                  <img class="inline-icon" src="{{ page.relbaseurl }}/icons/Hicon_Pack_1/external-link.svg" alt="" aria-hidden="true" />
-                </a>
-              </li>
-              {% endfor %}
-            </ul>
-            {% else %}
-            n/a
-            {% endif %}
-          </dd>
-        </div>
-      </dl>
-    </section>
+  <p class="section-note material-summary">{{ result.classification_note }}</p>
 
-    <section class="detail-subcard">
-      <h3>Properties</h3>
-      <dl class="details-grid">
-        <div>
-          <dt>Band gap</dt>
-          <dd>{{ result.bandgap_display }} eV</dd>
-        </div>
-        <div>
-          <dt>Electronic type</dt>
-          <dd>{{ result.electronic_type_label }}</dd>
-        </div>
-        <div class="details-wide">
-          <dt>Min abundance</dt>
-          <dd>{{ result.abundance_display }}</dd>
-        </div>
-      </dl>
-    </section>
-
-    <section class="detail-subcard">
-      <div class="detail-figure-heading">
-        <h3>Calculated figures</h3>
-        <p class="section-note">
-          {{ result.detail_figure_count }} of {{ result.detail_figure_total }} detail figures available from the mounted calculation archive.
-          {% if result.detail_raw_path %}
-          <span class="figure-path-label">Raw run</span>
-          <code class="path-chip">{{ result.detail_raw_path }}</code>
-          {% endif %}
-        </p>
+  <section class="detail-section">
+    <h3>Identity</h3>
+    <dl class="details-grid">
+      <div>
+        <dt>Elements</dt>
+        <dd>{{ result.elements_display }}</dd>
       </div>
-      <div class="figure-grid">
-        {% for figure in result.detail_figures %}
-        <figure class="figure-card {{ figure.layout_class }}{% if not figure.available %} is-missing{% endif %}">
-          <figcaption class="figure-caption">
-            <h4>{{ figure.title }}</h4>
-            <p>{{ figure.summary }}</p>
-          </figcaption>
-          {% if figure.available %}
-          <div class="figure-visual">
-            <img src="{{ figure.data_url }}" alt="{{ figure.alt }}" loading="lazy" />
-          </div>
+      <div>
+        <dt>Space group</dt>
+        <dd>{{ result.space_group }}</dd>
+      </div>
+      <div>
+        <dt>MAGNDATA IDs</dt>
+        <dd>
+          {% if result.magndata_links %}
+          <ul class="comma-link-list">
+            {% for link in result.magndata_links %}
+            <li>
+              <a href="{{ link.url }}">
+                {{ link.id }}
+                <img class="inline-icon" src="{{ page.relbaseurl }}/icons/Hicon_Pack_1/external-link.svg" alt="" aria-hidden="true" />
+              </a>
+            </li>
+            {% endfor %}
+          </ul>
           {% else %}
-          <div class="figure-placeholder">
-            <p>{{ figure.empty_message }}</p>
-          </div>
+          n/a
           {% endif %}
-        </figure>
-        {% endfor %}
+        </dd>
       </div>
-    </section>
+      <div>
+        <dt>ICSD IDs</dt>
+        <dd>{% if result.icsd_ids %}{{ result.icsd_ids | join(", ") }}{% else %}n/a{% endif %}</dd>
+      </div>
+      <div class="details-wide">
+        <dt>
+          Parent space group(s)
+          <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+            i
+            <span class="info-bubble" role="tooltip">
+              <span class="info-bubble-paragraph">
+                Parent nonmagnetic space group(s) reported by the MAGNDATA-based symmetry analysis after Spglib standardisation.
+              </span>
+            </span>
+          </span>
+        </dt>
+        <dd>{{ result.parent_spacegroup_label }}</dd>
+      </div>
+      <div class="details-wide">
+        <dt>References</dt>
+        <dd>
+          {% if result.doi_links %}
+          <ul class="inline-link-list">
+            {% for link in result.doi_links %}
+            <li>
+              <a href="{{ link.url }}">
+                {{ link.label }}
+                <img class="inline-icon" src="{{ page.relbaseurl }}/icons/Hicon_Pack_1/external-link.svg" alt="" aria-hidden="true" />
+              </a>
+            </li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          n/a
+          {% endif %}
+        </dd>
+      </div>
+    </dl>
+  </section>
 
-    <section class="detail-subcard">
-      <h3>Spin-splitting metrics</h3>
-      <dl class="metrics-grid">
-        <div class="metric-panel">
-          <dt>
-            Max SS
-            <span tabindex="0" class="info-dot" role="button" aria-label="More information">
-              i
-              <span class="info-bubble" role="tooltip">
-                <span class="info-bubble-paragraph">
-                  Largest spin splitting identified within ±3 eV of the Fermi level in the high-throughput DFT workflow.
-                </span>
-              </span>
-            </span>
-          </dt>
-          <dd>{{ result.max_ss_display }} eV</dd>
-        </div>
-        <div class="metric-panel">
-          <dt>
-            Avg SS
-            <span tabindex="0" class="info-dot" role="button" aria-label="More information">
-              i
-              <span class="info-bubble" role="tooltip">
-                <span class="info-bubble-paragraph">
-                  Brillouin-zone average of the largest spin splitting at each sampled k-point in the same energy window.
-                </span>
-              </span>
-            </span>
-          </dt>
-          <dd>{{ result.avg_ss_display }} eV</dd>
-        </div>
-        <div class="metric-panel">
-          <dt>
-            FΔ
-            <span tabindex="0" class="info-dot" role="button" aria-label="More information">
-              i
-              <span class="info-bubble" role="tooltip">
-                <span class="info-bubble-paragraph">
-                  Fraction of near-Fermi bands and sampled k-space showing appreciable spin splitting after the numerical noise cutoff.
-                </span>
-              </span>
-            </span>
-          </dt>
-          <dd>{{ result.fdelta_display }}</dd>
-        </div>
-      </dl>
-    </section>
+  <section class="detail-section">
+    <h3>Properties</h3>
+    <dl class="details-grid">
+      <div>
+        <dt>Band gap</dt>
+        <dd>{{ result.bandgap_display }} eV</dd>
+      </div>
+      <div>
+        <dt>Electronic type</dt>
+        <dd>{{ result.electronic_type_label }}</dd>
+      </div>
+      <div class="details-wide">
+        <dt>Min abundance</dt>
+        <dd>{{ result.abundance_display }}</dd>
+      </div>
+    </dl>
+  </section>
 
-    <section class="detail-subcard">
-      <h3>Symmetry screening</h3>
+  <section class="detail-section">
+    <h3>Spin-splitting metrics</h3>
+    <dl class="metrics-grid">
+      <div class="metric-panel">
+        <dt>
+          Max SS
+          <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+            i
+            <span class="info-bubble" role="tooltip">
+              <span class="info-bubble-paragraph">
+                Largest spin splitting identified within ±3 eV of the Fermi level in the high-throughput DFT workflow.
+              </span>
+            </span>
+          </span>
+        </dt>
+        <dd>{{ result.max_ss_display }} eV</dd>
+      </div>
+      <div class="metric-panel">
+        <dt>
+          Avg SS
+          <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+            i
+            <span class="info-bubble" role="tooltip">
+              <span class="info-bubble-paragraph">
+                Brillouin-zone average of the largest spin splitting at each sampled k-point in the same energy window.
+              </span>
+            </span>
+          </span>
+        </dt>
+        <dd>{{ result.avg_ss_display }} eV</dd>
+      </div>
+      <div class="metric-panel">
+        <dt>
+          FΔ
+          <span tabindex="0" class="info-dot" role="button" aria-label="More information">
+            i
+            <span class="info-bubble" role="tooltip">
+              <span class="info-bubble-paragraph">
+                Fraction of near-Fermi bands and sampled k-space showing appreciable spin splitting after the numerical noise cutoff.
+              </span>
+            </span>
+          </span>
+        </dt>
+        <dd>{{ result.fdelta_display }}</dd>
+      </div>
+    </dl>
+  </section>
+
+  <section class="detail-section">
+    <div class="detail-figure-heading">
+      <h3>Figures</h3>
       <p class="section-note">
-        Each card below expands one linked MAGNDATA entry. For noncollinear-derived records, the spin-angle mismatch
-        reports how much the original noncollinear moments had to be rotated during the collinearisation step.
+        {{ result.detail_figure_count }} of {{ result.detail_figure_total }} detail figures available from the mounted calculation archive.
+        {% if result.detail_raw_path %}
+        <span class="figure-path-label">Raw run</span>
+        <code class="path-chip">{{ result.detail_raw_path }}</code>
+        {% endif %}
       </p>
-      {% if result.linked_entries %}
-      <div class="linked-entry-list">
-        {% for entry in result.linked_entries %}
-        <section class="linked-entry-card">
-          <div class="linked-entry-header">
-            <div>
-              <h4>MAGNDATA {{ entry.magndata_id }}</h4>
-              <p class="section-note">{{ entry.source_label }} | {{ entry.phase_label }} | wave {{ entry.wave_class_label }}</p>
-            </div>
-            <a class="secondary-button compact-button" href="{{ entry.magndata_url }}">
-              Open entry
-              <img class="inline-icon" src="{{ page.relbaseurl }}/icons/Hicon_Pack_1/external-link.svg" alt="" aria-hidden="true" />
-            </a>
-          </div>
-          <dl class="details-grid linked-entry-grid">
-            <div>
-              <dt>BNS (mcif)</dt>
-              <dd>{{ entry.bns_mcif_label }}</dd>
-            </div>
-            <div>
-              <dt>BNS</dt>
-              <dd>{{ entry.bns_label }}</dd>
-            </div>
-            <div>
-              <dt>Effective BNS</dt>
-              <dd>{{ entry.effective_bns_label }}</dd>
-            </div>
-            <div>
-              <dt>Parent SG</dt>
-              <dd>{{ entry.parent_spacegroup_label }}</dd>
-            </div>
-            <div>
-              <dt>SP</dt>
-              <dd>{{ entry.symprec_display }}</dd>
-            </div>
-            <div>
-              <dt>G Laue class</dt>
-              <dd>{{ entry.g_laue_class_label }}</dd>
-            </div>
-            <div>
-              <dt>H Laue class</dt>
-              <dd>{{ entry.h_laue_class_label }}</dd>
-            </div>
-            <div>
-              <dt>Connecting element</dt>
-              <dd>{{ entry.connecting_element_label }}</dd>
-            </div>
-            <div>
-              <dt>Spin-angle mismatch</dt>
-              <dd>{% if entry.spin_angle_mismatch_display == "n/a" %}n/a{% else %}{{ entry.spin_angle_mismatch_display }}&deg;{% endif %}</dd>
-            </div>
-            <div>
-              <dt>Spin-length mismatch</dt>
-              <dd>{{ entry.spin_length_mismatch_display }}</dd>
-            </div>
-            <div class="details-wide">
-              <dt>Reference links</dt>
-              <dd>
-                {% if entry.reference_links %}
-                <ul class="inline-link-list">
-                  {% for link in entry.reference_links %}
-                  <li>
-                    <a href="{{ link.url }}">
-                      {{ link.label }}
-                      <img class="inline-icon" src="{{ page.relbaseurl }}/icons/Hicon_Pack_1/external-link.svg" alt="" aria-hidden="true" />
-                    </a>
-                  </li>
-                  {% endfor %}
-                </ul>
-                {% else %}
-                n/a
-                {% endif %}
-              </dd>
-            </div>
-          </dl>
-        </section>
-        {% endfor %}
-      </div>
-      {% else %}
-      <p class="empty">No linked symmetry records are available for this entry.</p>
-      {% endif %}
-    </section>
+    </div>
+    <div class="figure-grid">
+      {% for figure in result.detail_figures %}
+      <figure class="figure-card {{ figure.layout_class }}{% if not figure.available %} is-missing{% endif %}">
+        <figcaption class="figure-caption">
+          <h4>{{ figure.title }}</h4>
+          <p>{{ figure.summary }}</p>
+        </figcaption>
+        {% if figure.available %}
+        <div class="figure-visual">
+          <img src="{{ figure.data_url }}" alt="{{ figure.alt }}" loading="lazy" />
+        </div>
+        {% else %}
+        <div class="figure-placeholder">
+          <p>{{ figure.empty_message }}</p>
+        </div>
+        {% endif %}
+      </figure>
+      {% endfor %}
+    </div>
+  </section>
 
-    {% if result.warnings or result.notes %}
-    <section class="detail-subcard">
-      <h3>Notes and warnings</h3>
-      <ul class="message-list">
-        {% for item in result.warnings %}
-        <li>{{ item }}</li>
-        {% endfor %}
-        {% for item in result.notes %}
-        <li>{{ item }}</li>
-        {% endfor %}
-      </ul>
-    </section>
+  <section class="detail-section">
+    <h3>Symmetry screening</h3>
+    <p class="section-note">
+      The summary table gives the compact result for each linked MAGNDATA entry. The expanded records below retain the
+      more detailed symmetry quantities, including wave classification and noncollinear-to-collinear mismatch metrics.
+    </p>
+    {% if result.linked_entries %}
+    <div class="table-wrap symmetry-table-wrap">
+      <table class="results-table symmetry-table">
+        <thead>
+          <tr>
+            <th>MAGNDATA ID</th>
+            <th>Origin</th>
+            <th>Phase</th>
+            <th>Wave</th>
+            <th>BNS (mcif)</th>
+            <th>G</th>
+            <th>H</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in result.linked_entries %}
+          <tr>
+            <td>
+              <a href="{{ entry.magndata_url }}">
+                {{ entry.magndata_id }}
+                <img class="inline-icon" src="{{ page.relbaseurl }}/icons/Hicon_Pack_1/external-link.svg" alt="" aria-hidden="true" />
+              </a>
+            </td>
+            <td>{{ entry.source_label }}</td>
+            <td>{{ entry.phase_label }}</td>
+            <td>{{ entry.wave_class_label }}</td>
+            <td>{{ entry.bns_mcif_label }}</td>
+            <td>{{ entry.g_laue_class_label }}</td>
+            <td>{{ entry.h_laue_class_label }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="linked-entry-list">
+      {% for entry in result.linked_entries %}
+      <section class="linked-entry-card">
+        <div class="linked-entry-header">
+          <div>
+            <h4>MAGNDATA {{ entry.magndata_id }}</h4>
+            <p class="section-note">{{ entry.formula }}</p>
+          </div>
+          <a class="secondary-button compact-button" href="{{ entry.magndata_url }}">
+            Open entry
+            <img class="inline-icon" src="{{ page.relbaseurl }}/icons/Hicon_Pack_1/external-link.svg" alt="" aria-hidden="true" />
+          </a>
+        </div>
+
+        <div class="linked-entry-facts">
+          <div class="linked-entry-fact">
+            <span class="fact-label">Origin</span>
+            <strong>{{ entry.source_label }}</strong>
+          </div>
+          <div class="linked-entry-fact">
+            <span class="fact-label">Phase</span>
+            <strong>{{ entry.phase_label }}</strong>
+          </div>
+          <div class="linked-entry-fact">
+            <span class="fact-label">Wave</span>
+            <strong>{{ entry.wave_class_label }}</strong>
+            {% if entry.wave_class_full_label != "n/a" %}
+            <span class="fact-note">{{ entry.wave_class_full_label }}</span>
+            {% endif %}
+          </div>
+        </div>
+
+        <dl class="details-grid linked-entry-grid">
+          <div>
+            <dt>BNS (mcif)</dt>
+            <dd>{{ entry.bns_mcif_label }}</dd>
+          </div>
+          <div>
+            <dt>BNS</dt>
+            <dd>{{ entry.bns_label }}</dd>
+          </div>
+          <div>
+            <dt>Effective BNS</dt>
+            <dd>{{ entry.effective_bns_label }}</dd>
+          </div>
+          <div>
+            <dt>Parent SG</dt>
+            <dd>{{ entry.parent_spacegroup_label }}</dd>
+          </div>
+          <div>
+            <dt>SP</dt>
+            <dd>{{ entry.symprec_display }}</dd>
+          </div>
+          <div>
+            <dt>Connecting element</dt>
+            <dd>{{ entry.connecting_element_label }}</dd>
+          </div>
+          <div>
+            <dt>G Laue class</dt>
+            <dd>{{ entry.g_laue_class_label }}</dd>
+          </div>
+          <div>
+            <dt>H Laue class</dt>
+            <dd>{{ entry.h_laue_class_label }}</dd>
+          </div>
+          <div>
+            <dt>Spin-angle mismatch</dt>
+            <dd>{% if entry.spin_angle_mismatch_display == "n/a" %}n/a{% else %}{{ entry.spin_angle_mismatch_display }}&deg;{% endif %}</dd>
+          </div>
+          <div>
+            <dt>Spin-length mismatch</dt>
+            <dd>{{ entry.spin_length_mismatch_display }}</dd>
+          </div>
+          <div class="details-wide">
+            <dt>Reference links</dt>
+            <dd>
+              {% if entry.reference_links %}
+              <ul class="inline-link-list">
+                {% for link in entry.reference_links %}
+                <li>
+                  <a href="{{ link.url }}">
+                    {{ link.label }}
+                    <img class="inline-icon" src="{{ page.relbaseurl }}/icons/Hicon_Pack_1/external-link.svg" alt="" aria-hidden="true" />
+                  </a>
+                </li>
+                {% endfor %}
+              </ul>
+              {% else %}
+              n/a
+              {% endif %}
+            </dd>
+          </div>
+        </dl>
+      </section>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty">No linked symmetry records are available for this entry.</p>
     {% endif %}
-  </div>
-</section>
+  </section>
+
+  {% if result.warnings or result.notes %}
+  <section class="detail-section">
+    <h3>Notes and warnings</h3>
+    <ul class="message-list">
+      {% for item in result.warnings %}
+      <li>{{ item }}</li>
+      {% endfor %}
+      {% for item in result.notes %}
+      <li>{{ item }}</li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+</article>
 {% else %}
 <p class="empty">Material id not found.</p>
 {% endif %}

@@ -42,7 +42,7 @@ def _default_details_dir() -> Path:
 
 
 def _default_material_id(index: int) -> str:
-    return f"anyt:amdb-{AMDB_DATASET}-{index:04d}"
+    return f"anyt:am-{AMDB_DATASET}-{index:04d}"
 
 
 def _resolve_data_dir() -> Path:

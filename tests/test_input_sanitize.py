@@ -50,7 +50,7 @@ def test_sanitize_search_inputs_drops_unexpected_chars_and_values() -> None:
 
 
 def test_sanitize_material_id_accepts_expected_pattern_only() -> None:
-    assert MODULE.sanitize_material_id("anyt:amdb-1-0001") == "anyt:amdb-1-0001"
+    assert MODULE.sanitize_material_id("anyt:am-1-0001") == "anyt:am-1-0001"
     assert MODULE.sanitize_material_id("amdb-1-0001") == "amdb-1-0001"
     assert MODULE.sanitize_material_id("../../etc/passwd") == ""
     assert MODULE.sanitize_material_id("anyt:../../etc/passwd") == ""

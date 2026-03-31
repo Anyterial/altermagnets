@@ -7,12 +7,14 @@ from httk.web import create_asgi_app
 
 ROOT = Path(__file__).resolve().parents[1]
 DATASET_PATH = ROOT / "data" / "tables" / "high_throughput_screening_results_fixed.csv"
-PRIMARY_MATERIAL_ID = "anyt:amdb-1-0001"
+PRIMARY_MATERIAL_ID = "anyt:am-1-0001"
 DETAIL_ASSET_PATHS = [
     ROOT / "data" / "details" / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001" / "band.svg",
     ROOT / "data" / "details" / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001" / "band.png",
-    ROOT / "data" / "details" / "amdb-1" / "0" / "00" / "000" / "anyt:amdb-1-0001" / "band.svg",
-    ROOT / "data" / "details" / "amdb-1" / "0" / "00" / "000" / "anyt:amdb-1-0001" / "band.png",
+    ROOT / "data" / "details" / "amdb-1" / "0" / "00" / "000" / "anyt:am-1-0001" / "band.svg",
+    ROOT / "data" / "details" / "amdb-1" / "0" / "00" / "000" / "anyt:am-1-0001" / "band.png",
+    ROOT / "data" / "details" / "am-1" / "0" / "00" / "000" / "anyt:am-1-0001" / "band.svg",
+    ROOT / "data" / "details" / "am-1" / "0" / "00" / "000" / "anyt:am-1-0001" / "band.png",
 ]
 
 

@@ -163,6 +163,105 @@
 
   initBidirectionalSidebar();
 
+  const initFloatingInfoBubbles = () => {
+    const infoDots = Array.from(document.querySelectorAll(".info-dot"));
+    if (infoDots.length === 0) {
+      return;
+    }
+
+    root.classList.add("js-fixed-tooltips");
+    const floatingBubble = document.createElement("div");
+    floatingBubble.className = "floating-info-bubble";
+    floatingBubble.setAttribute("aria-hidden", "true");
+    document.body.appendChild(floatingBubble);
+
+    let activeDot = null;
+
+    const positionBubble = () => {
+      if (!activeDot) {
+        return;
+      }
+      const rect = activeDot.getBoundingClientRect();
+      const margin = 8;
+      const centerX = rect.left + rect.width / 2;
+      let verticalTransform = "translate(-50%, -100%)";
+
+      floatingBubble.style.left = `${centerX}px`;
+      floatingBubble.style.top = `${Math.max(margin, rect.top - margin)}px`;
+      floatingBubble.style.transform = verticalTransform;
+
+      const bubbleRect = floatingBubble.getBoundingClientRect();
+      if (bubbleRect.top < margin) {
+        floatingBubble.style.top = `${rect.bottom + margin}px`;
+        verticalTransform = "translate(-50%, 0)";
+        floatingBubble.style.transform = verticalTransform;
+      }
+
+      const adjustedRect = floatingBubble.getBoundingClientRect();
+      if (adjustedRect.left < margin) {
+        floatingBubble.style.left = `${margin}px`;
+        floatingBubble.style.transform =
+          verticalTransform === "translate(-50%, 0)" ? "translate(0, 0)" : "translate(0, -100%)";
+      } else if (adjustedRect.right > window.innerWidth - margin) {
+        floatingBubble.style.left = `${window.innerWidth - margin}px`;
+        floatingBubble.style.transform =
+          verticalTransform === "translate(-50%, 0)" ? "translate(-100%, 0)" : "translate(-100%, -100%)";
+      }
+    };
+
+    const hideBubble = () => {
+      activeDot = null;
+      floatingBubble.classList.remove("is-visible");
+      floatingBubble.innerHTML = "";
+    };
+
+    const showBubble = (dot) => {
+      const sourceBubble = dot.querySelector(".info-bubble");
+      if (!sourceBubble) {
+        return;
+      }
+      activeDot = dot;
+      floatingBubble.innerHTML = sourceBubble.innerHTML;
+      floatingBubble.classList.add("is-visible");
+      positionBubble();
+    };
+
+    infoDots.forEach((dot) => {
+      dot.addEventListener("mouseenter", () => showBubble(dot));
+      dot.addEventListener("mouseleave", () => {
+        if (activeDot === dot && !dot.matches(":focus")) {
+          hideBubble();
+        }
+      });
+      dot.addEventListener("focus", () => showBubble(dot));
+      dot.addEventListener("blur", () => {
+        if (activeDot === dot) {
+          hideBubble();
+        }
+      });
+      dot.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          hideBubble();
+          dot.blur();
+        }
+      });
+    });
+
+    window.addEventListener("resize", positionBubble, { passive: true });
+    window.addEventListener(
+      "scroll",
+      () => {
+        if (!activeDot) {
+          return;
+        }
+        positionBubble();
+      },
+      { passive: true }
+    );
+  };
+
+  initFloatingInfoBubbles();
+
   if (typeof window.renderMathInElement === "function") {
     window.renderMathInElement(document.body, {
       delimiters: [

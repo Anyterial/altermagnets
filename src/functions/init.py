@@ -42,7 +42,7 @@ def _default_details_dir() -> Path:
 
 
 def _default_material_id(index: int) -> str:
-    return f"amdb-{AMDB_DATASET}-{index:04d}"
+    return f"anyt:amdb-{AMDB_DATASET}-{index:04d}"
 
 
 def _resolve_data_dir() -> Path:
@@ -542,9 +542,9 @@ def _build_search_options() -> dict[str, Any]:
             {"value": "s", "label": "s"},
         ],
         "sorts": [
-            {"value": "screening_rank", "label": "Screening rank"},
-            {"value": "max_ss_desc", "label": "Largest Max SS"},
-            {"value": "avg_ss_desc", "label": "Largest Avg SS"},
+            {"value": "screening_rank", "label": "ID"},
+            {"value": "max_ss_desc", "label": "Largest maximum spin splitting"},
+            {"value": "avg_ss_desc", "label": "Largest average spin splitting"},
             {"value": "bandgap_desc", "label": "Largest band gap"},
             {"value": "abundance_desc", "label": "Most abundant constituents"},
         ],

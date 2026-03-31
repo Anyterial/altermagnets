@@ -18,12 +18,21 @@ ELECTRONIC_TYPE_LABELS = {
 }
 
 SORT_SQL = {
-    "screening_rank": "screening_rank ASC",
-    "max_ss_desc": "max_ss DESC NULLS LAST, screening_rank ASC",
-    "avg_ss_desc": "avg_ss DESC NULLS LAST, screening_rank ASC",
-    "bandgap_desc": "bandgap DESC NULLS LAST, screening_rank ASC",
-    "abundance_desc": "min_abund_ppm DESC NULLS LAST, max_ss DESC NULLS LAST, screening_rank ASC",
+    "screening_rank": "material_id ASC",
+    "max_ss_desc": "max_ss DESC NULLS LAST, material_id ASC",
+    "avg_ss_desc": "avg_ss DESC NULLS LAST, material_id ASC",
+    "bandgap_desc": "bandgap DESC NULLS LAST, material_id ASC",
+    "abundance_desc": "min_abund_ppm DESC NULLS LAST, max_ss DESC NULLS LAST, material_id ASC",
 }
+SORT_LABELS = {
+    "screening_rank": "ID",
+    "max_ss_desc": "Largest maximum spin splitting",
+    "avg_ss_desc": "Largest average spin splitting",
+    "bandgap_desc": "Largest band gap",
+    "abundance_desc": "Most abundant constituents",
+}
+MAX_SPLIT_LABEL = r"$\Delta E^{\mathrm{max}}_{\mathrm{split}}$"
+AVG_SPLIT_LABEL = r"$\Delta E^{\mathrm{avg}}_{\mathrm{split}}$"
 
 MAX_TEXT_TOKEN_LENGTH = 64
 MAX_TEXT_TOKENS = 12
@@ -169,9 +178,9 @@ def _active_filters(
     if space_group.strip():
         filters.append({"label": "Space group", "value": space_group.strip()})
     if min_max_ss.strip():
-        filters.append({"label": "Max SS >=", "value": f"{min_max_ss.strip()} eV"})
+        filters.append({"label": f"{MAX_SPLIT_LABEL} >=", "value": f"{min_max_ss.strip()} eV"})
     if min_avg_ss.strip():
-        filters.append({"label": "Avg SS >=", "value": f"{min_avg_ss.strip()} eV"})
+        filters.append({"label": f"{AVG_SPLIT_LABEL} >=", "value": f"{min_avg_ss.strip()} eV"})
     if min_fdelta_pct.strip():
         filters.append({"label": "FΔ >=", "value": f"{min_fdelta_pct.strip()} %"})
     if min_bandgap.strip():
@@ -181,7 +190,7 @@ def _active_filters(
     if min_abundance_ppm.strip():
         filters.append({"label": "Min abundance >=", "value": f"{min_abundance_ppm.strip()} ppm"})
     if sort and sort != "screening_rank":
-        filters.append({"label": "Sorted by", "value": sort.replace("_", " ")})
+        filters.append({"label": "Sorted by", "value": SORT_LABELS.get(sort, sort.replace("_", " "))})
     return filters
 
 

@@ -14,7 +14,7 @@ CLASSIFICATION_LABELS = {
 ELECTRONIC_TYPE_LABELS = {
     "metallic": "Metallic",
     "semiconducting": "Semiconducting",
-    "unknown": "Band gap unavailable",
+    "unknown": "KS gap unavailable",
 }
 
 SORT_SQL = {
@@ -28,7 +28,7 @@ SORT_LABELS = {
     "screening_rank": "ID",
     "max_ss_desc": "Largest maximum spin splitting",
     "avg_ss_desc": "Largest average spin splitting",
-    "bandgap_desc": "Largest band gap",
+    "bandgap_desc": "Largest KS gap",
     "abundance_desc": "Most abundant constituents",
 }
 MAX_SPLIT_LABEL = r"$\Delta E^{\mathrm{max}}_{\mathrm{split}}$"
@@ -169,7 +169,7 @@ def _active_filters(
         filters.append({"label": "Collinearity", "value": CLASSIFICATION_LABELS.get(classification, classification)})
     if electronic_type:
         filters.append(
-            {"label": "Electronic type", "value": ELECTRONIC_TYPE_LABELS.get(electronic_type, electronic_type)}
+            {"label": "KS Gap Type", "value": ELECTRONIC_TYPE_LABELS.get(electronic_type, electronic_type)}
         )
     if magnetic_phase:
         filters.append({"label": "Phase", "value": magnetic_phase})
@@ -184,9 +184,9 @@ def _active_filters(
     if min_fdelta_pct.strip():
         filters.append({"label": "FΔ >=", "value": f"{min_fdelta_pct.strip()} %"})
     if min_bandgap.strip():
-        filters.append({"label": "Band gap >=", "value": f"{min_bandgap.strip()} eV"})
+        filters.append({"label": "KS Gap >=", "value": f"{min_bandgap.strip()} eV"})
     if max_bandgap.strip():
-        filters.append({"label": "Band gap <=", "value": f"{max_bandgap.strip()} eV"})
+        filters.append({"label": "KS Gap <=", "value": f"{max_bandgap.strip()} eV"})
     if min_abundance_ppm.strip():
         filters.append({"label": "Min abundance >=", "value": f"{min_abundance_ppm.strip()} ppm"})
     if sort and sort != "screening_rank":

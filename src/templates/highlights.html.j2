@@ -48,7 +48,7 @@
       <a class="highlight-card highlight-link" href="{{ page.relbaseurl }}/material?id={{ item.material_id }}">
         <h3>{{ item.material_label if item.material_label else item.material }}</h3>
         <p>{{ item.space_group }} | {{ item.classification_label }}</p>
-        <p><strong>Band gap:</strong> {{ item.bandgap_display }} eV</p>
+        <p><strong>KS Gap:</strong> {{ item.bandgap_display }} eV</p>
       </a>
       {% endfor %}
     </div>

@@ -29,7 +29,7 @@ PAPER_PICKED_MATERIALS: tuple[tuple[str, tuple[str, ...]], ...] = (
 ELECTRONIC_TYPE_LABELS = {
     "metallic": "Metallic",
     "semiconducting": "Semiconducting",
-    "unknown": "Band gap unavailable",
+    "unknown": "KS gap unavailable",
 }
 
 
@@ -528,7 +528,7 @@ def _build_search_options() -> dict[str, Any]:
             {"value": "", "label": "Any type"},
             {"value": "metallic", "label": "Metallic"},
             {"value": "semiconducting", "label": "Semiconducting"},
-            {"value": "unknown", "label": "Band gap unavailable"},
+            {"value": "unknown", "label": "KS gap unavailable"},
         ],
         "magnetic_phases": [
             {"value": "", "label": "Any phase"},
@@ -545,7 +545,7 @@ def _build_search_options() -> dict[str, Any]:
             {"value": "screening_rank", "label": "ID"},
             {"value": "max_ss_desc", "label": "Largest maximum spin splitting"},
             {"value": "avg_ss_desc", "label": "Largest average spin splitting"},
-            {"value": "bandgap_desc", "label": "Largest band gap"},
+            {"value": "bandgap_desc", "label": "Largest KS gap"},
             {"value": "abundance_desc", "label": "Most abundant constituents"},
         ],
     }

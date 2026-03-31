@@ -136,12 +136,12 @@
 
                 <div class="form-section">
                   <label for="electronic_type" class="field-label">
-                    Conductivity
+                    KS Gap Type
                     <span tabindex="0" class="info-dot" role="button" aria-label="More information">
                       i
                       <span class="info-bubble" role="tooltip">
                         <span class="info-bubble-paragraph">
-                          Conducitivity classification based on the calculated DFT band gap using the PBE xc functional; where a zero gap is interpreted as metallic (despite the tendency of the PBE gap to be smaller than the experimental band gap).
+                          The gap type from Kohn-Sham DFT calculations.
                         </span>
                       </span>
                     </span>
@@ -272,12 +272,12 @@
                   </div>
                   <div>
                     <label for="min-bandgap" class="field-label">
-                      Band gap ≥
+                      KS Gap ≥
                       <span tabindex="0" class="info-dot" role="button" aria-label="More information">
                         i
                         <span class="info-bubble" role="tooltip">
                           <span class="info-bubble-paragraph">
-                            Lower bound on the calculated band gap. Use together with the upper bound to isolate semiconducting windows.
+                            The band gap from Kohn-Sham DFT.
                           </span>
                         </span>
                       </span>
@@ -288,7 +288,7 @@
                     </div>
                   </div>
                   <div>
-                    <label for="max-bandgap" class="field-label">Band gap ≤</label>
+                    <label for="max-bandgap" class="field-label">KS Gap ≤</label>
                     <div class="input-with-unit">
                       <input id="max-bandgap" name="max_bandgap" type="number" step="0.001" min="0" value="{{ query.max_bandgap if query.max_bandgap else '' }}" />
                       <span>eV</span>

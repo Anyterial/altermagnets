@@ -19,7 +19,7 @@ CLASSIFICATION_LABELS = {
 ELECTRONIC_TYPE_LABELS = {
     "metallic": "Metallic",
     "semiconducting": "Semiconducting",
-    "unknown": "Band gap unavailable",
+    "unknown": "KS gap unavailable",
 }
 
 CLASSIFICATION_NOTES = {

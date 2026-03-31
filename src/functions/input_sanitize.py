@@ -22,7 +22,7 @@ NUMERIC_FIELDS = {
     "min_abundance_ppm",
 }
 NUMERIC_TOKEN_PATTERN = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?")
-MATERIAL_ID_PATTERN = re.compile(r"^(?:anyt:)?amdb-(?:\d+-)?\d+$")
+MATERIAL_ID_PATTERN = re.compile(r"^(?:anyt:)?(?:(?:am|amdb)-[A-Za-z0-9]+-\d+|amdb-\d+)$")
 
 MAX_LENGTH_BY_FIELD: dict[str, int] = {
     "q": 256,

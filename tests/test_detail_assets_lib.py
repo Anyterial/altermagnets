@@ -17,7 +17,7 @@ SPEC.loader.exec_module(MODULE)
 def test_details_dir_for_material_shards_by_numeric_id() -> None:
     details_root = Path("/tmp/details")
     result = MODULE.details_dir_for_material(details_root, "amdb-1-0123")
-    assert result == details_root / "amdb-1" / "0" / "01" / "012" / "amdb-1-0123"
+    assert result == details_root / "am-1" / "0" / "01" / "012" / "amdb-1-0123"
 
 
 def test_extract_final_magnetization_section_uses_last_block() -> None:
@@ -128,10 +128,10 @@ def test_sync_detail_raw_paths_creates_per_material_metadata(tmp_path: Path, mon
     assert warnings == []
     assert len(results) == 2
     metadata_0006 = json.loads(
-        (details_dir / "amdb-1" / "0" / "00" / "000" / "amdb-1-0006" / "amdb-1-0006.json").read_text(encoding="utf-8")
+        (details_dir / "am-1" / "0" / "00" / "000" / "amdb-1-0006" / "amdb-1-0006.json").read_text(encoding="utf-8")
     )
     metadata_0007 = json.loads(
-        (details_dir / "amdb-1" / "0" / "00" / "000" / "amdb-1-0007" / "amdb-1-0007.json").read_text(encoding="utf-8")
+        (details_dir / "am-1" / "0" / "00" / "000" / "amdb-1-0007" / "amdb-1-0007.json").read_text(encoding="utf-8")
     )
     assert metadata_0006["raw_path"] == matched_task.raw_relpath
     assert metadata_0007["raw_path"] == ""
@@ -413,7 +413,7 @@ def test_generate_material_details_parallelizes_jobs_and_serializes_parse_log(
         workers=2,
     )
 
-    assert sorted(result.material_id for result in results) == ["anyt:amdb-1-0001", "anyt:amdb-1-0002"]
+    assert sorted(result.material_id for result in results) == ["anyt:am-1-0001", "anyt:am-1-0002"]
     assert warnings == []
     parse_log_lines = (details_dir / "parse.log").read_text(encoding="utf-8").splitlines()
     assert len(parse_log_lines) == 2
@@ -501,9 +501,9 @@ def test_generate_material_details_parallel_logs_failures_serially(
         workers=2,
     )
 
-    assert [result.material_id for result in results] == ["anyt:amdb-1-0001"]
+    assert [result.material_id for result in results] == ["anyt:am-1-0001"]
     assert len(warnings) == 1
-    assert "anyt:amdb-1-0002" in warnings[0]
+    assert "anyt:am-1-0002" in warnings[0]
     records = [json.loads(line) for line in (details_dir / "parse.log").read_text(encoding="utf-8").splitlines()]
     assert sorted(record["status"] for record in records) == ["failed", "ok"]
-    assert sorted(record["material_id"] for record in records) == ["anyt:amdb-1-0001", "anyt:amdb-1-0002"]
+    assert sorted(record["material_id"] for record in records) == ["anyt:am-1-0001", "anyt:am-1-0002"]

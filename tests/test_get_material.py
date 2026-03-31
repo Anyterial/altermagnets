@@ -76,7 +76,7 @@ def test_load_detail_assets_prefixed_id_uses_legacy_detail_directory(tmp_path: P
         encoding="utf-8",
     )
 
-    assets = MODULE._load_detail_assets("anyt:amdb-1-0001", {"detail_assets_root": details_root})
+    assets = MODULE._load_detail_assets("anyt:am-1-0001", {"detail_assets_root": details_root})
 
     figures = {figure["key"]: figure for figure in assets["figures"]}
     assert assets["raw_path"] == "1/Runs/ht.task.tetralith--default.CrSb_SCF.cleanup.0.unclaimed.3.finished"

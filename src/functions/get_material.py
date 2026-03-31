@@ -70,7 +70,8 @@ DETAIL_FIGURE_SPECS = (
         "layout_class": "",
     },
 )
-AMDB_ID_PATTERN = re.compile(r"^(?:anyt:)?amdb-(?:(?P<dataset>\d+)-)?(?P<number>\d+)$")
+MATERIAL_ID_PATTERN = re.compile(r"^(?:anyt:)?(?P<family>am|amdb)-(?P<series>[A-Za-z0-9]+)-(?P<number>\d+)$")
+LEGACY_MATERIAL_ID_PATTERN = re.compile(r"^(?:anyt:)?amdb-(?P<number>\d+)$")
 SVG_DARK_LIGHT_COLOR = "#f2f5fb"
 SVG_DARK_TEXT_STYLE = (
     '<style id="httk-dark-svg-text">'
@@ -215,12 +216,14 @@ def _max_svg_bytes(global_data: Any) -> int:
 
 
 def _parsed_material_id(material_id: str) -> tuple[str, str] | None:
-    match = AMDB_ID_PATTERN.fullmatch(material_id.strip())
-    if match is None:
+    cleaned = material_id.strip()
+    match = MATERIAL_ID_PATTERN.fullmatch(cleaned)
+    if match is not None:
+        return match.group("series"), match.group("number")
+    legacy_match = LEGACY_MATERIAL_ID_PATTERN.fullmatch(cleaned)
+    if legacy_match is None:
         return None
-    dataset = match.group("dataset") or "1"
-    digits = match.group("number")
-    return dataset, digits
+    return "1", legacy_match.group("number")
 
 
 def _material_id_aliases(material_id: str) -> list[str]:
@@ -229,14 +232,14 @@ def _material_id_aliases(material_id: str) -> list[str]:
     if parsed is None:
         return [cleaned] if cleaned else []
 
-    dataset, digits = parsed
-    base_id = f"amdb-{dataset}-{digits}"
-    prefixed_id = f"anyt:{base_id}"
-    aliases = [cleaned]
-    if cleaned.startswith("anyt:"):
-        aliases.append(base_id)
-    else:
-        aliases.append(prefixed_id)
+    series, digits = parsed
+    aliases = [
+        cleaned,
+        f"anyt:am-{series}-{digits}",
+        f"am-{series}-{digits}",
+        f"anyt:amdb-{series}-{digits}",
+        f"amdb-{series}-{digits}",
+    ]
 
     deduped: list[str] = []
     seen: set[str] = set()
@@ -252,11 +255,14 @@ def _details_dir_for_material(details_root: Path, material_id: str) -> Path | No
     parsed = _parsed_material_id(material_id)
     if parsed is None:
         return None
-    dataset, digits = parsed
+    series, digits = parsed
     if len(digits) < 3:
         digits = digits.zfill(3)
-    shard_root = details_root / f"amdb-{dataset}" / digits[:1] / digits[:2] / digits[:3]
-    candidates = [shard_root / alias for alias in _material_id_aliases(material_id)]
+    shard_roots = [
+        details_root / f"am-{series}" / digits[:1] / digits[:2] / digits[:3],
+        details_root / f"amdb-{series}" / digits[:1] / digits[:2] / digits[:3],
+    ]
+    candidates = [shard_root / alias for shard_root in shard_roots for alias in _material_id_aliases(material_id)]
     for candidate in candidates:
         if candidate.exists() and candidate.is_dir():
             return candidate

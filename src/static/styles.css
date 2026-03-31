@@ -550,7 +550,7 @@ html[data-theme="dark"] .theme-icon {
 }
 
 .table-wrap {
-  overflow: visible;
+  overflow-x: auto;
   border-radius: 14px;
 }
 
@@ -979,7 +979,7 @@ html[data-theme="dark"] .inline-icon {
   position: relative;
   cursor: help;
   flex: 0 0 auto;
-  z-index: 1200;
+  z-index: 40;
 }
 
 .info-bubble {
@@ -1005,7 +1005,7 @@ html[data-theme="dark"] .inline-icon {
   text-transform: none;
   letter-spacing: normal;
   font-weight: 400;
-  z-index: 1300;
+  z-index: 50;
 }
 
 .info-bubble-paragraph {
@@ -1014,6 +1014,41 @@ html[data-theme="dark"] .inline-icon {
 
 .info-dot:hover .info-bubble,
 .info-dot:focus-visible .info-bubble {
+  opacity: 1;
+  visibility: visible;
+}
+
+.js-fixed-tooltips .info-bubble {
+  display: none !important;
+}
+
+.floating-info-bubble {
+  position: fixed;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -100%);
+  min-width: 210px;
+  max-width: 330px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--tooltip-bg);
+  color: var(--tooltip-ink);
+  font-size: 12px;
+  line-height: 1.45;
+  display: grid;
+  gap: 8px;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 120ms ease, visibility 120ms ease;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+  z-index: 4000;
+}
+
+.floating-info-bubble.is-visible {
   opacity: 1;
   visibility: visible;
 }

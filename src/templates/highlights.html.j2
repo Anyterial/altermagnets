@@ -15,7 +15,7 @@
       <a class="highlight-card highlight-link" href="{{ page.relbaseurl }}/material?id={{ item.material_id }}">
         <h3>{{ item.material_label if item.material_label else item.material }}</h3>
         <p>{{ item.space_group }} | {{ item.classification_label }}</p>
-        <p><strong>Max SS:</strong> {{ item.max_ss_display }} eV</p>
+        <p><strong>$\Delta E^{\mathrm{max}}_{\mathrm{split}}$:</strong> {{ item.max_ss_display }} eV</p>
       </a>
       {% endfor %}
     </div>
@@ -32,7 +32,7 @@
       <a class="highlight-card highlight-link" href="{{ page.relbaseurl }}/material?id={{ item.material_id }}">
         <h3>{{ item.material_label if item.material_label else item.material }}</h3>
         <p>{{ item.space_group }} | {{ item.classification_label }}</p>
-        <p><strong>Max SS:</strong> {{ item.max_ss_display }} eV</p>
+        <p><strong>$\Delta E^{\mathrm{max}}_{\mathrm{split}}$:</strong> {{ item.max_ss_display }} eV</p>
       </a>
       {% endfor %}
     </div>

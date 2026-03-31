@@ -70,7 +70,7 @@ DETAIL_FIGURE_SPECS = (
         "layout_class": "",
     },
 )
-AMDB_ID_PATTERN = re.compile(r"^amdb-(?:(?P<dataset>\d+)-)?(?P<number>\d+)$")
+AMDB_ID_PATTERN = re.compile(r"^(?:anyt:)?amdb-(?:(?P<dataset>\d+)-)?(?P<number>\d+)$")
 SVG_DARK_LIGHT_COLOR = "#f2f5fb"
 SVG_DARK_TEXT_STYLE = (
     '<style id="httk-dark-svg-text">'
@@ -223,6 +223,31 @@ def _parsed_material_id(material_id: str) -> tuple[str, str] | None:
     return dataset, digits
 
 
+def _material_id_aliases(material_id: str) -> list[str]:
+    cleaned = material_id.strip()
+    parsed = _parsed_material_id(cleaned)
+    if parsed is None:
+        return [cleaned] if cleaned else []
+
+    dataset, digits = parsed
+    base_id = f"amdb-{dataset}-{digits}"
+    prefixed_id = f"anyt:{base_id}"
+    aliases = [cleaned]
+    if cleaned.startswith("anyt:"):
+        aliases.append(base_id)
+    else:
+        aliases.append(prefixed_id)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for alias in aliases:
+        if alias in seen:
+            continue
+        seen.add(alias)
+        deduped.append(alias)
+    return deduped
+
+
 def _details_dir_for_material(details_root: Path, material_id: str) -> Path | None:
     parsed = _parsed_material_id(material_id)
     if parsed is None:
@@ -230,7 +255,12 @@ def _details_dir_for_material(details_root: Path, material_id: str) -> Path | No
     dataset, digits = parsed
     if len(digits) < 3:
         digits = digits.zfill(3)
-    return details_root / f"amdb-{dataset}" / digits[:1] / digits[:2] / digits[:3] / material_id
+    shard_root = details_root / f"amdb-{dataset}" / digits[:1] / digits[:2] / digits[:3]
+    candidates = [shard_root / alias for alias in _material_id_aliases(material_id)]
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+    return candidates[0] if candidates else None
 
 
 def _svg_data_url(path: Path, *, max_svg_bytes: int) -> str | None:
@@ -285,13 +315,16 @@ def _load_detail_assets(material_id: str, global_data: Any) -> dict[str, Any]:
     if details_dir is None:
         return {"figures": figures, "raw_path": raw_path, "available_count": 0}
 
-    metadata_path = details_dir / f"{material_id}.json"
-    if metadata_path.exists() and metadata_path.is_file():
+    metadata_paths = [details_dir / f"{alias}.json" for alias in _material_id_aliases(material_id)]
+    for metadata_path in metadata_paths:
+        if not metadata_path.exists() or not metadata_path.is_file():
+            continue
         try:
             payload = json.loads(metadata_path.read_text(encoding="utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             payload = {}
         raw_path = str(payload.get("raw_path", "")).strip()
+        break
 
     available_count = 0
     for spec in DETAIL_FIGURE_SPECS:
@@ -378,36 +411,45 @@ def execute(global_data, id: str = "", **kwargs):
         return None
 
     with lock:
-        material = _fetch_one(
-            connection,
-            """
-            SELECT
-                material_id,
-                screening_rank,
-                material,
-                formula,
-                space_group,
-                primary_magndata_id,
-                magndata_ids_text,
-                elements_text,
-                classification,
-                magnetic_phases_text,
-                wave_classes_text,
-                parent_spacegroups_text,
-                parent_spacegroups_latex_text,
-                max_ss,
-                avg_ss,
-                fdelta_pct,
-                bandgap,
-                electronic_type,
-                min_abund_ppm,
-                icsd_ids_text,
-                doi_text
-            FROM materials
-            WHERE material_id = ?
-            """,
-            [material_id],
-        )
+        material = None
+        resolved_material_id = material_id
+        for material_id_candidate in _material_id_aliases(material_id):
+            material = _fetch_one(
+                connection,
+                """
+                SELECT
+                    material_id,
+                    screening_rank,
+                    material,
+                    formula,
+                    space_group,
+                    primary_magndata_id,
+                    magndata_ids_text,
+                    elements_text,
+                    classification,
+                    magnetic_phases_text,
+                    wave_classes_text,
+                    parent_spacegroups_text,
+                    parent_spacegroups_latex_text,
+                    max_ss,
+                    avg_ss,
+                    fdelta_pct,
+                    bandgap,
+                    electronic_type,
+                    min_abund_ppm,
+                    icsd_ids_text,
+                    doi_text
+                FROM materials
+                WHERE material_id = ?
+                """,
+                [material_id_candidate],
+            )
+            if material is not None:
+                resolved_material_id = str(material.get("material_id") or material_id_candidate)
+                break
+        if material is None:
+            return None
+
         linked_rows = _fetch_all(
             connection,
             """
@@ -449,14 +491,11 @@ def execute(global_data, id: str = "", **kwargs):
                 se.source_kind ASC,
                 se.symprec ASC NULLS LAST
             """,
-            [material_id],
+            [resolved_material_id],
         )
 
-    if material is None:
-        return None
-
     linked_entries = [_decorate_linked_entry(row) for row in linked_rows]
-    detail_assets = _load_detail_assets(material_id, global_data)
+    detail_assets = _load_detail_assets(resolved_material_id, global_data)
     warnings = [warning for entry in linked_entries for warning in entry["warnings"]]
     notes = [note for entry in linked_entries for note in entry["notes"]]
     magnetic_phases = _split_pipe(material.get("magnetic_phases_text"))

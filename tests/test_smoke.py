@@ -7,9 +7,12 @@ from httk.web import create_asgi_app
 
 ROOT = Path(__file__).resolve().parents[1]
 DATASET_PATH = ROOT / "data" / "tables" / "high_throughput_screening_results_fixed.csv"
+PRIMARY_MATERIAL_ID = "anyt:amdb-1-0001"
 DETAIL_ASSET_PATHS = [
     ROOT / "data" / "details" / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001" / "band.svg",
     ROOT / "data" / "details" / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001" / "band.png",
+    ROOT / "data" / "details" / "amdb-1" / "0" / "00" / "000" / "anyt:amdb-1-0001" / "band.svg",
+    ROOT / "data" / "details" / "amdb-1" / "0" / "00" / "000" / "anyt:amdb-1-0001" / "band.png",
 ]
 
 
@@ -46,7 +49,7 @@ def test_search_page_handles_local_dataset_or_missing_mount() -> None:
 
 
 def test_material_detail_page_handles_local_dataset_or_missing_mount() -> None:
-    response = _request("/material", params={"id": "amdb-1-0001"})
+    response = _request("/material", params={"id": PRIMARY_MATERIAL_ID})
 
     assert response.status_code == 200
     if DATASET_PATH.exists():

@@ -550,7 +550,7 @@ html[data-theme="dark"] .theme-icon {
 }
 
 .table-wrap {
-  overflow-x: auto;
+  overflow: visible;
   border-radius: 14px;
 }
 
@@ -562,11 +562,6 @@ html[data-theme="dark"] .theme-icon {
 .search-table-wrap {
   position: relative;
   z-index: 4;
-}
-
-.search-table-wrap .info-dot,
-.search-table-wrap .info-bubble {
-  z-index: 40;
 }
 
 .results-table {
@@ -984,6 +979,7 @@ html[data-theme="dark"] .inline-icon {
   position: relative;
   cursor: help;
   flex: 0 0 auto;
+  z-index: 1200;
 }
 
 .info-bubble {
@@ -1009,7 +1005,7 @@ html[data-theme="dark"] .inline-icon {
   text-transform: none;
   letter-spacing: normal;
   font-weight: 400;
-  z-index: 10;
+  z-index: 1300;
 }
 
 .info-bubble-paragraph {

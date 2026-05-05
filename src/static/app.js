@@ -5,7 +5,7 @@
 
   const root = document.documentElement;
   const themeButtons = Array.from(document.querySelectorAll("[data-theme-option]"));
-  const resultsTable = document.querySelector(".results-table tbody");
+  const resultLinks = Array.from(document.querySelectorAll(".result-row-link"));
   const sidebar = document.querySelector(".sidebar");
   const themeAwareFigures = Array.from(document.querySelectorAll("img.theme-aware-figure"));
 
@@ -61,62 +61,9 @@
     return `${rowUrl}${separator}${currentParams.toString()}`;
   };
 
-  if (resultsTable) {
-    const openRowUrl = (rowUrl, event) => {
-      const destination = buildRowUrl(rowUrl);
-      if (!destination) {
-        return;
-      }
-      if (event && (event.button === 1 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)) {
-        window.open(destination, "_blank", "noopener");
-        return;
-      }
-      window.location.assign(destination);
-    };
-
-    resultsTable.addEventListener("click", (event) => {
-      const row = event.target.closest("tr[data-row-url]");
-      if (!row) {
-        return;
-      }
-      const rowUrl = row.getAttribute("data-row-url");
-      if (!rowUrl) {
-        return;
-      }
-      openRowUrl(rowUrl, event);
-    });
-
-    resultsTable.addEventListener("auxclick", (event) => {
-      if (event.button !== 1) {
-        return;
-      }
-      const row = event.target.closest("tr[data-row-url]");
-      if (!row) {
-        return;
-      }
-      const rowUrl = row.getAttribute("data-row-url");
-      if (!rowUrl) {
-        return;
-      }
-      event.preventDefault();
-      openRowUrl(rowUrl, event);
-    });
-
-    resultsTable.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") {
-        return;
-      }
-      const row = event.target.closest("tr[data-row-url]");
-      if (!row) {
-        return;
-      }
-      event.preventDefault();
-      const rowUrl = row.getAttribute("data-row-url");
-      if (rowUrl) {
-        openRowUrl(rowUrl, event);
-      }
-    });
-  }
+  resultLinks.forEach((link) => {
+    link.setAttribute("href", buildRowUrl(link.getAttribute("href")));
+  });
 
   const initBidirectionalSidebar = () => {
     if (!sidebar) {

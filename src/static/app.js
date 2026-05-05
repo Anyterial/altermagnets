@@ -62,15 +62,44 @@
   };
 
   if (resultsTable) {
+    const openRowUrl = (rowUrl, event) => {
+      const destination = buildRowUrl(rowUrl);
+      if (!destination) {
+        return;
+      }
+      if (event && (event.button === 1 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)) {
+        window.open(destination, "_blank", "noopener");
+        return;
+      }
+      window.location.assign(destination);
+    };
+
     resultsTable.addEventListener("click", (event) => {
       const row = event.target.closest("tr[data-row-url]");
       if (!row) {
         return;
       }
       const rowUrl = row.getAttribute("data-row-url");
-      if (rowUrl) {
-        window.location.assign(buildRowUrl(rowUrl));
+      if (!rowUrl) {
+        return;
       }
+      openRowUrl(rowUrl, event);
+    });
+
+    resultsTable.addEventListener("auxclick", (event) => {
+      if (event.button !== 1) {
+        return;
+      }
+      const row = event.target.closest("tr[data-row-url]");
+      if (!row) {
+        return;
+      }
+      const rowUrl = row.getAttribute("data-row-url");
+      if (!rowUrl) {
+        return;
+      }
+      event.preventDefault();
+      openRowUrl(rowUrl, event);
     });
 
     resultsTable.addEventListener("keydown", (event) => {
@@ -84,7 +113,7 @@
       event.preventDefault();
       const rowUrl = row.getAttribute("data-row-url");
       if (rowUrl) {
-        window.location.assign(buildRowUrl(rowUrl));
+        openRowUrl(rowUrl, event);
       }
     });
   }

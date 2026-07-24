@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
 
 from httk.atomistic import StructureEntryProvider, load_structure
-from httk.core import PropertyDefinition, register_definition_prefix
+from httk.core import PropertyDefinition, RelatedEntry, register_definition_prefix
 from httk.data import ReferenceEntryProvider, validate_record
 from httk.optimade import adapter_from_providers, serve
 
@@ -149,12 +149,18 @@ class AltermagnetStructureProvider(StructureEntryProvider):
         relationships: Mapping[str, Mapping[str, tuple[str, ...]]],
     ) -> None:
         super().__init__(entries, extra_definitions=extra_definitions, properties=properties)
+        # httk-core states relationships as a flat tuple of RelatedEntry per
+        # entry id; grouping by related type is the serving layer's job.
         self._material_relationships = {
-            str(entry_id): {related: tuple(ids) for related, ids in related_map.items()}
+            str(entry_id): tuple(
+                RelatedEntry(entry_type=related, id=related_id)
+                for related, ids in related_map.items()
+                for related_id in ids
+            )
             for entry_id, related_map in relationships.items()
         }
 
-    def relationships(self, entry_type: str) -> Mapping[str, Mapping[str, tuple[str, ...]]]:
+    def relationships(self, entry_type: str) -> Mapping[str, tuple[RelatedEntry, ...]]:
         if entry_type != "structures":
             return {}
         return self._material_relationships
@@ -277,7 +283,7 @@ def run_validation(providers: list[Any]) -> int:
     failures = 0
     for provider in providers:
         for entry_type, definition in provider.entry_types().items():
-            columns = provider.columns(entry_type)
+            columns = provider.property_keys(entry_type)
             for record in provider.records(entry_type):
                 total += 1
                 candidate = _validation_record(record, columns)

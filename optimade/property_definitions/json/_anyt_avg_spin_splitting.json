@@ -1,0 +1,31 @@
+{
+  "$schema": "https://schemas.optimade.org/meta/v1.2/optimade/property_definition.json",
+  "$id": "https://anyterial.se/optimade/defs/properties/_anyt_avg_spin_splitting",
+  "title": "Average spin splitting",
+  "x-optimade-type": "float",
+  "x-optimade-definition": {
+    "kind": "property",
+    "version": "1.2.0",
+    "format": "1.2",
+    "name": "_anyt_avg_spin_splitting",
+    "label": "_anyt_avg_spin_splitting_structures"
+  },
+  "x-optimade-unit": "eV",
+  "x-optimade-unit-definitions": [
+    {
+      "symbol": "eV",
+      "title": "electronvolt",
+      "description": "The electronvolt unit of energy.",
+      "standard": {
+        "kind": "gnu units",
+        "version": "3.15",
+        "symbol": "eV"
+      }
+    }
+  ],
+  "type": [
+    "number",
+    "null"
+  ],
+  "description": "The Brillouin-zone average of the per-k-point largest spin splitting, evaluated within an energy window of plus or minus 3 eV around the Fermi level.\n\nThe value is taken from the altermagnetic high-throughput screening (the AvgSS column) and is given in electronvolts.\nA null value means the quantity is not available for this material."
+}

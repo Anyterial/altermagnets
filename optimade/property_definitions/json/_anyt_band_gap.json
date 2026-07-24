@@ -1,0 +1,31 @@
+{
+  "$schema": "https://schemas.optimade.org/meta/v1.2/optimade/property_definition.json",
+  "$id": "https://anyterial.se/optimade/defs/properties/_anyt_band_gap",
+  "title": "Band gap",
+  "x-optimade-type": "float",
+  "x-optimade-definition": {
+    "kind": "property",
+    "version": "1.2.0",
+    "format": "1.2",
+    "name": "_anyt_band_gap",
+    "label": "_anyt_band_gap_structures"
+  },
+  "x-optimade-unit": "eV",
+  "x-optimade-unit-definitions": [
+    {
+      "symbol": "eV",
+      "title": "electronvolt",
+      "description": "The electronvolt unit of energy.",
+      "standard": {
+        "kind": "gnu units",
+        "version": "3.15",
+        "symbol": "eV"
+      }
+    }
+  ],
+  "type": [
+    "number",
+    "null"
+  ],
+  "description": "The Kohn-Sham electronic band gap of the material, given in electronvolts.\n\nThe value is taken from the altermagnetic screening (the Bandgap column).\nA value of 0 indicates a metallic Kohn-Sham state; a null value means the quantity is not available for this material."
+}

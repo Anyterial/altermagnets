@@ -1,0 +1,26 @@
+$$schema: https://schemas.optimade.org/meta/v1.2/optimade/property_definition.json
+$id: https://anyterial.se/optimade/defs/properties/_anyt_electronic_type
+title: Electronic type
+x-optimade-type: string
+x-optimade-definition:
+  kind: property
+  version: 1.2.0
+  format: '1.2'
+  name: _anyt_electronic_type
+  label: _anyt_electronic_type_structures
+x-optimade-unit: inapplicable
+type:
+- string
+- 'null'
+description: |-
+  A qualitative classification of the electronic structure of the material.
+
+  The value is derived from the Kohn-Sham band gap: `metallic` when the band gap is zero, `semiconducting` when it is positive, and `unknown` when the band gap is not available.
+  A null value means the classification is not available for this material.
+enum:
+- metallic
+- semiconducting
+- unknown
+examples:
+- metallic
+- semiconducting

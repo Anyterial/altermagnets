@@ -3,7 +3,7 @@
 
 This is a thin site-level entry point: it reads the three CSV tables shipped
 under ``data/tables/``, assembles OPTIMADE ``structures`` and ``references``
-records, and serves them through the generic *httk-optimade* engine. All of the
+records, and serves them through the generic *httk-serve* OPTIMADE engine. All of the
 reusable machinery lives in the httk modules:
 
 * crystal structures are parsed from the per-material ``CONTCAR.bz2`` files via
@@ -29,7 +29,7 @@ from typing import Any, Iterable, Mapping, Optional
 from httk.atomistic import StructureEntryProvider, load_structure
 from httk.core import PropertyDefinition, RelatedEntry, register_definition_prefix
 from httk.data import ReferenceEntryProvider, validate_record
-from httk.optimade import adapter_from_providers, serve
+from httk.serve.optimade import adapter_from_providers, serve
 
 ROOT = Path(__file__).resolve().parent
 DATA_TABLES = ROOT / "data" / "tables"

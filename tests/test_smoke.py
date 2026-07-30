@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 
 import httpx
-from httk.web import create_asgi_app
+from httk.serve.web import create_asgi_app
 
 ROOT = Path(__file__).resolve().parents[1]
 PRIMARY_MATERIAL_ID = "anyt:am-1-0001"

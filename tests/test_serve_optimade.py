@@ -11,12 +11,12 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("httk.optimade")
+pytest.importorskip("httk.serve.optimade")
 pytest.importorskip("httk.atomistic")
 
 from starlette.testclient import TestClient  # noqa: E402
 
-from httk.optimade import adapter_from_providers, create_asgi_app  # noqa: E402
+from httk.serve.optimade import adapter_from_providers, create_asgi_app  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))

@@ -4,14 +4,14 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from conftest import write_source_tables
-from httk.web import ProviderContext, TableRequest, create_asgi_app, publish
+from httk.serve.web import ProviderContext, TableRequest, create_asgi_app, publish
 from material_store import build_store, open_prebuilt_store
 from materials import provide
 from starlette.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
 _ROW_ID = re.compile(r'class="id-mono">([^<]+)</span>')
-_TOKEN = re.compile(r'data-httk-table-next data-token="([^"]*)"')
+_TOKEN = re.compile(r'data-httk-serve-table-next data-token="([^"]*)"')
 
 
 def _ids(html: str) -> list[str]:
@@ -97,7 +97,7 @@ def test_dynamic_table_pages_a_180_record_store_without_materializing(tmp_path: 
         last_payload: dict[str, object] | None = None
         while next_token is not None:
             page_response = client.post(
-                "/_httk/table/page",
+                "/_httk/serve/table/page",
                 json={"token": next_token, "route": "search", "widget_id": "materials-results"},
             )
             assert page_response.status_code == 200
@@ -113,7 +113,7 @@ def test_dynamic_table_pages_a_180_record_store_without_materializing(tmp_path: 
         previous = last_payload["previous"]
         assert isinstance(previous, str)
         backward = client.post(
-            "/_httk/table/page",
+            "/_httk/serve/table/page",
             json={"token": previous, "route": "search", "widget_id": "materials-results"},
         )
         assert backward.status_code == 200
@@ -128,7 +128,7 @@ def test_static_publish_has_only_the_first_page_and_no_live_asset(tmp_path: Path
     rendered = (output / "search.html").read_text(encoding="utf-8")
 
     assert _ids(rendered) == [f"anyt:am-1-{index:04d}" for index in range(1, 51)]
-    assert 'data-httk-table-next data-token="" disabled' in rendered
+    assert 'data-httk-serve-table-next data-token="" disabled' in rendered
     assert "table.js" not in rendered
     assert "Pagination is available on the live site." in rendered
 
@@ -141,7 +141,7 @@ def test_unavailable_store_suppresses_the_table_and_shows_its_notice(tmp_path: P
         response = client.get("/search")
     assert response.status_code == 200
     assert "The screening tables are not mounted" in response.text
-    assert "data-httk-table" not in response.text
+    assert "data-httk-serve-table" not in response.text
 
 
 def test_asgi_lifespan_disposes_the_opened_store(tmp_path: Path, monkeypatch) -> None:

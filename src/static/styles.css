@@ -662,24 +662,24 @@ html[data-theme="dark"] .theme-icon {
   background: rgba(var(--accent-rgb), 0.08);
 }
 
-/* The built-in httk.table shell intentionally inherits the established
+/* The built-in httk.serve.table shell intentionally inherits the established
  * altermagnet search-table presentation.  Site-local row markup only owns
  * the rich cells; pagination and the accessible table structure are reusable.
  */
-body .httk-table {
+body .httk-serve-table {
   overflow-x: auto;
   border-radius: 14px;
   position: relative;
   z-index: 4;
 }
 
-body .httk-table table {
+body .httk-serve-table table {
   width: 100%;
   border-collapse: collapse;
 }
 
-body .httk-table th,
-body .httk-table td {
+body .httk-serve-table th,
+body .httk-serve-table td {
   text-align: left;
   padding: 12px 10px;
   border-bottom: 1px solid var(--line);
@@ -687,7 +687,7 @@ body .httk-table td {
   vertical-align: top;
 }
 
-body .httk-table th {
+body .httk-serve-table th {
   padding: 10px 8px;
   text-transform: uppercase;
   letter-spacing: 0.11em;
@@ -697,49 +697,49 @@ body .httk-table th {
   white-space: nowrap;
 }
 
-body .httk-table td {
+body .httk-serve-table td {
   padding: 0;
 }
 
-body .httk-table .cell-meta {
+body .httk-serve-table .cell-meta {
   font-size: 12px;
 }
 
-body .httk-table .cell-meta-id {
+body .httk-serve-table .cell-meta-id {
   font-size: 11px;
   letter-spacing: 0.01em;
 }
 
-body .httk-table .col-material {
+body .httk-serve-table .col-material {
   min-width: 80px;
 }
 
-body .httk-table .cell-title {
+body .httk-serve-table .cell-title {
   font-size: 16px;
   line-height: 1.25;
 }
 
-body .httk-table .col-magndata {
+body .httk-serve-table .col-magndata {
   min-width: 80px;
 }
 
-body .httk-table .col-collinearity {
+body .httk-serve-table .col-collinearity {
   min-width: 130px;
 }
 
-body .httk-table .col-spacegroup,
-body .httk-table .col-maxss,
-body .httk-table .col-avgss,
-body .httk-table .col-fdelta,
-body .httk-table .col-gap {
+body .httk-serve-table .col-spacegroup,
+body .httk-serve-table .col-maxss,
+body .httk-serve-table .col-avgss,
+body .httk-serve-table .col-fdelta,
+body .httk-serve-table .col-gap {
   min-width: 80px;
 }
 
-body .httk-table .col-abundance {
+body .httk-serve-table .col-abundance {
   min-width: 108px;
 }
 
-body .httk-table__pager {
+body .httk-serve-table__pager {
   margin-top: 14px;
 }
 

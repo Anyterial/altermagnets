@@ -5,10 +5,10 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
-from httk.optimade import OptimadeConfig, adapter_from_providers
-from httk.optimade import create_asgi_app as create_optimade_asgi_app
-from httk.web import create_asgi_app as create_web_asgi_app
-from httk.web.runtime.devserver import run_dev_server
+from httk.serve.optimade import OptimadeConfig, adapter_from_providers
+from httk.serve.optimade import create_asgi_app as create_optimade_asgi_app
+from httk.serve.web import create_asgi_app as create_web_asgi_app
+from httk.serve.web.runtime.devserver import run_dev_server
 from starlette.applications import Starlette
 from starlette.routing import Mount
 
@@ -30,7 +30,7 @@ def _default_optimade_app() -> Starlette:
 
 
 def _close_created_web_app(app: Starlette, operation_error: BaseException) -> None:
-    """Close a newly-created httk-web engine without hiding another failure."""
+    """Close a newly-created httk-serve web engine without hiding another failure."""
 
     engine = getattr(app.state, "engine", None)
     close = getattr(engine, "close", None)
@@ -39,7 +39,7 @@ def _close_created_web_app(app: Starlette, operation_error: BaseException) -> No
     try:
         close()
     except BaseException as cleanup_error:  # noqa: BLE001
-        operation_error.add_note(f"Additional httk-web cleanup failure: {cleanup_error!r}")
+        operation_error.add_note(f"Additional httk-serve web cleanup failure: {cleanup_error!r}")
 
 
 @asynccontextmanager
@@ -65,7 +65,7 @@ def create_combined_app(
 
     Callers may inject already-owned child apps for tests or embedding.  Apps
     built by the supplied/default factories are owned during construction so a
-    later construction failure can close a newly-created httk-web engine.
+    later construction failure can close a newly-created httk-serve web engine.
     """
 
     if web_app is not None and web_factory is not None:

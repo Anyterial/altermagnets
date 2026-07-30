@@ -236,7 +236,7 @@
 
   renderMath(document.body);
 
-  document.addEventListener("httk:table-updated", (event) => {
+  document.addEventListener("httk-serve:table-updated", (event) => {
     const table = event.target;
     if (!(table instanceof Element)) {
       return;
@@ -245,7 +245,7 @@
     if (!tbody) {
       return;
     }
-    // httk.table replaces tbody.innerHTML while retaining tbody attributes.
+    // httk.serve.table replaces tbody.innerHTML while retaining tbody attributes.
     // Clearing this marker makes each new page render once without rerendering
     // the surrounding document or the already-rendered table headers.
     delete tbody.dataset.katexRendered;

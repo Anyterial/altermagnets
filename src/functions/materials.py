@@ -1,11 +1,11 @@
-"""Bounded ``httk.table`` provider for the altermagnet search page."""
+"""Bounded ``httk.serve.table`` provider for the altermagnet search page."""
 
 from collections.abc import Mapping
 from typing import Any
 
 from httk.data import ContinuationToken
 from httk.data.db import SqlStore
-from httk.web import ProviderContext, TableColumn, TablePage, TableRequest
+from httk.serve.web import ProviderContext, TableColumn, TablePage, TableRequest
 from input_sanitize import sanitize_search_inputs
 from search_materials import decorate_material, search_materials
 

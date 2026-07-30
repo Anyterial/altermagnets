@@ -12,7 +12,7 @@ requires-python = ">=3.12"
 authors = [{ name = "Rickard Armiento", email = "gitcommits@armiento.net" }]
 dependencies = [
   "httk-data[duckdb]>=0.2,<1",
-  "httk-web @ git+https://github.com/httk/httk-web@develop",
+  "httk-serve>=0.2,<1",
 ]
 classifiers = [
   "Operating System :: OS Independent",
@@ -34,11 +34,8 @@ detail-generation = [
   "ase",
 ]
 optimade = [
-  "httk-core>=2.0,<3",
   "httk-io>=0.1,<1",
   "httk-atomistic>=0.3,<1",
-  "httk-data>=0.2,<1",
-  "httk-optimade>=0.2,<1",
 ]
 
 [tool.setuptools]
@@ -85,5 +82,5 @@ warn_unused_ignores = true
 exclude = ['^src/data/']
 
 [[tool.mypy.overrides]]
- module = ["yaml", "markdown", "docutils", "docutils.*", "httk.web", "httk.web.*"]
+ module = ["yaml", "markdown", "docutils", "docutils.*"]
 ignore_missing_imports = true

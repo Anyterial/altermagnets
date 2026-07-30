@@ -835,7 +835,7 @@ def open_material_store(
 def cleanup_material_store(global_data: MutableMapping[str, Any]) -> None:
     """Dispose the locally owned runtime database, safely more than once.
 
-    Site startup registers this helper with httk-web's resource lifecycle; it
+    Site startup registers this helper with httk-serve's resource lifecycle; it
     remains useful to local runners and tests as an explicit idempotent seam.
     """
     global_data.pop("materials_store", None)

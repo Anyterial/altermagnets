@@ -5,7 +5,7 @@ base_template: base_default
 
 The *Altermagnets Database* is an online interactive web application to navigate and search a dataset of materials computationally predicted to be altermangets, created by a team spanning [Lund University](https://www.lu.se/) (LU), [Luleå University of Technology](https://www.ltu.se/) (LTU), and [Linköping University](https://liu.se/) (LiU). The dataset was generated using the high-throughput toolkit, [*httk*](https://httk.org/).
 
-This website is implemented using the [*httk-web* user interface engine](https://docs2.httk.org/httk-web) and is part of the [Anyterial](https://www.anyterial.se/) collection of databases maintained by the [Unit of Materials Design and Informatics at Theoretical Physics, Linköping University (LiU) in Sweden](https://liu.se/en/research/materials-design-and-informatics).
+This website is implemented using the [*httk-serve* user interface engine](https://docs.httk.org/httk-serve/) and is part of the [Anyterial](https://www.anyterial.se/) collection of databases maintained by the [Unit of Materials Design and Informatics at Theoretical Physics, Linköping University (LiU) in Sweden](https://liu.se/en/research/materials-design-and-informatics).
 
 <style>
   .team-row {

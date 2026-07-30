@@ -1,7 +1,7 @@
-Anyterial altermagnets (httk-web app)
+Anyterial altermagnets (httk-serve app)
 ------------------------------------
 
-This repository is a dynamic httk-web app prototype for browsing and searching
+This repository is a dynamic httk-serve app prototype for browsing and searching
 mock altermagnetic material records.
 
 Current functionality
@@ -69,14 +69,14 @@ Try queries such as:
 - `P4/nmm`
 
 Static publish mode is available for layout preview (`make generate`), but core
-search/detail behavior relies on dynamic httk-web functions in `src/functions/`.
+search/detail behavior relies on dynamic httk-serve functions in `src/functions/`.
 
 OPTIMADE service
 ----------------
 
 The same dataset is also served over the [OPTIMADE](https://www.optimade.org/)
 API by the thin `serve_optimade.py` entry point, built on the httk₂ modules
-(*httk-core*, *httk-io*, *httk-atomistic*, *httk-data*, *httk-optimade*). It
+(*httk-core*, *httk-io*, *httk-atomistic*, *httk-data*, *httk-serve*). It
 reads the three CSV tables under `data/tables/`, parses each material's
 `CONTCAR.bz2` into an exact crystal structure, and serves 180 `structures`
 (with auto-derived composition fields and ten custom `_anyt_` properties) plus

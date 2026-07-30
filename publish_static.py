@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from httk.web import publish
+from httk.serve.web import publish
 
 ROOT = Path(__file__).parent
 

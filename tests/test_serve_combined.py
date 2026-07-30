@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-pytest.importorskip("httk.optimade")
+pytest.importorskip("httk.serve.optimade")
 pytest.importorskip("httk.atomistic")
 
 from starlette.applications import Starlette
@@ -28,7 +28,7 @@ import serve_combined
 
 def _widget_configuration(document: str) -> dict[str, object]:
     match = re.search(
-        r'<script id="httk-optimade-table-[^"]+-config" type="application/json">(.*?)</script>',
+        r'<script id="httk-serve-optimade-table-[^"]+-config" type="application/json">(.*?)</script>',
         document,
     )
     assert match is not None
@@ -44,14 +44,14 @@ def test_combined_app_mounts_the_real_pilot_and_preserves_versioned_pagination()
         versions = client.get("/optimade/versions")
         info = client.get("/optimade/v1/info")
         structures_info = client.get("/optimade/v1/info/structures")
-        table_script = client.get("/_httk/assets/optimade-table.mjs")
+        table_script = client.get("/_httk/serve/assets/serve-optimade-table.mjs")
         first = client.get("/optimade/v1/structures", params={"page_limit": "2"})
         second = client.get(first.json()["links"]["next"])
 
     assert pilot.status_code == 200
     assert ">OPTIMADE</a>" in pilot.text
-    assert 'data-httk-optimade-table="1"' in pilot.text
-    assert "/_httk/assets/optimade-table.mjs" in pilot.text
+    assert 'data-httk-serve-optimade-table="1"' in pilot.text
+    assert "/_httk/serve/assets/serve-optimade-table.mjs" in pilot.text
     configuration = _widget_configuration(pilot.text)
     assert configuration["base_url"] == "/optimade"
     assert configuration["entry_type"] == "structures"

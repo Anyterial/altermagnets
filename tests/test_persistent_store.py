@@ -8,7 +8,7 @@ import search_materials
 from conftest import write_detail_assets, write_source_tables
 from httk.core import File
 from httk.data.db import Database
-from httk.web import SITE_RESOURCES_KEY, SiteResources
+from httk.serve.web import SITE_RESOURCES_KEY, SiteResources
 from material_store import (
     MaterialRecord,
     build_material_records,

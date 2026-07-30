@@ -5,7 +5,7 @@ from typing import Any
 
 from formula_katex import katex_formula_inline
 from httk.data import PageOrder
-from httk.web import SITE_RESOURCES_KEY, SiteResources
+from httk.serve.web import SITE_RESOURCES_KEY, SiteResources
 from material_store import (
     CLASSIFICATION_LABELS,
     ELECTRONIC_TYPE_LABELS,
@@ -234,7 +234,7 @@ def execute(global_data, **kwargs) -> None:
     resources = global_data.get(SITE_RESOURCES_KEY)
     if not isinstance(resources, SiteResources):
         cleanup_material_store(global_data)
-        raise TypeError("httk-web site resources are required to own the material store")
+        raise TypeError("httk-serve site resources are required to own the material store")
     try:
         resources.register(lambda: cleanup_material_store(global_data))
     except BaseException:

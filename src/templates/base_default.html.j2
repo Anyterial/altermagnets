@@ -56,6 +56,9 @@
       <nav class="page-tabs" aria-label="Primary">
         <a href="{{ page.relbaseurl }}/index" class="page-tab{% if current_section == 'home' %} is-active{% endif %}">Home</a>
         <a href="{{ page.relbaseurl }}/search" class="page-tab{% if current_section == 'search' %} is-active{% endif %}">Search</a>
+        {% if 'optimade-search' in menuitems %}
+        <a href="{{ page.relbaseurl }}/optimade-search" class="page-tab{% if current_section == 'optimade-search' %} is-active{% endif %}">OPTIMADE</a>
+        {% endif %}
         <a href="{{ page.relbaseurl }}/highlights" class="page-tab{% if current_section == 'highlights' %} is-active{% endif %}">Highlights</a>
         <a href="{{ page.relbaseurl }}/about" class="page-tab{% if current_section == 'about' %} is-active{% endif %}">About</a>
         <a href="{{ page.relbaseurl }}/how-to-cite" class="page-tab{% if current_section == 'how-to-cite' %} is-active{% endif %}">How to cite</a>

@@ -1,0 +1,174 @@
+"""In-process coverage for the opt-in website plus OPTIMADE composition."""
+
+import json
+import re
+import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import cast
+from urllib.parse import urlsplit
+
+import pytest
+
+pytest.importorskip("httk.optimade")
+pytest.importorskip("httk.atomistic")
+
+from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
+from starlette.testclient import TestClient
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+import serve_combined
+
+
+def _widget_configuration(document: str) -> dict[str, object]:
+    match = re.search(
+        r'<script id="httk-optimade-table-[^"]+-config" type="application/json">(.*?)</script>',
+        document,
+    )
+    assert match is not None
+    return json.loads(match.group(1))
+
+
+def test_combined_app_mounts_the_real_pilot_and_preserves_versioned_pagination() -> None:
+    app = serve_combined.create_combined_app()
+
+    with TestClient(app, base_url="http://testserver") as client:
+        pilot = client.get("/optimade-search", params={"filter": 'elements HAS "Fe"'})
+        search = client.get("/search")
+        versions = client.get("/optimade/versions")
+        info = client.get("/optimade/v1/info")
+        structures_info = client.get("/optimade/v1/info/structures")
+        table_script = client.get("/_httk/assets/optimade-table.mjs")
+        first = client.get("/optimade/v1/structures", params={"page_limit": "2"})
+        second = client.get(first.json()["links"]["next"])
+
+    assert pilot.status_code == 200
+    assert ">OPTIMADE</a>" in pilot.text
+    assert 'data-httk-optimade-table="1"' in pilot.text
+    assert "/_httk/assets/optimade-table.mjs" in pilot.text
+    configuration = _widget_configuration(pilot.text)
+    assert configuration["base_url"] == "/optimade"
+    assert configuration["entry_type"] == "structures"
+    assert configuration["filter_query"] == "filter"
+    assert configuration["detail_route"] == "material"
+    assert configuration["detail_column"] == "chemical_formula_reduced"
+    assert configuration["detail_query"] == "id"
+    assert configuration["page_size"] == 50
+    columns = cast(list[dict[str, object]], configuration["columns"])
+    assert [column["key"] for column in columns] == [
+        "id",
+        "chemical_formula_reduced",
+        "_anyt_magnetic_phase",
+        "_anyt_max_spin_splitting",
+    ]
+    assert "next" not in configuration and "previous" not in configuration
+    assert search.status_code == 200
+    assert versions.status_code == 200
+    assert info.status_code == 200
+    assert structures_info.status_code == 200
+    assert table_script.status_code == 200
+    assert table_script.headers["content-type"].startswith("text/javascript")
+    assert first.status_code == 200
+    assert len(first.json()["data"]) == 2
+    assert urlsplit(first.json()["links"]["next"]).path == "/optimade/v1/structures"
+    assert second.status_code == 200
+    assert len(second.json()["data"]) == 2
+
+
+def test_standalone_dynamic_site_does_not_advertise_the_combined_pilot() -> None:
+    app = serve_combined.create_web_asgi_app(ROOT / "src", config_name="config_dynamic")
+
+    with TestClient(app, base_url="http://testserver") as client:
+        home = client.get("/")
+
+    assert home.status_code == 200
+    assert ">OPTIMADE</a>" not in home.text
+
+
+def _child_app(name: str, events: list[str], *, fail_startup: bool = False) -> Starlette:
+    @asynccontextmanager
+    async def lifespan(_: Starlette) -> AsyncIterator[None]:
+        events.append(f"enter:{name}")
+        try:
+            if fail_startup:
+                raise RuntimeError(f"{name} startup failed")
+            yield
+        finally:
+            events.append(f"exit:{name}")
+
+    async def response(_: object) -> PlainTextResponse:
+        return PlainTextResponse(name)
+
+    return Starlette(routes=[Route("/{path:path}", response)], lifespan=lifespan)
+
+
+def test_combined_lifespan_owns_children_once_in_reverse_shutdown_order() -> None:
+    events: list[str] = []
+    app = serve_combined.create_combined_app(
+        optimade_app=_child_app("optimade", events), web_app=_child_app("web", events)
+    )
+
+    with TestClient(app) as client:
+        assert client.get("/optimade/v1/info").text == "optimade"
+        assert client.get("/search").text == "web"
+
+    assert events == ["enter:web", "enter:optimade", "exit:optimade", "exit:web"]
+
+
+def test_combined_lifespan_closes_web_when_optimade_startup_fails() -> None:
+    events: list[str] = []
+    app = serve_combined.create_combined_app(
+        optimade_app=_child_app("optimade", events, fail_startup=True),
+        web_app=_child_app("web", events),
+    )
+
+    with pytest.raises(RuntimeError, match="optimade startup failed"), TestClient(app):
+        pass
+
+    assert events == ["enter:web", "enter:optimade", "exit:optimade", "exit:web"]
+
+
+def test_combined_lifespan_does_not_enter_optimade_when_web_startup_fails() -> None:
+    events: list[str] = []
+    app = serve_combined.create_combined_app(
+        optimade_app=_child_app("optimade", events),
+        web_app=_child_app("web", events, fail_startup=True),
+    )
+
+    with pytest.raises(RuntimeError, match="web startup failed"), TestClient(app):
+        pass
+
+    assert events == ["enter:web", "exit:web"]
+
+
+def test_combined_construction_closes_only_a_factory_created_web_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed: list[str] = []
+    factory_web = Starlette()
+    factory_web.state.engine = type("Engine", (), {"close": lambda self: closed.append("factory")})()
+    injected_web = Starlette()
+    injected_web.state.engine = type("Engine", (), {"close": lambda self: closed.append("injected")})()
+
+    def fail_optimade() -> Starlette:
+        raise RuntimeError("optimade construction failed")
+
+    with pytest.raises(RuntimeError, match="optimade construction failed"):
+        serve_combined.create_combined_app(web_factory=lambda: factory_web, optimade_factory=fail_optimade)
+    with pytest.raises(RuntimeError, match="optimade construction failed"):
+        serve_combined.create_combined_app(web_app=injected_web, optimade_factory=fail_optimade)
+
+    def fail_parent(**_: object) -> Starlette:
+        raise RuntimeError("parent construction failed")
+
+    monkeypatch.setattr(serve_combined, "Starlette", fail_parent)
+    with pytest.raises(RuntimeError, match="parent construction failed"):
+        serve_combined.create_combined_app(web_factory=lambda: factory_web, optimade_factory=Starlette)
+
+    assert closed == ["factory", "factory"]

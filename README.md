@@ -98,3 +98,19 @@ make validate_optimade        # (python serve_optimade.py --validate)
 # Serve the OPTIMADE API (default http://127.0.0.1:8081/):
 make serve_optimade           # (python serve_optimade.py --port 8081)
 ```
+
+Combined dynamic site and OPTIMADE pilot
+----------------------------------------
+
+The existing dynamic website and standalone OPTIMADE server remain independent.
+For local exploration, the opt-in combined server mounts the API at
+`/optimade` beside the dynamic website:
+
+```bash
+make serve                    # dynamic website: http://127.0.0.1:8080/
+make serve_optimade           # OPTIMADE only: http://127.0.0.1:8081/v1/
+make serve_combined           # both: http://127.0.0.1:8080/ and /optimade/v1/
+```
+
+The combined server also provides `/optimade-search`, a browser table that
+uses the mounted API and accepts an OPTIMADE `filter` query parameter.

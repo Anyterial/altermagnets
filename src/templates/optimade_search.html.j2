@@ -1,0 +1,17 @@
+<article class="page-block">
+  <header class="hero-block compact">
+    <h2>{{ title }}</h2>
+    <p class="search-note">
+      Query the mounted OPTIMADE API directly. Use OPTIMADE filter syntax, for example
+      <code>elements HAS "Fe"</code> or <code>_anyt_magnetic_phase = "altermagnet"</code>.
+    </p>
+    <form method="get" action="{{ page.relbaseurl }}/optimade-search" class="search-form">
+      <div class="form-section">
+        <label for="optimade-filter" class="field-label">OPTIMADE filter</label>
+        <input id="optimade-filter" name="filter" type="text" value="{{ query.filter if query.filter else '' }}" placeholder='elements HAS "Fe"' />
+      </div>
+      <button type="submit">Apply filter</button>
+    </form>
+  </header>
+  {{ content }}
+</article>

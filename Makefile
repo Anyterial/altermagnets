@@ -1,10 +1,13 @@
 PYTHON ?= python3
-PY_SOURCES := src/functions tools/build_store.py serve_dynamic.py serve_optimade.py publish_static.py optimade/render_definitions.py
+PY_SOURCES := src/functions tools/build_store.py serve_dynamic.py serve_combined.py serve_optimade.py publish_static.py optimade/render_definitions.py
 
-.PHONY: docs docs-live docs-clean clean format format-check typecheck typecheck_pyright lint test test_fastfail audit build_store generate_details sync_detail_raw_paths serve_optimade validate_optimade render_definitions
+.PHONY: docs docs-live docs-clean clean format format-check typecheck typecheck_pyright lint test test_fastfail audit build_store generate_details sync_detail_raw_paths serve_combined serve_optimade validate_optimade render_definitions
 
 serve:
 	python3 ./serve_dynamic.py
+
+serve_combined:
+	python3 ./serve_combined.py
 
 build_store:
 	$(PYTHON) ./tools/build_store.py

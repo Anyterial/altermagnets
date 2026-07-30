@@ -5,7 +5,6 @@
 
   const root = document.documentElement;
   const themeButtons = Array.from(document.querySelectorAll("[data-theme-option]"));
-  const resultLinks = Array.from(document.querySelectorAll(".result-row-link"));
   const sidebar = document.querySelector(".sidebar");
   const themeAwareFigures = Array.from(document.querySelectorAll("img.theme-aware-figure"));
 
@@ -44,25 +43,6 @@
       applyTheme(selected);
       window.localStorage.setItem(THEME_KEY, selected);
     });
-  });
-
-  const buildRowUrl = (rowUrl) => {
-    if (!rowUrl) {
-      return "";
-    }
-
-    const currentParams = new URLSearchParams(window.location.search);
-    currentParams.delete("id");
-    if (!currentParams.toString()) {
-      return rowUrl;
-    }
-
-    const separator = rowUrl.includes("?") ? "&" : "?";
-    return `${rowUrl}${separator}${currentParams.toString()}`;
-  };
-
-  resultLinks.forEach((link) => {
-    link.setAttribute("href", buildRowUrl(link.getAttribute("href")));
   });
 
   const initBidirectionalSidebar = () => {
@@ -238,8 +218,11 @@
 
   initFloatingInfoBubbles();
 
-  if (typeof window.renderMathInElement === "function") {
-    window.renderMathInElement(document.body, {
+  const renderMath = (element) => {
+    if (!element || element.dataset.katexRendered === "1" || typeof window.renderMathInElement !== "function") {
+      return;
+    }
+    window.renderMathInElement(element, {
       delimiters: [
         { left: "$$", right: "$$", display: true },
         { left: "$", right: "$", display: false },
@@ -248,7 +231,26 @@
       ],
       throwOnError: false,
     });
-  }
+    element.dataset.katexRendered = "1";
+  };
+
+  renderMath(document.body);
+
+  document.addEventListener("httk:table-updated", (event) => {
+    const table = event.target;
+    if (!(table instanceof Element)) {
+      return;
+    }
+    const tbody = table.querySelector("tbody");
+    if (!tbody) {
+      return;
+    }
+    // httk.table replaces tbody.innerHTML while retaining tbody attributes.
+    // Clearing this marker makes each new page render once without rerendering
+    // the surrounding document or the already-rendered table headers.
+    delete tbody.dataset.katexRendered;
+    renderMath(tbody);
+  });
 
   window.toggleBlock = (windowId, buttonId) => {
     const panel = document.getElementById(windowId);

@@ -1,4 +1,4 @@
-"""Material-search query builder and the temporary non-widget presentation adapter."""
+"""Reusable, bounded material-search query and presentation helpers."""
 
 from math import isfinite
 from typing import Any
@@ -6,16 +6,8 @@ from typing import Any
 from formula_katex import katex_formula_inline
 from httk.data import PageOrder
 from httk.data.db import SqlResultSet, SqlStore
-from input_sanitize import sanitize_search_inputs
 from material_store import CLASSIFICATION_LABELS, ELECTRONIC_TYPE_LABELS, MaterialRecord
 
-SORT_LABELS = {
-    "screening_rank": "ID",
-    "max_ss_desc": "Largest maximum spin splitting",
-    "avg_ss_desc": "Largest average spin splitting",
-    "bandgap_desc": "Largest KS gap",
-    "abundance_desc": "Most abundant constituents",
-}
 PAGE_ORDERS: dict[str, tuple[PageOrder, ...]] = {
     # The former SQL ordered this view by canonical material ID, not integer rank.
     "screening_rank": (PageOrder("material_id"),),
@@ -28,17 +20,11 @@ PAGE_ORDERS: dict[str, tuple[PageOrder, ...]] = {
         PageOrder("material_id"),
     ),
 }
-MAX_SPLIT_LABEL = r"$\Delta E^{\mathrm{max}}_{\mathrm{split}}$"
-AVG_SPLIT_LABEL = r"$\Delta E^{\mathrm{avg}}_{\mathrm{split}}$"
-
 MAX_TEXT_TOKEN_LENGTH = 64
 MAX_TEXT_TOKENS = 12
 MAX_ELEMENT_TOKEN_LENGTH = 8
 MAX_ELEMENT_TOKENS = 16
 MAX_PREDICATES = 40
-_LEGACY_PAGE_SIZE = 1_000
-
-
 def _bounded_tokens(value: str, *, max_tokens: int, max_token_length: int) -> list[str]:
     tokens: list[str] = []
     for raw in value.replace(",", " ").split():
@@ -98,7 +84,9 @@ def _format_abundance(value: float | None) -> str:
     return f"{value:.3f} ppm"
 
 
-def _decorate_record(record: MaterialRecord) -> dict[str, Any]:
+def decorate_material(record: MaterialRecord, *, detail_url: str) -> dict[str, Any]:
+    """Return the detached, presentation-only row accepted by ``TablePage``."""
+
     return {
         "material_id": record.id,
         "screening_rank": record.screening_rank,
@@ -113,6 +101,7 @@ def _decorate_record(record: MaterialRecord) -> dict[str, Any]:
         "bandgap": record.bandgap,
         "min_abund_ppm": record.min_abund_ppm,
         "material_label": katex_formula_inline(record.formula) or record.formula,
+        "detail_url": detail_url,
         "classification_label": CLASSIFICATION_LABELS.get(record.classification, record.classification),
         "electronic_type_label": ELECTRONIC_TYPE_LABELS.get(record.electronic_type, record.electronic_type),
         "magndata_ids": [link.record.id for link in record.links],
@@ -127,55 +116,6 @@ def _decorate_record(record: MaterialRecord) -> dict[str, Any]:
         "bandgap_display": _format_decimal(record.bandgap),
         "abundance_display": _format_abundance(record.min_abund_ppm),
     }
-
-
-def _active_filters(
-    *,
-    q: str,
-    elements: str,
-    classification: str,
-    electronic_type: str,
-    magnetic_phase: str,
-    wave_class: str,
-    space_group: str,
-    min_max_ss: str,
-    min_avg_ss: str,
-    min_fdelta_pct: str,
-    min_bandgap: str,
-    max_bandgap: str,
-    min_abundance_ppm: str,
-    sort: str,
-) -> list[dict[str, str]]:
-    filters: list[dict[str, str]] = []
-    if q.strip():
-        filters.append({"label": "Text", "value": q.strip()})
-    if elements.strip():
-        filters.append({"label": "Elements", "value": ", ".join(_canonical_element_tokens(elements))})
-    if classification:
-        filters.append({"label": "Collinearity", "value": CLASSIFICATION_LABELS.get(classification, classification)})
-    if electronic_type:
-        filters.append({"label": "KS Gap Type", "value": ELECTRONIC_TYPE_LABELS.get(electronic_type, electronic_type)})
-    if magnetic_phase:
-        filters.append({"label": "Phase", "value": magnetic_phase})
-    if wave_class:
-        filters.append({"label": "Wave class", "value": wave_class})
-    if space_group.strip():
-        filters.append({"label": "Space group", "value": space_group.strip()})
-    if min_max_ss.strip():
-        filters.append({"label": f"{MAX_SPLIT_LABEL} >=", "value": f"{min_max_ss.strip()} eV"})
-    if min_avg_ss.strip():
-        filters.append({"label": f"{AVG_SPLIT_LABEL} >=", "value": f"{min_avg_ss.strip()} eV"})
-    if min_fdelta_pct.strip():
-        filters.append({"label": "FΔ >=", "value": f"{min_fdelta_pct.strip()} %"})
-    if min_bandgap.strip():
-        filters.append({"label": "KS Gap >=", "value": f"{min_bandgap.strip()} eV"})
-    if max_bandgap.strip():
-        filters.append({"label": "KS Gap <=", "value": f"{max_bandgap.strip()} eV"})
-    if min_abundance_ppm.strip():
-        filters.append({"label": "Min abundance >=", "value": f"{min_abundance_ppm.strip()} ppm"})
-    if sort and sort != "screening_rank":
-        filters.append({"label": "Sorted by", "value": SORT_LABELS.get(sort, sort.replace("_", " "))})
-    return filters
 
 
 def search_materials(
@@ -264,83 +204,3 @@ def search_materials(
         min_abund_ppm=material.min_abund_ppm,
     )
     return results, PAGE_ORDERS.get(sort, PAGE_ORDERS["screening_rank"])
-
-
-def _legacy_materialize(results: SqlResultSet, page_order: tuple[PageOrder, ...]) -> list[MaterialRecord]:
-    """Temporary page adapter until the widget phase consumes ``.page`` itself.
-
-    This deliberately walks keyset pages; it does not use SQL OFFSET.
-    """
-    materialized: list[MaterialRecord] = []
-    cursor = None
-    while True:
-        page = results.page(size=_LEGACY_PAGE_SIZE, order_by=page_order, cursor=cursor)
-        materialized.extend(row["material"] for row in page.rows)
-        if page.next is None:
-            return materialized
-        cursor = page.next
-
-
-def execute(
-    global_data,
-    q: str = "",
-    elements: str = "",
-    classification: str = "",
-    electronic_type: str = "",
-    magnetic_phase: str = "",
-    wave_class: str = "",
-    space_group: str = "",
-    min_max_ss: str = "",
-    min_avg_ss: str = "",
-    min_fdelta_pct: str = "",
-    min_bandgap: str = "",
-    max_bandgap: str = "",
-    min_abundance_ppm: str = "",
-    sort: str = "screening_rank",
-    **kwargs,
-) -> dict[str, Any]:
-    sanitized = sanitize_search_inputs(
-        {
-            "q": q,
-            "elements": elements,
-            "classification": classification,
-            "electronic_type": electronic_type,
-            "magnetic_phase": magnetic_phase,
-            "wave_class": wave_class,
-            "space_group": space_group,
-            "min_max_ss": min_max_ss,
-            "min_avg_ss": min_avg_ss,
-            "min_fdelta_pct": min_fdelta_pct,
-            "min_bandgap": min_bandgap,
-            "max_bandgap": max_bandgap,
-            "min_abundance_ppm": min_abundance_ppm,
-            "sort": sort,
-        }
-    )
-    store = global_data.get("materials_store")
-    site_stats = global_data.get("site_stats", {})
-    if not isinstance(store, SqlStore):
-        return {
-            "dataset_available": False,
-            "summary": "The screening tables are not mounted on this deployment.",
-            "items": [],
-            "count": 0,
-            "total": 0,
-            "active_filters": [],
-        }
-
-    results, page_order = search_materials(store, **sanitized)
-    items = [_decorate_record(record) for record in _legacy_materialize(results, page_order)]
-    active_filters = _active_filters(**sanitized)
-    total = int(site_stats.get("total_materials", 0) or 0)
-    summary = f"Showing {len(items)} of {total} screened entries."
-    if not active_filters:
-        summary = f"Showing all {total} screened entries."
-    return {
-        "dataset_available": bool(site_stats.get("dataset_available")),
-        "summary": summary,
-        "items": items,
-        "count": len(items),
-        "total": total,
-        "active_filters": active_filters,
-    }

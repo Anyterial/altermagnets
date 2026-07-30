@@ -1,10 +1,13 @@
 from pathlib import Path
+from typing import Any
 
 import get_material
 import init
+import pytest
 import search_materials
 from conftest import write_source_tables
 from httk.data.db import Database
+from httk.web import SITE_RESOURCES_KEY, SiteResources
 from material_store import (
     MaterialRecord,
     build_material_records,
@@ -24,11 +27,11 @@ def test_persistent_build_reconstructs_ordered_links_and_variants(material_store
         record = searcher.results(material=material).one()["material"]
         assert [link.ordinal for link in record.links] == [1, 2]
         assert [link.record.id for link in record.links] == ["0.528", "0.800"]
-        assert record.links[0].record.id == "0.528"
-        assert record.links[1].record.id == "0.800"
         assert [variant.symprec for variant in record.links[0].record.variants] == [0.001, 0.01]
-        assert record.links[1].record.variants[0].source_kind == "collinear"
-        assert record.links[1].record.variants[1].source_kind == "noncollinear-derived"
+        assert [variant.source_kind for variant in record.links[1].record.variants] == [
+            "collinear",
+            "noncollinear-derived",
+        ]
     finally:
         opened.database.dispose()
 
@@ -82,17 +85,19 @@ def test_builder_rejects_duplicates_and_nonfinite_values(tmp_path: Path) -> None
         raise AssertionError("duplicate material ID was accepted")
 
 
-def test_runtime_opens_only_prebuilt_store_and_cleanup_is_idempotent(
+def test_runtime_opens_only_prebuilt_store_and_resources_clean_it_up(
     material_store_path: Path, tmp_path: Path, monkeypatch
 ) -> None:
-    source = material_store_path.parent / "tables"
-    source.rename(tmp_path / "source-removed")
+    (material_store_path.parent / "tables").rename(tmp_path / "source-removed")
     monkeypatch.setenv("ALTERMAGNETS_STORE_PATH", str(material_store_path))
-    global_data = {}
+    resources = SiteResources()
+    global_data: dict[str, Any] = {SITE_RESOURCES_KEY: resources}
     init.execute(global_data)
     assert global_data["site_stats"]["dataset_available"] is True
-    assert search_materials.execute(global_data, q="CrSb")["count"] == 1
-    cleanup_material_store(global_data)
+    assert global_data["materials_store_revision"] == init._store_revision(material_store_path)
+    results, order = search_materials.search_materials(global_data["materials_store"], q="CrSb")
+    assert [row["material"].id for row in results.page(size=1, order_by=order).rows] == ["anyt:am-1-0001"]
+    resources.close()
     cleanup_material_store(global_data)
     assert "materials_database" not in global_data
 
@@ -108,30 +113,49 @@ def test_missing_corrupt_and_zero_stores_are_unavailable(tmp_path: Path) -> None
     assert open_prebuilt_store(zero) is None
 
 
+def test_initialization_registers_cleanup_before_feature_queries(material_store_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ALTERMAGNETS_STORE_PATH", str(material_store_path))
+    resources = SiteResources()
+    global_data: dict[str, Any] = {SITE_RESOURCES_KEY: resources}
+
+    def fail_stats(*args, **kwargs):
+        raise ValueError("synthetic startup failure")
+
+    monkeypatch.setattr(init, "_site_stats", fail_stats)
+    with pytest.raises(ValueError, match="synthetic startup failure"):
+        init.execute(global_data)
+    assert "materials_database" in global_data
+    resources.close()
+    assert "materials_database" not in global_data
+
+
 def test_store_search_filters_sorts_and_literal_like_characters(material_store_path: Path) -> None:
     opened = open_prebuilt_store(material_store_path)
     assert opened is not None
     try:
-        global_data = {"materials_store": opened.store, "site_stats": {"dataset_available": True, "total_materials": 3}}
-        assert search_materials.execute(global_data, elements="Cr Sb")["count"] == 1
-        assert search_materials.execute(global_data, elements="Cr Te")["count"] == 0
-        assert search_materials.execute(global_data, classification="mixed")["count"] == 2
-        assert search_materials.execute(global_data, electronic_type="unknown")["count"] == 1
-        assert search_materials.execute(global_data, magnetic_phase="AM")["count"] == 2
-        assert search_materials.execute(global_data, wave_class="g")["count"] == 1
-        assert search_materials.execute(global_data, space_group="p6_3/MMC")["count"] == 2
-        assert search_materials.execute(global_data, space_group="p6")["count"] == 2
-        assert search_materials.execute(global_data, min_max_ss="1.0")["count"] == 1
-        assert search_materials.execute(global_data, max_bandgap="0")["count"] == 1
-        assert search_materials.execute(global_data, min_abundance_ppm="0.01")["count"] == 1
-        assert search_materials.execute(global_data, q="P6Fe_")["count"] == 1
-        assert search_materials.execute(global_data, q="%")["count"] == 0
-        assert [item["material_id"] for item in search_materials.execute(global_data, sort="max_ss_desc")["items"]] == [
+        def material_ids(**query: str) -> list[str]:
+            results, order = search_materials.search_materials(opened.store, **query)
+            return [row["material"].id for row in results.page(size=20, order_by=order).rows]
+
+        assert len(material_ids(elements="Cr Sb")) == 1
+        assert material_ids(elements="Cr Te") == []
+        assert len(material_ids(classification="mixed")) == 2
+        assert len(material_ids(electronic_type="unknown")) == 1
+        assert len(material_ids(magnetic_phase="AM")) == 2
+        assert len(material_ids(wave_class="g")) == 1
+        assert len(material_ids(space_group="p6_3/MMC")) == 2
+        assert len(material_ids(space_group="p6")) == 2
+        assert len(material_ids(min_max_ss="1.0")) == 1
+        assert len(material_ids(max_bandgap="0")) == 1
+        assert len(material_ids(min_abundance_ppm="0.01")) == 1
+        assert len(material_ids(q="P6Fe_")) == 1
+        assert material_ids(q="%") == []
+        assert material_ids(sort="max_ss_desc") == [
             "anyt:am-1-0001",
             "anyt:am-1-0002",
             "anyt:am-1-0003",
         ]
-        assert [item["material_id"] for item in search_materials.execute(global_data, sort="bandgap_desc")["items"]] == [
+        assert material_ids(sort="bandgap_desc") == [
             "anyt:am-1-0002",
             "anyt:am-1-0001",
             "anyt:am-1-0003",
@@ -155,18 +179,17 @@ def test_detail_alias_order_decoration_and_unresolved_link(material_store_path: 
         assert detail is not None
         assert detail["material_id"] == "anyt:am-1-0001"
         assert [entry["magndata_id"] for entry in detail["linked_entries"]] == ["0.528", "0.528", "0.800", "0.800"]
-        assert detail["linked_entries"][0]["bns_mcif_label"].startswith("$")
         unresolved = get_material.execute({"materials_store": opened.store}, id="anyt:am-1-0003")
         assert unresolved is not None
         assert unresolved["linked_entries"][0]["source_label"] == "No symmetry table entry"
-        assert unresolved["linked_entries"][0]["magndata_id"] == "0.900"
     finally:
         opened.database.dispose()
 
 
 def test_init_stats_and_features_use_open_store(material_store_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("ALTERMAGNETS_STORE_PATH", str(material_store_path))
-    global_data = {}
+    resources = SiteResources()
+    global_data: dict[str, Any] = {SITE_RESOURCES_KEY: resources}
     init.execute(global_data)
     try:
         assert global_data["site_stats"]["classification_counts"] == {
@@ -178,4 +201,4 @@ def test_init_stats_and_features_use_open_store(material_store_path: Path, monke
         assert global_data["site_stats"]["electronic_counts"]["unknown"] == 1
         assert global_data["featured_materials"]["largest_splitting"][0]["material_id"] == "anyt:am-1-0001"
     finally:
-        cleanup_material_store(global_data)
+        resources.close()

@@ -551,11 +551,12 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
 def cleanup_material_store(global_data: MutableMapping[str, Any]) -> None:
     """Dispose the locally owned runtime database, safely more than once.
 
-    Web-framework lifecycle wiring is intentionally left to the next phase;
-    this helper gives tests and local runners an explicit idempotent seam.
+    Site startup registers this helper with httk-web's resource lifecycle; it
+    remains useful to local runners and tests as an explicit idempotent seam.
     """
     global_data.pop("materials_store", None)
     database = global_data.pop("materials_database", None)
     global_data.pop("materials_store_path", None)
+    global_data.pop("materials_store_revision", None)
     if isinstance(database, Database):
         database.dispose()

@@ -5,5 +5,11 @@
       Search is executed server-side against the screened materials table and the linked MAGNDATA symmetry summaries.
     </p>
   </header>
-  {{ results }}
+  {% if site_stats.dataset_available %}
+  {{ content }}
+  {% else %}
+  <div class="notice-block">
+    <p>{{ site_stats.notice }}</p>
+  </div>
+  {% endif %}
 </article>

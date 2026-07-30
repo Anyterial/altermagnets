@@ -5,6 +5,7 @@ from typing import Any
 
 from formula_katex import katex_formula_inline
 from httk.data import PageOrder
+from httk.web import SITE_RESOURCES_KEY, SiteResources
 from material_store import (
     CLASSIFICATION_LABELS,
     ELECTRONIC_TYPE_LABELS,
@@ -160,6 +161,13 @@ def _unavailable_stats(store_path: Path) -> dict[str, Any]:
     }
 
 
+def _store_revision(store_path: Path) -> str:
+    """Return a compact, path-independent identity for the mounted store."""
+
+    metadata = store_path.stat()
+    return f"{metadata.st_size:x}-{metadata.st_mtime_ns:x}"
+
+
 def _build_search_options() -> dict[str, Any]:
     return {
         "classifications": [
@@ -219,6 +227,17 @@ def execute(global_data, **kwargs) -> None:
     global_data["materials_database"] = opened.database
     global_data["materials_store"] = opened.store
     global_data["materials_store_path"] = store_path
+    resources = global_data.get(SITE_RESOURCES_KEY)
+    if not isinstance(resources, SiteResources):
+        cleanup_material_store(global_data)
+        raise TypeError("httk-web site resources are required to own the material store")
+    try:
+        resources.register(lambda: cleanup_material_store(global_data))
+    except BaseException:
+        cleanup_material_store(global_data)
+        raise
+
+    global_data["materials_store_revision"] = _store_revision(store_path)
     global_data["site_stats"] = _site_stats(
         opened.store,
         total_materials=opened.material_count,

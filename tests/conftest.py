@@ -58,7 +58,9 @@ def _write_rows(path: Path, fields: tuple[str, ...], rows: list[dict[str, str]],
         writer.writerows(rows)
 
 
-def write_source_tables(directory: Path) -> Path:
+def write_source_tables(directory: Path, *, material_count: int = 3) -> Path:
+    if material_count < 3:
+        raise ValueError("synthetic material_count must be at least the three fixture records")
     directory.mkdir(parents=True, exist_ok=True)
     _write_rows(
         directory / "high_throughput_screening_results_fixed.csv",
@@ -100,6 +102,38 @@ def write_source_tables(directory: Path) -> Path:
         ],
         delimiter=";",
     )
+    if material_count > 3:
+        screening_path = directory / "high_throughput_screening_results_fixed.csv"
+        with screening_path.open("a", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=(
+                    "AMDBId",
+                    "MAGNDATA ID",
+                    "Material",
+                    "Space group",
+                    "FdeltaPct",
+                    "MaxSS",
+                    "AvgSS",
+                    "Bandgap",
+                    "MinAbundPpm",
+                ),
+                delimiter=";",
+            )
+            for index in range(4, material_count + 1):
+                writer.writerow(
+                    {
+                        "AMDBId": f"anyt:am-1-{index:04d}",
+                        "MAGNDATA ID": f"synthetic-{index:04d}",
+                        "Material": f"Fe{index}O",
+                        "Space group": "P4/nmm",
+                        "FdeltaPct": str(index),
+                        "MaxSS": f"{index / 100:.3f}",
+                        "AvgSS": f"{index / 200:.3f}",
+                        "Bandgap": f"{index / 300:.3f}",
+                        "MinAbundPpm": f"{index / 1_000:.3f}",
+                    }
+                )
     common = {
         "ChemicalFormula": "CrSb",
         "Symprec": "0.001",

@@ -19,16 +19,31 @@ Quick start
 
 ```bash
 python -m pip install -e .
+make serve
+```
+
+The source dataset is intentionally not version-controlled. Without a mounted
+store the site still starts and shows its dataset-unavailable state. For the
+data-backed application, obtain the deployment's three source tables and put
+them under `data/tables/` with these exact names:
+
+- `high_throughput_screening_results_fixed.csv`
+- `altermagnets_collinear.csv`
+- `altermagnets_noncollinear.csv`
+
+Then build and serve the store:
+
+```bash
 make build_store
 make serve
 ```
 
-`make build_store` reads the three CSV source tables and atomically writes the
-runtime store at `data/altermagnets.duckdb`. The dynamic site never rebuilds it
-or reads CSV files. Set `ALTERMAGNETS_STORE_PATH` to use a different runtime
-store path; the same variable (or `python tools/build_store.py --target PATH`)
-selects the builder target. `ALTERMAGNETS_DATA_DIR` (or `--data-dir`) selects
-the builder's source-table directory.
+`make build_store` atomically writes `data/altermagnets.duckdb`; the dynamic
+site never rebuilds it or reads CSV files. Set `ALTERMAGNETS_STORE_PATH` to use
+a different runtime store path; the same variable (or
+`python tools/build_store.py --target PATH`) selects the builder target.
+`ALTERMAGNETS_DATA_DIR` (or `--data-dir`) selects a different source-table
+directory.
 
 Then open:
 

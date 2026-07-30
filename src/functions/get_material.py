@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from formula_katex import katex_formula_inline
+from httk.data.db import SqlStore
 from input_sanitize import sanitize_material_id
+from material_store import MaterialRecord, SymmetryVariant
 
 CLASSIFICATION_LABELS = {
     "collinear": "Collinear",
@@ -110,12 +112,6 @@ MAX_SVG_BYTES = 1_500_000
 DEFAULT_MAX_SVG_BYTES = MAX_SVG_BYTES * 100
 
 
-def _split_pipe(value: str | None) -> list[str]:
-    if not value:
-        return []
-    return [part for part in value.split("|") if part]
-
-
 def _format_decimal(value: float | None, *, digits: int = 3, empty: str = "n/a") -> str:
     if value is None:
         return empty
@@ -147,8 +143,8 @@ def _katex_inline(text: str) -> str:
     return f"${value}$"
 
 
-def _katex_join_pipe(value: str | None) -> str:
-    parts = [_katex_inline(part) for part in _split_pipe(value) if _katex_inline(part)]
+def _katex_join(values: tuple[str, ...] | list[str]) -> str:
+    parts = [_katex_inline(part) for part in values if _katex_inline(part)]
     return ", ".join(parts) if parts else "n/a"
 
 
@@ -164,25 +160,10 @@ def _format_symprec_katex(value: float | None) -> str:
     return f"$10^{{{exponent_text}}}$"
 
 
-def _fetch_one(connection: Any, sql: str, params: list[Any]) -> dict[str, Any] | None:
-    cursor = connection.execute(sql, params)
-    row = cursor.fetchone()
-    if row is None:
-        return None
-    columns = [column[0] for column in cursor.description]
-    return dict(zip(columns, row, strict=False))
-
-
-def _fetch_all(connection: Any, sql: str, params: list[Any]) -> list[dict[str, Any]]:
-    cursor = connection.execute(sql, params)
-    columns = [column[0] for column in cursor.description]
-    return [dict(zip(columns, row, strict=False)) for row in cursor.fetchall()]
-
-
 def _doi_links(values: list[str]) -> list[dict[str, str]]:
     links: list[dict[str, str]] = []
     for value in values:
-        if value.startswith("http://") or value.startswith("https://"):
+        if value.startswith(("http://", "https://")):
             links.append({"label": value, "url": value})
             continue
         if value.startswith("10."):
@@ -373,176 +354,126 @@ def _load_detail_assets(material_id: str, global_data: Any) -> dict[str, Any]:
     }
 
 
-def _decorate_linked_entry(row: dict[str, Any]) -> dict[str, Any]:
-    magnetic_phases = _split_pipe(row.get("magnetic_phases_text"))
-    wave_classes = _split_pipe(row.get("wave_classes_text"))
-    warnings = _split_pipe(row.get("warnings_text"))
-    notes = _split_pipe(row.get("notes_text"))
-    formula = row.get("formula") or ""
+def _decorate_linked_entry(magndata_id: str, variant: SymmetryVariant | None) -> dict[str, Any]:
+    """Render a stored variant, including the unresolved-left-join equivalent."""
+    source_kind = variant.source_kind if variant is not None else ""
+    formula = variant.formula if variant is not None else ""
+    magnetic_phases = variant.magnetic_phases if variant is not None else ()
+    wave_classes = variant.wave_classes if variant is not None else ()
+    warnings = list(variant.warnings) if variant is not None else []
+    notes = list(variant.notes) if variant is not None else []
     return {
-        "magndata_id": row["magndata_id"],
-        "source_kind": row.get("source_kind") or "",
-        "source_label": CLASSIFICATION_LABELS.get(row.get("source_kind") or "", "No symmetry table entry"),
-        "magndata_url": _magndata_url(row["magndata_id"]),
+        "magndata_id": magndata_id,
+        "source_kind": source_kind,
+        "source_label": CLASSIFICATION_LABELS.get(source_kind, "No symmetry table entry"),
+        "magndata_url": _magndata_url(magndata_id),
         "formula": formula,
         "formula_label": katex_formula_inline(formula) or formula,
-        "symprec_label": _format_symprec_katex(row.get("symprec")),
-        "symprec_variants": row.get("symprec_variants") or 0,
+        "symprec_label": _format_symprec_katex(variant.symprec if variant is not None else None),
+        "symprec_variants": variant.symprec_variants if variant is not None else 0,
         "phase_label": ", ".join(magnetic_phases) if magnetic_phases else "n/a",
         "wave_class_label": ", ".join(wave_classes) if wave_classes else "n/a",
-        "parent_spacegroups": _split_pipe(row.get("parent_spacegroups_text")),
-        "parent_spacegroup_label": _katex_join_pipe(row.get("parent_spacegroups_latex_text")),
-        "bns_mcif_label": _katex_join_pipe(row.get("bns_mcif_latex_text")),
-        "bns_label": _katex_join_pipe(row.get("bns_latex_text")),
-        "g_laue_class_label": ", ".join(_split_pipe(row.get("g_laue_classes_text"))) or "n/a",
-        "h_laue_class_label": ", ".join(_split_pipe(row.get("h_laue_classes_text"))) or "n/a",
-        "connecting_element_label": _katex_join_pipe(row.get("connecting_elements_latex_text")),
-        "spin_angle_mismatch_display": _format_decimal(row.get("spin_angle_mismatch"), digits=1, empty="n/a"),
-        "spin_length_mismatch_display": _format_decimal(row.get("spin_length_mismatch"), digits=3, empty="n/a"),
-        "icsd_ids": _split_pipe(row.get("icsd_ids_text")),
-        "reference_links": _doi_links(_split_pipe(row.get("doi_text"))),
+        "parent_spacegroups": list(variant.parent_spacegroups) if variant is not None else [],
+        "parent_spacegroup_label": _katex_join(variant.parent_spacegroups_latex) if variant is not None else "n/a",
+        "bns_mcif_label": _katex_join(variant.bns_mcif_labels_latex) if variant is not None else "n/a",
+        "bns_label": _katex_join(variant.bns_labels_latex) if variant is not None else "n/a",
+        "g_laue_class_label": ", ".join(variant.g_laue_classes) if variant is not None else "n/a",
+        "h_laue_class_label": ", ".join(variant.h_laue_classes) if variant is not None else "n/a",
+        "connecting_element_label": _katex_join(variant.connecting_elements_latex) if variant is not None else "n/a",
+        "spin_angle_mismatch_display": _format_decimal(
+            variant.spin_angle_mismatch if variant is not None else None, digits=1, empty="n/a"
+        ),
+        "spin_length_mismatch_display": _format_decimal(
+            variant.spin_length_mismatch if variant is not None else None, digits=3, empty="n/a"
+        ),
+        "icsd_ids": list(variant.icsd_ids) if variant is not None else [],
+        "reference_links": _doi_links(list(variant.reference_dois) if variant is not None else []),
         "warnings": warnings,
         "notes": notes,
     }
 
 
+def _find_material(store: SqlStore, material_id: str) -> MaterialRecord | None:
+    """Resolve aliases in their existing priority order through the query DSL."""
+    for candidate in _material_id_aliases(material_id):
+        searcher = store.searcher()
+        material = searcher.variable(MaterialRecord)
+        searcher.add(material.id == candidate)
+        row = searcher.results(material=material).first()
+        if row is not None:
+            return row["material"]
+    return None
+
+
 def execute(global_data, id: str = "", **kwargs):
-    connection = global_data.get("materials_db")
-    lock = global_data.get("materials_db_lock")
-    if connection is None or lock is None:
+    store = global_data.get("materials_store")
+    if not isinstance(store, SqlStore):
         return None
 
     material_id = sanitize_material_id(id)
     if not material_id:
         return None
 
-    with lock:
-        material = None
-        resolved_material_id = material_id
-        for material_id_candidate in _material_id_aliases(material_id):
-            material = _fetch_one(
-                connection,
-                """
-                SELECT
-                    material_id,
-                    screening_rank,
-                    material,
-                    formula,
-                    space_group,
-                    primary_magndata_id,
-                    magndata_ids_text,
-                    elements_text,
-                    classification,
-                    magnetic_phases_text,
-                    wave_classes_text,
-                    parent_spacegroups_text,
-                    parent_spacegroups_latex_text,
-                    max_ss,
-                    avg_ss,
-                    fdelta_pct,
-                    bandgap,
-                    electronic_type,
-                    min_abund_ppm,
-                    icsd_ids_text,
-                    doi_text
-                FROM materials
-                WHERE material_id = ?
-                """,
-                [material_id_candidate],
-            )
-            if material is not None:
-                resolved_material_id = str(material.get("material_id") or material_id_candidate)
-                break
-        if material is None:
-            return None
+    material = _find_material(store, material_id)
+    if material is None:
+        return None
 
-        linked_rows = _fetch_all(
-            connection,
-            """
-            SELECT
-                mm.magndata_id,
-                mm.ordinal,
-                mm.is_primary,
-                se.source_kind,
-                se.formula,
-                se.symprec,
-                se.symprec_variants,
-                se.magnetic_phases_text,
-                se.wave_classes_text,
-                se.wave_classes_full_text,
-                se.parent_spacegroups_text,
-                se.parent_spacegroups_latex_text,
-                se.bns_mcif_text,
-                se.bns_mcif_latex_text,
-                se.bns_text,
-                se.bns_latex_text,
-                se.effective_bns_text,
-                se.effective_bns_latex_text,
-                se.g_laue_classes_text,
-                se.h_laue_classes_text,
-                se.connecting_elements_text,
-                se.connecting_elements_latex_text,
-                se.spin_angle_mismatch,
-                se.spin_length_mismatch,
-                se.icsd_ids_text,
-                se.doi_text,
-                se.warnings_text,
-                se.notes_text
-            FROM material_magndata AS mm
-            LEFT JOIN symmetry_entries AS se
-                ON se.magndata_id = mm.magndata_id
-            WHERE mm.material_id = ?
-            ORDER BY
-                mm.ordinal ASC,
-                se.source_kind ASC,
-                se.symprec ASC NULLS LAST
-            """,
-            [resolved_material_id],
-        )
-
-    linked_entries = [_decorate_linked_entry(row) for row in linked_rows]
-    detail_assets = _load_detail_assets(resolved_material_id, global_data)
+    linked_entries = [
+        _decorate_linked_entry(link.record.id, variant)
+        for link in material.links
+        for variant in (link.record.variants or (None,))
+    ]
+    detail_assets = _load_detail_assets(material.id, global_data)
     warnings = [warning for entry in linked_entries for warning in entry["warnings"]]
     notes = [note for entry in linked_entries for note in entry["notes"]]
-    magnetic_phases = _split_pipe(material.get("magnetic_phases_text"))
-    wave_classes = _split_pipe(material.get("wave_classes_text"))
-    parent_spacegroups = _split_pipe(material.get("parent_spacegroups_text"))
-    parent_spacegroups_latex = _split_pipe(material.get("parent_spacegroups_latex_text"))
-    magndata_ids = _split_pipe(material.get("magndata_ids_text"))
-    icsd_ids = _split_pipe(material.get("icsd_ids_text"))
-    doi_values = _split_pipe(material.get("doi_text"))
-    material_formula = material.get("formula") or material.get("material") or ""
-    material_label = katex_formula_inline(material_formula) or material.get("material") or ""
+    magnetic_phases = list(material.magnetic_phases)
+    wave_classes = list(material.wave_classes)
+    parent_spacegroups = list(material.parent_spacegroups)
+    parent_spacegroups_latex = list(material.parent_spacegroups_latex)
+    magndata_ids = [link.record.id for link in material.links]
+    icsd_ids = list(material.icsd_ids)
+    material_label = katex_formula_inline(material.formula) or material.formula
 
     return {
-        **material,
+        "material_id": material.id,
+        "screening_rank": material.screening_rank,
+        "material": material.formula,
+        "formula": material.formula,
+        "space_group": material.space_group,
+        "classification": material.classification,
+        "electronic_type": material.electronic_type,
+        "max_ss": material.max_ss,
+        "avg_ss": material.avg_ss,
+        "fdelta_pct": material.fdelta_pct,
+        "bandgap": material.bandgap,
+        "min_abund_ppm": material.min_abund_ppm,
         "material_label": material_label,
-        "classification_label": CLASSIFICATION_LABELS.get(material["classification"], material["classification"]),
-        "classification_note": CLASSIFICATION_NOTES.get(material["classification"], ""),
-        "electronic_type_label": ELECTRONIC_TYPE_LABELS.get(material["electronic_type"], material["electronic_type"]),
+        "classification_label": CLASSIFICATION_LABELS.get(material.classification, material.classification),
+        "classification_note": CLASSIFICATION_NOTES.get(material.classification, ""),
+        "electronic_type_label": ELECTRONIC_TYPE_LABELS.get(material.electronic_type, material.electronic_type),
         "magndata_ids": magndata_ids,
         "magndata_ids_display": ", ".join(magndata_ids) if magndata_ids else "n/a",
         "magndata_links": [{"id": magndata_id, "url": _magndata_url(magndata_id)} for magndata_id in magndata_ids],
-        "elements": _split_pipe(material.get("elements_text")),
-        "elements_display": ", ".join(_split_pipe(material.get("elements_text"))) or "n/a",
+        "elements": list(material.elements),
+        "elements_display": ", ".join(material.elements) or "n/a",
         "magnetic_phases": magnetic_phases,
         "magnetic_phase_label": ", ".join(magnetic_phases) if magnetic_phases else "n/a",
         "wave_classes": wave_classes,
         "wave_class_label": ", ".join(wave_classes) if wave_classes else "n/a",
         "parent_spacegroups": parent_spacegroups,
         "space_group_label": (
-            _katex_join_pipe(material.get("parent_spacegroups_latex_text"))
+            _katex_join(parent_spacegroups_latex)
             if parent_spacegroups_latex
-            else _katex_inline(material.get("space_group") or "") or "n/a"
+            else _katex_inline(material.space_group) or "n/a"
         ),
-        "parent_spacegroup_label": _katex_join_pipe(material.get("parent_spacegroups_latex_text")),
-        "max_ss_display": _format_decimal(material.get("max_ss")),
-        "avg_ss_display": _format_decimal(material.get("avg_ss")),
-        "fdelta_display": _format_percent(material.get("fdelta_pct")),
-        "bandgap_display": _format_decimal(material.get("bandgap")),
-        "abundance_display": _format_abundance(material.get("min_abund_ppm")),
+        "parent_spacegroup_label": _katex_join(parent_spacegroups_latex),
+        "max_ss_display": _format_decimal(material.max_ss),
+        "avg_ss_display": _format_decimal(material.avg_ss),
+        "fdelta_display": _format_percent(material.fdelta_pct),
+        "bandgap_display": _format_decimal(material.bandgap),
+        "abundance_display": _format_abundance(material.min_abund_ppm),
         "icsd_ids": icsd_ids,
-        "doi_links": _doi_links(doi_values),
+        "doi_links": _doi_links(list(material.dois)),
         "linked_entries": linked_entries,
         "detail_figures": detail_assets["figures"],
         "detail_figure_count": detail_assets["available_count"],

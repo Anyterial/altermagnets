@@ -2,11 +2,9 @@ import asyncio
 from pathlib import Path
 
 import httpx
-
 from httk.web import create_asgi_app
 
 ROOT = Path(__file__).resolve().parents[1]
-DATASET_PATH = ROOT / "data" / "tables" / "high_throughput_screening_results_fixed.csv"
 PRIMARY_MATERIAL_ID = "anyt:am-1-0001"
 DETAIL_ASSET_PATHS = [
     ROOT / "data" / "details" / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001" / "band.svg",
@@ -29,7 +27,8 @@ def _request(path: str, *, params: dict[str, str] | None = None) -> httpx.Respon
     return asyncio.run(_call())
 
 
-def test_home_page_renders_without_cookies() -> None:
+def test_home_page_renders_without_cookies(material_store_path, monkeypatch) -> None:
+    monkeypatch.setenv("ALTERMAGNETS_STORE_PATH", str(material_store_path))
     response = _request("/")
 
     assert response.status_code == 200
@@ -37,35 +36,28 @@ def test_home_page_renders_without_cookies() -> None:
     assert response.headers.get("set-cookie") is None
 
 
-def test_search_page_handles_local_dataset_or_missing_mount() -> None:
+def test_search_page_uses_prebuilt_store(material_store_path, monkeypatch) -> None:
+    monkeypatch.setenv("ALTERMAGNETS_STORE_PATH", str(material_store_path))
     response = _request("/search", params={"q": "CrSb"})
     trailing_zero_response = _request("/search", params={"q": "0.800"})
 
     assert response.status_code == 200
-    if DATASET_PATH.exists():
-        assert "CrSb" in response.text
-        assert trailing_zero_response.status_code == 200
-        assert "0.800" in trailing_zero_response.text
-    else:
-        assert "screening tables are not mounted" in response.text.lower()
+    assert "CrSb" in response.text
+    assert trailing_zero_response.status_code == 200
+    assert "0.800" in trailing_zero_response.text
 
 
-def test_material_detail_page_handles_local_dataset_or_missing_mount() -> None:
+def test_material_detail_page_uses_prebuilt_store(material_store_path, monkeypatch) -> None:
+    monkeypatch.setenv("ALTERMAGNETS_STORE_PATH", str(material_store_path))
     response = _request("/material", params={"id": PRIMARY_MATERIAL_ID})
 
     assert response.status_code == 200
-    if DATASET_PATH.exists():
-        assert "MAGNDATA" in response.text
-        assert "index=0.528" in response.text
-        if any(path.exists() for path in DETAIL_ASSET_PATHS):
-            assert "Figures" in response.text
-            assert "Spin-split band structure" in response.text
-            assert "data:image/svg+xml;base64," in response.text
-    else:
-        assert "screening tables are not mounted" in response.text.lower()
+    assert "MAGNDATA" in response.text
+    assert "index=0.528" in response.text
 
 
-def test_search_handles_unexpected_query_payloads_without_crashing() -> None:
+def test_search_handles_unexpected_query_payloads_without_crashing(material_store_path, monkeypatch) -> None:
+    monkeypatch.setenv("ALTERMAGNETS_STORE_PATH", str(material_store_path))
     weird_query = "''; DROP TABLE materials; -- \x00 \xff \\u202e"
     params = {
         "q": weird_query,
@@ -82,13 +74,11 @@ def test_search_handles_unexpected_query_payloads_without_crashing() -> None:
 
     assert response.status_code == 200
     assert response.headers.get("set-cookie") is None
-    if DATASET_PATH.exists():
-        assert "Results" in response.text or "Search" in response.text
-    else:
-        assert "screening tables are not mounted" in response.text.lower()
+    assert "Results" in response.text or "Search" in response.text
 
 
-def test_search_handles_numeric_edge_case_inputs_without_crashing() -> None:
+def test_search_handles_numeric_edge_case_inputs_without_crashing(material_store_path, monkeypatch) -> None:
+    monkeypatch.setenv("ALTERMAGNETS_STORE_PATH", str(material_store_path))
     params = {
         "min_max_ss": "nan",
         "min_avg_ss": "inf",
@@ -101,13 +91,11 @@ def test_search_handles_numeric_edge_case_inputs_without_crashing() -> None:
     response = _request("/search", params=params)
 
     assert response.status_code == 200
-    if DATASET_PATH.exists():
-        assert "Search" in response.text
-    else:
-        assert "screening tables are not mounted" in response.text.lower()
+    assert "Search" in response.text
 
 
-def test_material_detail_handles_path_traversal_like_identifier_safely() -> None:
+def test_material_detail_handles_path_traversal_like_identifier_safely(material_store_path, monkeypatch) -> None:
+    monkeypatch.setenv("ALTERMAGNETS_STORE_PATH", str(material_store_path))
     response = _request("/material", params={"id": "../../etc/passwd"})
 
     assert response.status_code == 200

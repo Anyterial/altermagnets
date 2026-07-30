@@ -8,10 +8,10 @@ version = "0.1.0"
 description = "Example of how to use httk as a static site generator (that can be extended with a backend)."
 readme = "README.md"
 license = "AGPL-3.0+"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 authors = [{ name = "Rickard Armiento", email = "gitcommits@armiento.net" }]
 dependencies = [
-  "duckdb>=1.1",
+  "httk-data[duckdb]>=0.2,<1",
   "httk-web @ git+https://github.com/httk/httk-web@develop",
 ]
 classifiers = [
@@ -37,7 +37,7 @@ optimade = [
   "httk-core>=2.0,<3",
   "httk-io>=0.1,<1",
   "httk-atomistic>=0.3,<1",
-  "httk-data>=0.1,<1",
+  "httk-data>=0.2,<1",
   "httk-optimade>=0.2,<1",
 ]
 
@@ -55,13 +55,13 @@ profile = "black"
 extend_skip_glob = ["src/data/**"]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 src = ["src"]
 extend-exclude = ["src/data"]
 force-exclude = true
 
 [tool.black]
-target-version = ["py311"]
+target-version = ["py312"]
 line-length = 120
 skip-string-normalization = true
 force-exclude = '''
@@ -69,15 +69,15 @@ force-exclude = '''
 '''
 
 [tool.pyright]
-pythonVersion = "3.11"
-include = ["src/functions", "serve_dynamic.py", "serve_optimade.py", "publish_static.py", "optimade/render_definitions.py"]
+pythonVersion = "3.12"
+include = ["src/functions", "tools/build_store.py", "serve_dynamic.py", "serve_optimade.py", "publish_static.py", "optimade/render_definitions.py"]
 exclude = ["src/data"]
-extraPaths = ["src"]
+extraPaths = ["src", "src/functions"]
 reportMissingImports = true
 
 [tool.mypy]
-python_version = "3.11"
-files = ["src/functions", "serve_dynamic.py", "serve_optimade.py", "publish_static.py", "optimade/render_definitions.py"]
+python_version = "3.12"
+files = ["src/functions", "tools/build_store.py", "serve_dynamic.py", "serve_optimade.py", "publish_static.py", "optimade/render_definitions.py"]
 mypy_path = ["src", "src/functions"]
 namespace_packages = true
 explicit_package_bases = true
@@ -85,14 +85,5 @@ warn_unused_ignores = true
 exclude = ['^src/data/']
 
 [[tool.mypy.overrides]]
- module = ["yaml", "markdown", "docutils", "docutils.*", "duckdb", "httk.web", "httk.web.*"]
-ignore_missing_imports = true
-
-# The httk v2 capability modules are Python 3.12 (PEP 695) source and are not
-# installed into the 3.11-targeted type-check environment; skip following them so
-# mypy neither parses their newer syntax nor demands stubs. They resolve at
-# runtime via the workspace PYTHONPATH (or the `optimade` extra when installed).
-[[tool.mypy.overrides]]
-module = ["httk", "httk.*"]
-follow_imports = "skip"
+ module = ["yaml", "markdown", "docutils", "docutils.*", "httk.web", "httk.web.*"]
 ignore_missing_imports = true

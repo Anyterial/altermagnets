@@ -19,8 +19,16 @@ Quick start
 
 ```bash
 python -m pip install -e .
+make build_store
 make serve
 ```
+
+`make build_store` reads the three CSV source tables and atomically writes the
+runtime store at `data/altermagnets.duckdb`. The dynamic site never rebuilds it
+or reads CSV files. Set `ALTERMAGNETS_STORE_PATH` to use a different runtime
+store path; the same variable (or `python tools/build_store.py --target PATH`)
+selects the builder target. `ALTERMAGNETS_DATA_DIR` (or `--data-dir`) selects
+the builder's source-table directory.
 
 Then open:
 
@@ -62,4 +70,3 @@ make validate_optimade        # (python serve_optimade.py --validate)
 # Serve the OPTIMADE API (default http://127.0.0.1:8081/):
 make serve_optimade           # (python serve_optimade.py --port 8081)
 ```
-

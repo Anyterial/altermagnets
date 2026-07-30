@@ -13,12 +13,12 @@ import math
 import os
 import re
 import tempfile
-from collections.abc import Iterable, MutableMapping
+from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, ClassVar
 
-from httk.core import Indexed, StorageInfo, Unique
+from httk.core import File, Indexed, Skip, StorageInfo, Unique
 from httk.data.db import Database, SqlStore
 
 __all__ = [
@@ -32,19 +32,25 @@ __all__ = [
     "SCREENING_RESULTS_FILENAME",
     "STORE_PATH_ENVIRONMENT",
     "MagndataRecord",
+    "MaterialFigure",
     "MaterialMagndataLink",
     "MaterialRecord",
     "OpenedMaterialStore",
+    "PlotFile",
     "SymmetryVariant",
     "build_material_records",
     "build_store",
     "cleanup_material_store",
     "default_data_dir",
+    "default_details_dir",
     "default_store_path",
+    "details_dir_for_material",
+    "material_id_aliases",
     "open_in_memory_store",
     "open_material_store",
     "open_prebuilt_store",
     "resolve_data_dir",
+    "resolve_details_dir",
     "resolve_store_path",
 ]
 
@@ -55,6 +61,16 @@ MAGNDATA_NONCOLLINEAR_FILENAME = "altermagnets_noncollinear.csv"
 AMDB_ID_COLUMN = "AMDBId"
 AMDB_DATASET = "1"
 STORE_PATH_ENVIRONMENT = "ALTERMAGNETS_STORE_PATH"
+DETAILS_PATH_ENVIRONMENT = "ALTERMAGNETS_DETAILS_DIR"
+MATERIAL_ID_PATTERN = re.compile(
+    r"^(?:anyt:)?(?P<family>am|amdb)-(?P<series>[A-Za-z0-9]+)-(?P<number>\d+)$"
+)
+LEGACY_MATERIAL_ID_PATTERN = re.compile(r"^(?:anyt:)?amdb-(?P<number>\d+)$")
+PLOT_FILENAMES: tuple[tuple[str, str], ...] = (
+    ("band", "band.svg"),
+    ("structure", "structure.svg"),
+    ("bz", "bz.svg"),
+)
 
 CLASSIFICATION_LABELS = {
     "collinear": "Collinear",
@@ -136,6 +152,37 @@ class MaterialMagndataLink:
 
 
 @dataclass(frozen=True)
+class PlotFile(File):
+    """A stored OPTIMADE File entry for one generated plot asset.
+
+    The current SQL mapper does not yet persist mapping-valued fields, so the
+    optional checksum mapping remains part of the File API but is deliberately
+    skipped here. Plot bytes stay in the mounted detail tree; ``url`` is the
+    root-relative, containment-checked path to those bytes.
+    """
+
+    __httk_storage__: ClassVar[StorageInfo] = StorageInfo(
+        storage_name="altermagnets_plot_files"
+    )
+
+    url: Annotated[str, Indexed()]
+    checksums: Annotated[Mapping[str, str] | None, Skip()] = None
+
+
+@dataclass(frozen=True)
+class MaterialFigure:
+    """One named plot and its preferred light/dark File entries."""
+
+    __httk_storage__: ClassVar[StorageInfo] = StorageInfo(
+        storage_name="altermagnets_material_figures"
+    )
+
+    key: Annotated[str, Indexed()]
+    light: PlotFile
+    dark: PlotFile | None
+
+
+@dataclass(frozen=True)
 class MaterialRecord:
     """One screened material and its ordered MAGNDATA relationships."""
 
@@ -168,6 +215,7 @@ class MaterialRecord:
     bandgap: Annotated[float | None, Indexed()]
     min_abund_ppm: Annotated[float | None, Indexed()]
     links: tuple[MaterialMagndataLink, ...]
+    figures: tuple[MaterialFigure, ...]
     elements: tuple[str, ...]
     magnetic_phases: tuple[str, ...]
     wave_classes: tuple[str, ...]
@@ -191,8 +239,13 @@ class OpenedMaterialStore:
 
 
 def default_data_dir() -> Path:
-    """The checked-in CSV directory used by the explicit offline builder."""
+    """The conventional source-table directory."""
     return Path(__file__).resolve().parents[2] / "data" / "tables"
+
+
+def default_details_dir() -> Path:
+    """The conventional generated-detail asset directory."""
+    return Path(__file__).resolve().parents[2] / "data" / "details"
 
 
 def default_store_path() -> Path:
@@ -210,6 +263,17 @@ def resolve_data_dir(value: str | os.PathLike[str] | None = None) -> Path:
     return default_data_dir()
 
 
+def resolve_details_dir(value: str | os.PathLike[str] | None = None) -> Path:
+    """Resolve generated plot assets for persistent builds and memory seeding."""
+
+    if value is not None:
+        return Path(value).expanduser().resolve()
+    override = os.environ.get(DETAILS_PATH_ENVIRONMENT, "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    return default_details_dir()
+
+
 def resolve_store_path(value: str | os.PathLike[str] | None = None) -> Path:
     """Resolve the explicit persistent-store target/runtime input path."""
     if value is not None:
@@ -218,6 +282,107 @@ def resolve_store_path(value: str | os.PathLike[str] | None = None) -> Path:
     if override:
         return Path(override).expanduser().resolve()
     return default_store_path()
+
+
+def _parsed_material_id(material_id: str) -> tuple[str, str] | None:
+    cleaned = material_id.strip()
+    match = MATERIAL_ID_PATTERN.fullmatch(cleaned)
+    if match is not None:
+        return match.group("series"), match.group("number")
+    legacy_match = LEGACY_MATERIAL_ID_PATTERN.fullmatch(cleaned)
+    if legacy_match is None:
+        return None
+    return "1", legacy_match.group("number")
+
+
+def material_id_aliases(material_id: str) -> tuple[str, ...]:
+    """Return canonical and legacy material-ID spellings in priority order."""
+
+    cleaned = material_id.strip()
+    parsed = _parsed_material_id(cleaned)
+    if parsed is None:
+        return (cleaned,) if cleaned else ()
+
+    series, digits = parsed
+    aliases = (
+        cleaned,
+        f"anyt:am-{series}-{digits}",
+        f"am-{series}-{digits}",
+        f"anyt:amdb-{series}-{digits}",
+        f"amdb-{series}-{digits}",
+    )
+    return tuple(dict.fromkeys(aliases))
+
+
+def details_dir_for_material(details_root: Path, material_id: str) -> Path | None:
+    """Resolve the existing canonical/legacy detail shard for one material."""
+
+    parsed = _parsed_material_id(material_id)
+    if parsed is None:
+        return None
+    series, digits = parsed
+    padded_digits = digits.zfill(3)
+    shard_roots = (
+        details_root / f"am-{series}" / padded_digits[:1] / padded_digits[:2] / padded_digits[:3],
+        details_root / f"amdb-{series}" / padded_digits[:1] / padded_digits[:2] / padded_digits[:3],
+    )
+    candidates = tuple(
+        shard_root / alias
+        for shard_root in shard_roots
+        for alias in material_id_aliases(material_id)
+    )
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return candidates[0] if candidates else None
+
+
+def _plot_file(path: Path, *, details_root: Path, key: str, theme: str) -> PlotFile:
+    resolved_root = details_root.resolve()
+    resolved_path = path.resolve()
+    relative = resolved_path.relative_to(resolved_root).as_posix()
+    media_type = "image/png" if path.suffix.lower() == ".png" else "image/svg+xml"
+    return PlotFile(
+        url=relative,
+        name=path.name,
+        size=path.stat().st_size,
+        media_type=media_type,
+        description=f"{key} plot ({theme} theme)",
+    )
+
+
+def _material_figures(details_root: Path, material_id: str) -> tuple[MaterialFigure, ...]:
+    details_dir = details_dir_for_material(details_root, material_id)
+    if details_dir is None:
+        return ()
+
+    figures: list[MaterialFigure] = []
+    for key, svg_name in PLOT_FILENAMES:
+        svg_path = details_dir / svg_name
+        png_path = svg_path.with_suffix(".png")
+        dark_png_path = png_path.with_name(f"{png_path.stem}_dark{png_path.suffix}")
+        if png_path.is_file() and dark_png_path.is_file():
+            figures.append(
+                MaterialFigure(
+                    key,
+                    _plot_file(png_path, details_root=details_root, key=key, theme="light"),
+                    _plot_file(
+                        dark_png_path,
+                        details_root=details_root,
+                        key=key,
+                        theme="dark",
+                    ),
+                )
+            )
+        elif svg_path.is_file():
+            figures.append(
+                MaterialFigure(
+                    key,
+                    _plot_file(svg_path, details_root=details_root, key=key, theme="light"),
+                    None,
+                )
+            )
+    return tuple(figures)
 
 
 def _default_material_id(index: int) -> str:
@@ -295,17 +460,18 @@ def _source_table_paths(data_dir: Path) -> tuple[Path, Path, Path]:
     )
 
 
-def _load_source_materials(data_dir: Path) -> tuple[MaterialRecord, ...]:
+def _load_source_materials(data_dir: Path, *, details_dir: Path) -> tuple[MaterialRecord, ...]:
     screening_path, collinear_path, noncollinear_path = _source_table_paths(data_dir)
     return build_material_records(
         _load_csv_rows(screening_path, delimiter=";"),
         _load_csv_rows(collinear_path),
         _load_csv_rows(noncollinear_path),
+        details_dir=details_dir,
     )
 
 
-def _source_revision(data_dir: Path) -> str:
-    digest = hashlib.sha256(b"altermagnets-memory-store-v1\0")
+def _source_revision(data_dir: Path, *, details_dir: Path) -> str:
+    digest = hashlib.sha256(b"altermagnets-memory-store-v2\0")
     for path in _source_table_paths(data_dir):
         digest.update(path.name.encode("utf-8"))
         digest.update(b"\0")
@@ -313,6 +479,18 @@ def _source_revision(data_dir: Path) -> str:
             while chunk := handle.read(1024 * 1024):
                 digest.update(chunk)
         digest.update(b"\0")
+    if details_dir.is_dir():
+        for path in sorted(
+            (
+                path
+                for path in details_dir.rglob("*")
+                if path.is_file() and path.suffix.lower() in {".svg", ".png"}
+            ),
+            key=lambda path: path.as_posix(),
+        ):
+            metadata = path.stat()
+            digest.update(path.relative_to(details_dir).as_posix().encode("utf-8"))
+            digest.update(f"\0{metadata.st_size}\0{metadata.st_mtime_ns}\0".encode())
     return f"memory-{digest.hexdigest()[:24]}"
 
 
@@ -419,6 +597,8 @@ def build_material_records(
     screening_rows: list[dict[str, str]],
     collinear_rows: list[dict[str, str]],
     noncollinear_rows: list[dict[str, str]],
+    *,
+    details_dir: Path | None = None,
 ) -> tuple[MaterialRecord, ...]:
     """Normalize the three current CSVs into the persistent object graph."""
     grouped_variants: dict[str, list[SymmetryVariant]] = {}
@@ -500,6 +680,7 @@ def build_material_records(
                 bandgap=bandgap,
                 min_abund_ppm=_parse_float(row.get("MinAbundPpm", "")),
                 links=links,
+                figures=_material_figures(details_dir, material_id) if details_dir is not None else (),
                 elements=elements,
                 magnetic_phases=phases,
                 wave_classes=waves,
@@ -518,6 +699,7 @@ def build_store(
     target: str | os.PathLike[str] | None = None,
     *,
     data_dir: str | os.PathLike[str] | None = None,
+    details_dir: str | os.PathLike[str] | None = None,
 ) -> Path:
     """Build a fresh store next to ``target`` and atomically replace it.
 
@@ -526,7 +708,8 @@ def build_store(
     """
     resolved_target = resolve_store_path(target)
     source_dir = resolve_data_dir(data_dir)
-    materials = _load_source_materials(source_dir)
+    resolved_details_dir = resolve_details_dir(details_dir)
+    materials = _load_source_materials(source_dir, details_dir=resolved_details_dir)
 
     resolved_target.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
@@ -573,11 +756,19 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
         database = opened_database
         store = SqlStore(opened_database, create_tables=False)
         searcher = store.searcher()
-        searcher.variable(MaterialRecord)
+        material = searcher.variable(MaterialRecord)
         material_count = searcher.count()
         if material_count <= 0:
             opened_database.dispose()
             return None
+        sample = searcher.results(material=material).first()
+        if sample is None:
+            opened_database.dispose()
+            return None
+        # Counting only touches the root table. Reconstruct one record as a
+        # lightweight schema probe so a pre-File store is considered stale and
+        # the runtime can seed the current model in memory instead.
+        tuple(sample["material"].figures)
         return OpenedMaterialStore(
             opened_database,
             store,
@@ -592,13 +783,18 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
         return None
 
 
-def open_in_memory_store(data_dir: str | os.PathLike[str] | None = None) -> OpenedMaterialStore | None:
+def open_in_memory_store(
+    data_dir: str | os.PathLike[str] | None = None,
+    *,
+    details_dir: str | os.PathLike[str] | None = None,
+) -> OpenedMaterialStore | None:
     """Seed an in-memory SQLite store from the source tables when available."""
 
     source_dir = resolve_data_dir(data_dir)
+    resolved_details_dir = resolve_details_dir(details_dir)
     database: Database | None = None
     try:
-        materials = _load_source_materials(source_dir)
+        materials = _load_source_materials(source_dir, details_dir=resolved_details_dir)
         if not materials:
             return None
         opened_database = Database.sqlite()
@@ -613,7 +809,7 @@ def open_in_memory_store(data_dir: str | os.PathLike[str] | None = None) -> Open
             store,
             len(materials),
             mode="memory",
-            revision=_source_revision(source_dir),
+            revision=_source_revision(source_dir, details_dir=resolved_details_dir),
             source_path=source_dir,
         )
     except Exception:  # noqa: BLE001 - malformed or unavailable migration inputs leave the site data-less.
@@ -626,13 +822,14 @@ def open_material_store(
     path: str | os.PathLike[str] | None = None,
     *,
     data_dir: str | os.PathLike[str] | None = None,
+    details_dir: str | os.PathLike[str] | None = None,
 ) -> OpenedMaterialStore | None:
     """Prefer the scalable persistent store, falling back to in-memory seeding."""
 
     persistent = open_prebuilt_store(path)
     if persistent is not None:
         return persistent
-    return open_in_memory_store(data_dir)
+    return open_in_memory_store(data_dir, details_dir=details_dir)
 
 
 def cleanup_material_store(global_data: MutableMapping[str, Any]) -> None:

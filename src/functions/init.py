@@ -13,12 +13,9 @@ from material_store import (
     MaterialRecord,
     cleanup_material_store,
     open_material_store,
+    resolve_details_dir,
     resolve_store_path,
 )
-
-
-def _default_details_dir() -> Path:
-    return Path(__file__).resolve().parents[1] / "data" / "details"
 
 
 def _format_decimal(value: float | None, *, digits: int = 3, empty: str = "n/a") -> str:
@@ -212,8 +209,9 @@ def execute(global_data, **kwargs) -> None:
     """Open the persistent store or seed a small in-memory migration store."""
     cleanup_material_store(global_data)
     store_path = resolve_store_path()
-    opened = open_material_store(store_path)
-    global_data["detail_assets_root"] = _default_details_dir()
+    details_root = resolve_details_dir()
+    opened = open_material_store(store_path, details_dir=details_root)
+    global_data["detail_assets_root"] = details_root
     global_data["search_options"] = _build_search_options()
     global_data["classification_labels"] = dict(CLASSIFICATION_LABELS)
     global_data["electronic_type_labels"] = dict(ELECTRONIC_TYPE_LABELS)

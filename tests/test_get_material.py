@@ -6,11 +6,29 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "src" / "functions" / "get_material.py"
 sys.path.insert(0, str(MODULE_PATH.parent))
+import material_store
+
 SPEC = importlib.util.spec_from_file_location("get_material", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
+
+
+def _load_assets(
+    material_id: str,
+    details_root: Path,
+    *,
+    max_svg_bytes: int | None = None,
+):
+    global_data = {"detail_assets_root": details_root}
+    if max_svg_bytes is not None:
+        global_data["max_svg_bytes"] = max_svg_bytes
+    return MODULE._load_detail_assets(
+        material_id,
+        material_store._material_figures(details_root, material_id),
+        global_data,
+    )
 
 
 def test_load_detail_assets_reads_sharded_svg_outputs(tmp_path: Path) -> None:
@@ -31,7 +49,7 @@ def test_load_detail_assets_reads_sharded_svg_outputs(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    assets = MODULE._load_detail_assets("amdb-1-0001", {"detail_assets_root": details_root})
+    assets = _load_assets("amdb-1-0001", details_root)
 
     assert assets["raw_path"] == "2/Runs/ht.task.tetralith--default.CrSb_SCF.cleanup.0.unclaimed.3.finished"
     assert assets["available_count"] == 2
@@ -55,7 +73,7 @@ def test_load_detail_assets_prefers_png_when_present(tmp_path: Path) -> None:
     (target_dir / "band.png").write_bytes(b"\x89PNG\r\n\x1a\n")
     (target_dir / "band_dark.png").write_bytes(b"\x89PNG\r\n\x1a\n")
 
-    assets = MODULE._load_detail_assets("amdb-1-0001", {"detail_assets_root": details_root})
+    assets = _load_assets("amdb-1-0001", details_root)
 
     figures = {figure["key"]: figure for figure in assets["figures"]}
     assert figures["band"]["available"] is True
@@ -76,7 +94,7 @@ def test_load_detail_assets_prefixed_id_uses_legacy_detail_directory(tmp_path: P
         encoding="utf-8",
     )
 
-    assets = MODULE._load_detail_assets("anyt:am-1-0001", {"detail_assets_root": details_root})
+    assets = _load_assets("anyt:am-1-0001", details_root)
 
     figures = {figure["key"]: figure for figure in assets["figures"]}
     assert assets["raw_path"] == "1/Runs/ht.task.tetralith--default.CrSb_SCF.cleanup.0.unclaimed.3.finished"
@@ -95,7 +113,7 @@ def test_load_detail_assets_uses_svg_when_dark_png_variant_missing(tmp_path: Pat
     )
     (target_dir / "band.png").write_bytes(b"\x89PNG\r\n\x1a\n")
 
-    assets = MODULE._load_detail_assets("amdb-1-0001", {"detail_assets_root": details_root})
+    assets = _load_assets("amdb-1-0001", details_root)
 
     figures = {figure["key"]: figure for figure in assets["figures"]}
     assert figures["band"]["available"] is True
@@ -106,7 +124,7 @@ def test_load_detail_assets_uses_svg_when_dark_png_variant_missing(tmp_path: Pat
 def test_load_detail_assets_returns_empty_for_missing_detail_directory(tmp_path: Path) -> None:
     details_root = tmp_path / "details"
 
-    assets = MODULE._load_detail_assets("amdb-1-0001", {"detail_assets_root": details_root})
+    assets = _load_assets("amdb-1-0001", details_root)
 
     assert assets["raw_path"] == ""
     assert assets["available_count"] == 0
@@ -124,7 +142,7 @@ def test_load_detail_assets_handles_binary_svg_and_bad_metadata_safely(tmp_path:
     # SVG file contains arbitrary binary-like payload with invalid UTF-8 bytes.
     (target_dir / "band.svg").write_bytes(b"\x89\xff\x00<svg>\xfe\xfa</svg>")
 
-    assets = MODULE._load_detail_assets("amdb-1-0001", {"detail_assets_root": details_root})
+    assets = _load_assets("amdb-1-0001", details_root)
 
     assert assets["raw_path"] == ""
     assert assets["available_count"] == 1
@@ -141,7 +159,7 @@ def test_load_detail_assets_ignores_oversized_svg_files(tmp_path: Path) -> None:
     oversized_bytes = b"<svg>" + (b"a" * 120) + b"</svg>"
     (target_dir / "band.svg").write_bytes(oversized_bytes)
 
-    assets = MODULE._load_detail_assets("amdb-1-0001", {"detail_assets_root": details_root, "max_svg_bytes": 64})
+    assets = _load_assets("amdb-1-0001", details_root, max_svg_bytes=64)
 
     figures = {figure["key"]: figure for figure in assets["figures"]}
     assert figures["band"]["available"] is False
@@ -156,19 +174,50 @@ def test_load_detail_assets_respects_configured_max_svg_bytes(tmp_path: Path) ->
     svg_bytes = b"<svg>" + (b"a" * 120) + b"</svg>"
     (target_dir / "band.svg").write_bytes(svg_bytes)
 
-    low_cap_assets = MODULE._load_detail_assets(
-        "amdb-1-0001",
-        {"detail_assets_root": details_root, "max_svg_bytes": 64},
-    )
-    high_cap_assets = MODULE._load_detail_assets(
-        "amdb-1-0001",
-        {"detail_assets_root": details_root, "max_svg_bytes": 4096},
-    )
+    low_cap_assets = _load_assets("amdb-1-0001", details_root, max_svg_bytes=64)
+    high_cap_assets = _load_assets("amdb-1-0001", details_root, max_svg_bytes=4096)
 
     low_figures = {figure["key"]: figure for figure in low_cap_assets["figures"]}
     high_figures = {figure["key"]: figure for figure in high_cap_assets["figures"]}
     assert low_figures["band"]["available"] is False
     assert high_figures["band"]["available"] is True
+
+
+def test_load_detail_assets_requires_a_stored_file_entry(tmp_path: Path) -> None:
+    details_root = tmp_path / "details"
+    target_dir = details_root / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001"
+    target_dir.mkdir(parents=True)
+    (target_dir / "band.svg").write_text("<svg/>", encoding="utf-8")
+
+    assets = MODULE._load_detail_assets(
+        "amdb-1-0001",
+        (),
+        {"detail_assets_root": details_root},
+    )
+
+    figures = {figure["key"]: figure for figure in assets["figures"]}
+    assert figures["band"]["available"] is False
+
+
+def test_load_detail_assets_rejects_file_entries_outside_the_detail_root(tmp_path: Path) -> None:
+    details_root = tmp_path / "details"
+    details_root.mkdir()
+    (tmp_path / "outside.svg").write_text("<svg/>", encoding="utf-8")
+    plot_file = material_store.PlotFile(
+        url="../outside.svg",
+        name="outside.svg",
+        size=6,
+        media_type="image/svg+xml",
+    )
+
+    assets = MODULE._load_detail_assets(
+        "amdb-1-0001",
+        (material_store.MaterialFigure("band", plot_file, None),),
+        {"detail_assets_root": details_root},
+    )
+
+    figures = {figure["key"]: figure for figure in assets["figures"]}
+    assert figures["band"]["available"] is False
 
 
 def test_svg_dark_variant_injects_text_style_for_default_black_glyphs() -> None:

@@ -47,7 +47,16 @@ prefers that store and never modifies it. Set `ALTERMAGNETS_STORE_PATH` to use
 a different runtime store path; the same variable (or
 `python tools/build_store.py --target PATH`) selects the builder target.
 `ALTERMAGNETS_DATA_DIR` (or `--data-dir`) selects a different source-table
-directory.
+directory. `ALTERMAGNETS_DETAILS_DIR` (or the builder's `--details-dir`)
+selects the generated detail-asset tree.
+
+Plot metadata is part of the material object graph as OPTIMADE `File` entries.
+The database stores the root-relative locator, name, size, media type, and
+description; the potentially large plot bytes remain in `data/details/` (or
+the configured details directory) and are loaded on demand with containment
+and size checks. Generate or update detail plots before `make build_store` so
+the persistent store records them. The in-memory fallback discovers the
+current plot set each time the site starts.
 
 Then open:
 

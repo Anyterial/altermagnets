@@ -1,4 +1,5 @@
 import csv
+import json
 import sys
 from pathlib import Path
 
@@ -171,8 +172,23 @@ def write_source_tables(directory: Path, *, material_count: int = 3) -> Path:
     return directory
 
 
+def write_detail_assets(directory: Path) -> Path:
+    target = directory / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001"
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "amdb-1-0001.json").write_text(
+        json.dumps({"raw_path": "fixture/raw/material-0001"}) + "\n",
+        encoding="utf-8",
+    )
+    (target / "band.svg").write_text(
+        "<svg xmlns='http://www.w3.org/2000/svg'><text>band</text></svg>",
+        encoding="utf-8",
+    )
+    return directory
+
+
 @pytest.fixture
 def material_store_path(tmp_path: Path) -> Path:
     source = write_source_tables(tmp_path / "tables")
+    details = write_detail_assets(tmp_path / "details")
     target = tmp_path / "altermagnets.duckdb"
-    return build_store(target, data_dir=source)
+    return build_store(target, data_dir=source, details_dir=details)

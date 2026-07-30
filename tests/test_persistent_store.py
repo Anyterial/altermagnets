@@ -5,7 +5,8 @@ import get_material
 import init
 import pytest
 import search_materials
-from conftest import write_source_tables
+from conftest import write_detail_assets, write_source_tables
+from httk.core import File
 from httk.data.db import Database
 from httk.web import SITE_RESOURCES_KEY, SiteResources
 from material_store import (
@@ -33,6 +34,12 @@ def test_persistent_build_reconstructs_ordered_links_and_variants(material_store
             "collinear",
             "noncollinear-derived",
         ]
+        assert [figure.key for figure in record.figures] == ["band"]
+        assert isinstance(record.figures[0].light, File)
+        assert record.figures[0].light.url.endswith("/band.svg")
+        assert record.figures[0].light.name == "band.svg"
+        assert record.figures[0].light.media_type == "image/svg+xml"
+        assert record.figures[0].light.size is not None
     finally:
         opened.database.dispose()
 
@@ -110,9 +117,11 @@ def test_runtime_falls_back_to_in_memory_store_when_persistent_store_is_absent(
     tmp_path: Path, monkeypatch
 ) -> None:
     source = write_source_tables(tmp_path / "tables")
+    details = write_detail_assets(tmp_path / "details")
     missing_store = tmp_path / "not-built.duckdb"
     monkeypatch.setenv("ALTERMAGNETS_STORE_PATH", str(missing_store))
     monkeypatch.setenv("ALTERMAGNETS_DATA_DIR", str(source))
+    monkeypatch.setenv("ALTERMAGNETS_DETAILS_DIR", str(details))
     resources = SiteResources()
     global_data: dict[str, Any] = {SITE_RESOURCES_KEY: resources}
 
@@ -127,6 +136,9 @@ def test_runtime_falls_back_to_in_memory_store_when_persistent_store_is_absent(
         assert [row["material"].id for row in results.page(size=1, order_by=order).rows] == [
             "anyt:am-1-0001"
         ]
+        material = results.page(size=1, order_by=order).rows[0]["material"]
+        assert [figure.key for figure in material.figures] == ["band"]
+        assert isinstance(material.figures[0].light, File)
         assert not missing_store.exists()
     finally:
         resources.close()
@@ -142,6 +154,39 @@ def test_missing_corrupt_and_zero_stores_are_unavailable(tmp_path: Path) -> None
     database.dispose()
     assert open_prebuilt_store(zero) is None
     assert open_material_store(tmp_path / "missing.duckdb", data_dir=tmp_path / "missing-tables") is None
+
+
+def test_runtime_falls_back_when_persistent_store_has_the_old_schema(tmp_path: Path) -> None:
+    source = write_source_tables(tmp_path / "tables")
+    details = write_detail_assets(tmp_path / "details")
+    legacy_path = tmp_path / "legacy.duckdb"
+    legacy_database = Database.duckdb(legacy_path)
+    with legacy_database.engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE altermagnets_material_records (sid BIGINT PRIMARY KEY)"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO altermagnets_material_records (sid) VALUES (1)"
+        )
+    legacy_database.dispose()
+
+    assert open_prebuilt_store(legacy_path) is None
+    opened = open_material_store(
+        legacy_path,
+        data_dir=source,
+        details_dir=details,
+    )
+    assert opened is not None
+    try:
+        assert opened.mode == "memory"
+        searcher = opened.store.searcher()
+        material = searcher.variable(MaterialRecord)
+        searcher.add(material.id == "anyt:am-1-0001")
+        record = searcher.results(material=material).first()
+        assert record is not None
+        assert [figure.key for figure in record["material"].figures] == ["band"]
+    finally:
+        opened.database.dispose()
 
 
 def test_initialization_registers_cleanup_before_feature_queries(material_store_path: Path, monkeypatch) -> None:

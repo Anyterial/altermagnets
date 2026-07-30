@@ -9,7 +9,14 @@ from typing import Any
 from formula_katex import katex_formula_inline
 from httk.data.db import SqlStore
 from input_sanitize import sanitize_material_id
-from material_store import MaterialRecord, SymmetryVariant
+from material_store import (
+    MaterialFigure,
+    MaterialRecord,
+    PlotFile,
+    SymmetryVariant,
+    details_dir_for_material,
+    material_id_aliases,
+)
 
 CLASSIFICATION_LABELS = {
     "collinear": "Collinear",
@@ -72,8 +79,6 @@ DETAIL_FIGURE_SPECS = (
         "layout_class": "",
     },
 )
-MATERIAL_ID_PATTERN = re.compile(r"^(?:anyt:)?(?P<family>am|amdb)-(?P<series>[A-Za-z0-9]+)-(?P<number>\d+)$")
-LEGACY_MATERIAL_ID_PATTERN = re.compile(r"^(?:anyt:)?amdb-(?P<number>\d+)$")
 SVG_DARK_LIGHT_COLOR = "#f2f5fb"
 SVG_DARK_TEXT_STYLE = (
     '<style id="httk-dark-svg-text">'
@@ -196,58 +201,29 @@ def _max_svg_bytes(global_data: Any) -> int:
     return parsed if parsed > 0 else DEFAULT_MAX_SVG_BYTES
 
 
-def _parsed_material_id(material_id: str) -> tuple[str, str] | None:
-    cleaned = material_id.strip()
-    match = MATERIAL_ID_PATTERN.fullmatch(cleaned)
-    if match is not None:
-        return match.group("series"), match.group("number")
-    legacy_match = LEGACY_MATERIAL_ID_PATTERN.fullmatch(cleaned)
-    if legacy_match is None:
+def _stored_plot_path(
+    plot_file: PlotFile,
+    *,
+    details_root: Path,
+    max_bytes: int,
+) -> Path | None:
+    relative = Path(plot_file.url)
+    if relative.is_absolute():
         return None
-    return "1", legacy_match.group("number")
-
-
-def _material_id_aliases(material_id: str) -> list[str]:
-    cleaned = material_id.strip()
-    parsed = _parsed_material_id(cleaned)
-    if parsed is None:
-        return [cleaned] if cleaned else []
-
-    series, digits = parsed
-    aliases = [
-        cleaned,
-        f"anyt:am-{series}-{digits}",
-        f"am-{series}-{digits}",
-        f"anyt:amdb-{series}-{digits}",
-        f"amdb-{series}-{digits}",
-    ]
-
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for alias in aliases:
-        if alias in seen:
-            continue
-        seen.add(alias)
-        deduped.append(alias)
-    return deduped
-
-
-def _details_dir_for_material(details_root: Path, material_id: str) -> Path | None:
-    parsed = _parsed_material_id(material_id)
-    if parsed is None:
+    resolved_root = details_root.resolve()
+    candidate = (resolved_root / relative).resolve()
+    try:
+        candidate.relative_to(resolved_root)
+    except ValueError:
         return None
-    series, digits = parsed
-    if len(digits) < 3:
-        digits = digits.zfill(3)
-    shard_roots = [
-        details_root / f"am-{series}" / digits[:1] / digits[:2] / digits[:3],
-        details_root / f"amdb-{series}" / digits[:1] / digits[:2] / digits[:3],
-    ]
-    candidates = [shard_root / alias for shard_root in shard_roots for alias in _material_id_aliases(material_id)]
-    for candidate in candidates:
-        if candidate.exists() and candidate.is_dir():
-            return candidate
-    return candidates[0] if candidates else None
+    if not candidate.is_file():
+        return None
+    actual_size = candidate.stat().st_size
+    if actual_size > max_bytes:
+        return None
+    if plot_file.size is not None and (plot_file.size < 0 or actual_size > plot_file.size):
+        return None
+    return candidate
 
 
 def _svg_data_url(path: Path, *, max_svg_bytes: int) -> str | None:
@@ -293,16 +269,72 @@ def _svg_data_urls(path: Path, *, max_svg_bytes: int) -> tuple[str | None, str |
     return (_svg_data_url_from_text(raw), _svg_data_url_from_text(_svg_dark_variant(raw)))
 
 
-def _load_detail_assets(material_id: str, global_data: Any) -> dict[str, Any]:
+def _stored_figure_data_urls(
+    figure: MaterialFigure,
+    *,
+    details_root: Path,
+    max_bytes: int,
+) -> tuple[str | None, str | None]:
+    light_path = _stored_plot_path(
+        figure.light,
+        details_root=details_root,
+        max_bytes=max_bytes,
+    )
+    if light_path is None:
+        return (None, None)
+
+    media_type = (figure.light.media_type or "").lower()
+    if media_type == "image/png" or light_path.suffix.lower() == ".png":
+        if figure.dark is None:
+            return (None, None)
+        dark_path = _stored_plot_path(
+            figure.dark,
+            details_root=details_root,
+            max_bytes=max_bytes,
+        )
+        if dark_path is None:
+            return (None, None)
+        return (
+            _png_data_url(light_path, max_bytes=max_bytes),
+            _png_data_url(dark_path, max_bytes=max_bytes),
+        )
+
+    if media_type == "image/svg+xml" or light_path.suffix.lower() == ".svg":
+        light_url, generated_dark_url = _svg_data_urls(
+            light_path,
+            max_svg_bytes=max_bytes,
+        )
+        if figure.dark is None:
+            return (light_url, generated_dark_url)
+        dark_path = _stored_plot_path(
+            figure.dark,
+            details_root=details_root,
+            max_bytes=max_bytes,
+        )
+        if dark_path is None:
+            return (None, None)
+        return (
+            light_url,
+            _svg_data_url(dark_path, max_svg_bytes=max_bytes),
+        )
+
+    return (None, None)
+
+
+def _load_detail_assets(
+    material_id: str,
+    stored_figures: tuple[MaterialFigure, ...],
+    global_data: Any,
+) -> dict[str, Any]:
     details_root = _detail_assets_root(global_data)
     max_svg_bytes = _max_svg_bytes(global_data)
     figures: list[dict[str, Any]] = []
     raw_path = ""
-    details_dir = _details_dir_for_material(details_root, material_id)
+    details_dir = details_dir_for_material(details_root, material_id)
     if details_dir is None:
         return {"figures": figures, "raw_path": raw_path, "available_count": 0}
 
-    metadata_paths = [details_dir / f"{alias}.json" for alias in _material_id_aliases(material_id)]
+    metadata_paths = [details_dir / f"{alias}.json" for alias in material_id_aliases(material_id)]
     for metadata_path in metadata_paths:
         if not metadata_path.exists() or not metadata_path.is_file():
             continue
@@ -313,23 +345,21 @@ def _load_detail_assets(material_id: str, global_data: Any) -> dict[str, Any]:
         raw_path = str(payload.get("raw_path", "")).strip()
         break
 
+    stored_by_key: dict[str, MaterialFigure] = {}
+    for candidate_figure in stored_figures:
+        stored_by_key.setdefault(candidate_figure.key, candidate_figure)
+
     available_count = 0
     for spec in DETAIL_FIGURE_SPECS:
-        svg_path = details_dir / spec["filename"]
-        png_path = svg_path.with_suffix(".png")
-        dark_png_path = png_path.with_name(f"{png_path.stem}_dark{png_path.suffix}")
-        light_data_url = _png_data_url(png_path, max_bytes=max_svg_bytes)
-        dark_data_url = _png_data_url(dark_png_path, max_bytes=max_svg_bytes)
-        if light_data_url is None or dark_data_url is None:
-            light_data_url = None
-            dark_data_url = None
-
-        if light_data_url is None:
-            light_data_url, dark_data_url = _svg_data_urls(svg_path, max_svg_bytes=max_svg_bytes)
-            if light_data_url is None:
-                # Backward-compatible support for separately generated dark variants.
-                dark_filename = f"{Path(spec['filename']).stem}_dark.svg"
-                dark_data_url = _svg_data_url(details_dir / dark_filename, max_svg_bytes=max_svg_bytes)
+        figure_record = stored_by_key.get(spec["key"])
+        if figure_record is None:
+            light_data_url, dark_data_url = (None, None)
+        else:
+            light_data_url, dark_data_url = _stored_figure_data_urls(
+                figure_record,
+                details_root=details_root,
+                max_bytes=max_svg_bytes,
+            )
         available = light_data_url is not None
         if available:
             available_count += 1
@@ -395,7 +425,7 @@ def _decorate_linked_entry(magndata_id: str, variant: SymmetryVariant | None) ->
 
 def _find_material(store: SqlStore, material_id: str) -> MaterialRecord | None:
     """Resolve aliases in their existing priority order through the query DSL."""
-    for candidate in _material_id_aliases(material_id):
+    for candidate in material_id_aliases(material_id):
         searcher = store.searcher()
         material = searcher.variable(MaterialRecord)
         searcher.add(material.id == candidate)
@@ -423,7 +453,7 @@ def execute(global_data, id: str = "", **kwargs):
         for link in material.links
         for variant in (link.record.variants or (None,))
     ]
-    detail_assets = _load_detail_assets(material.id, global_data)
+    detail_assets = _load_detail_assets(material.id, material.figures, global_data)
     warnings = [warning for entry in linked_entries for warning in entry["warnings"]]
     notes = [note for entry in linked_entries for note in entry["notes"]]
     magnetic_phases = list(material.magnetic_phases)

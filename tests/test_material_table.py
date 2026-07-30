@@ -135,6 +135,7 @@ def test_static_publish_has_only_the_first_page_and_no_live_asset(tmp_path: Path
 
 def test_unavailable_store_suppresses_the_table_and_shows_its_notice(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("ALTERMAGNETS_STORE_PATH", str(tmp_path / "not-mounted.duckdb"))
+    monkeypatch.setenv("ALTERMAGNETS_DATA_DIR", str(tmp_path / "not-mounted-tables"))
     app = create_asgi_app(ROOT / "src", config_name="config_dynamic", table_token_secret="s" * 32)
     with TestClient(app) as client:
         response = client.get("/search")

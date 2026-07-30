@@ -1,13 +1,14 @@
-"""Persistent records and offline store builder for the altermagnets site.
+"""Stored records and persistent/in-memory loaders for the altermagnets site.
 
-Runtime code in this site opens the finished DuckDB file through this module;
-CSV parsing lives here solely so :mod:`tools.build_store` can make that file
-offline.  The record classes are deliberately ordinary frozen dataclasses: the
-schema is declared with httk-core's storage markers and implemented by
-``httk.data.db.SqlStore``.
+Runtime prefers an offline-built DuckDB file, but can seed the same
+``SqlStore`` schema into an in-memory SQLite database from the three source
+tables when the persistent store is absent or unusable. The record classes are
+deliberately ordinary frozen dataclasses: the schema is declared with
+httk-core's storage markers and implemented by ``httk.data.db.SqlStore``.
 """
 
 import csv
+import hashlib
 import math
 import os
 import re
@@ -40,6 +41,8 @@ __all__ = [
     "cleanup_material_store",
     "default_data_dir",
     "default_store_path",
+    "open_in_memory_store",
+    "open_material_store",
     "open_prebuilt_store",
     "resolve_data_dir",
     "resolve_store_path",
@@ -182,6 +185,9 @@ class OpenedMaterialStore:
     database: Database
     store: SqlStore
     material_count: int
+    mode: str
+    revision: str
+    source_path: Path
 
 
 def default_data_dir() -> Path:
@@ -279,6 +285,40 @@ def _load_csv_rows(path: Path, *, delimiter: str = ",") -> list[dict[str, str]]:
         raise FileNotFoundError(f"required altermagnets source table is missing: {path}")
     with path.open(newline="", encoding="utf-8") as handle:
         return list(csv.DictReader(handle, delimiter=delimiter))
+
+
+def _source_table_paths(data_dir: Path) -> tuple[Path, Path, Path]:
+    return (
+        data_dir / SCREENING_RESULTS_FILENAME,
+        data_dir / MAGNDATA_COLLINEAR_FILENAME,
+        data_dir / MAGNDATA_NONCOLLINEAR_FILENAME,
+    )
+
+
+def _load_source_materials(data_dir: Path) -> tuple[MaterialRecord, ...]:
+    screening_path, collinear_path, noncollinear_path = _source_table_paths(data_dir)
+    return build_material_records(
+        _load_csv_rows(screening_path, delimiter=";"),
+        _load_csv_rows(collinear_path),
+        _load_csv_rows(noncollinear_path),
+    )
+
+
+def _source_revision(data_dir: Path) -> str:
+    digest = hashlib.sha256(b"altermagnets-memory-store-v1\0")
+    for path in _source_table_paths(data_dir):
+        digest.update(path.name.encode("utf-8"))
+        digest.update(b"\0")
+        with path.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
+        digest.update(b"\0")
+    return f"memory-{digest.hexdigest()[:24]}"
+
+
+def _persistent_revision(path: Path) -> str:
+    metadata = path.stat()
+    return f"duckdb-{metadata.st_size:x}-{metadata.st_mtime_ns:x}"
 
 
 def summarize_symmetry_rows(rows: list[dict[str, str]], *, source_kind: str) -> list[tuple[str, SymmetryVariant]]:
@@ -486,10 +526,7 @@ def build_store(
     """
     resolved_target = resolve_store_path(target)
     source_dir = resolve_data_dir(data_dir)
-    screening_rows = _load_csv_rows(source_dir / SCREENING_RESULTS_FILENAME, delimiter=";")
-    collinear_rows = _load_csv_rows(source_dir / MAGNDATA_COLLINEAR_FILENAME)
-    noncollinear_rows = _load_csv_rows(source_dir / MAGNDATA_NONCOLLINEAR_FILENAME)
-    materials = build_material_records(screening_rows, collinear_rows, noncollinear_rows)
+    materials = _load_source_materials(source_dir)
 
     resolved_target.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
@@ -541,11 +578,61 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
         if material_count <= 0:
             opened_database.dispose()
             return None
-        return OpenedMaterialStore(opened_database, store, material_count)
+        return OpenedMaterialStore(
+            opened_database,
+            store,
+            material_count,
+            mode="persistent",
+            revision=_persistent_revision(store_path),
+            source_path=store_path,
+        )
     except Exception:  # noqa: BLE001 - a corrupt or unsupported external store is unavailable to the site.
         if database is not None:
             database.dispose()
         return None
+
+
+def open_in_memory_store(data_dir: str | os.PathLike[str] | None = None) -> OpenedMaterialStore | None:
+    """Seed an in-memory SQLite store from the source tables when available."""
+
+    source_dir = resolve_data_dir(data_dir)
+    database: Database | None = None
+    try:
+        materials = _load_source_materials(source_dir)
+        if not materials:
+            return None
+        opened_database = Database.sqlite()
+        database = opened_database
+        store = SqlStore(opened_database)
+        store.ensure_tables(MaterialRecord)
+        with store.transaction():
+            for material in materials:
+                store.save(material)
+        return OpenedMaterialStore(
+            opened_database,
+            store,
+            len(materials),
+            mode="memory",
+            revision=_source_revision(source_dir),
+            source_path=source_dir,
+        )
+    except Exception:  # noqa: BLE001 - malformed or unavailable migration inputs leave the site data-less.
+        if database is not None:
+            database.dispose()
+        return None
+
+
+def open_material_store(
+    path: str | os.PathLike[str] | None = None,
+    *,
+    data_dir: str | os.PathLike[str] | None = None,
+) -> OpenedMaterialStore | None:
+    """Prefer the scalable persistent store, falling back to in-memory seeding."""
+
+    persistent = open_prebuilt_store(path)
+    if persistent is not None:
+        return persistent
+    return open_in_memory_store(data_dir)
 
 
 def cleanup_material_store(global_data: MutableMapping[str, Any]) -> None:
@@ -557,6 +644,8 @@ def cleanup_material_store(global_data: MutableMapping[str, Any]) -> None:
     global_data.pop("materials_store", None)
     database = global_data.pop("materials_database", None)
     global_data.pop("materials_store_path", None)
+    global_data.pop("materials_store_mode", None)
+    global_data.pop("materials_store_source", None)
     global_data.pop("materials_store_revision", None)
     if isinstance(database, Database):
         database.dispose()

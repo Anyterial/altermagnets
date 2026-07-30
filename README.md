@@ -22,24 +22,28 @@ python -m pip install -e .
 make serve
 ```
 
-The source dataset is intentionally not version-controlled. Without a mounted
-store the site still starts and shows its dataset-unavailable state. For the
-data-backed application, obtain the deployment's three source tables and put
-them under `data/tables/` with these exact names:
+The source dataset is intentionally not version-controlled. If a persistent
+store is absent or unusable, startup automatically seeds an in-memory SQLite
+store from the three source tables. If neither form is available, the site
+still starts and shows its dataset-unavailable state. For the data-backed
+application, obtain the deployment's source tables and put them under
+`data/tables/` with these exact names:
 
 - `high_throughput_screening_results_fixed.csv`
 - `altermagnets_collinear.csv`
 - `altermagnets_noncollinear.csv`
 
-Then build and serve the store:
+For the current 180-material dataset, `make serve` is enough: startup discovers
+the tables and seeds memory. To exercise the scalable persistent path, build
+the DuckDB store first:
 
 ```bash
 make build_store
 make serve
 ```
 
-`make build_store` atomically writes `data/altermagnets.duckdb`; the dynamic
-site never rebuilds it or reads CSV files. Set `ALTERMAGNETS_STORE_PATH` to use
+`make build_store` atomically writes `data/altermagnets.duckdb`; runtime always
+prefers that store and never modifies it. Set `ALTERMAGNETS_STORE_PATH` to use
 a different runtime store path; the same variable (or
 `python tools/build_store.py --target PATH`) selects the builder target.
 `ALTERMAGNETS_DATA_DIR` (or `--data-dir`) selects a different source-table

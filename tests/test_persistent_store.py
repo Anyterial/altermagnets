@@ -13,6 +13,7 @@ from material_store import (
     build_material_records,
     build_store,
     cleanup_material_store,
+    open_material_store,
     open_prebuilt_store,
 )
 
@@ -85,7 +86,7 @@ def test_builder_rejects_duplicates_and_nonfinite_values(tmp_path: Path) -> None
         raise AssertionError("duplicate material ID was accepted")
 
 
-def test_runtime_opens_only_prebuilt_store_and_resources_clean_it_up(
+def test_runtime_prefers_prebuilt_store_and_resources_clean_it_up(
     material_store_path: Path, tmp_path: Path, monkeypatch
 ) -> None:
     (material_store_path.parent / "tables").rename(tmp_path / "source-removed")
@@ -94,12 +95,41 @@ def test_runtime_opens_only_prebuilt_store_and_resources_clean_it_up(
     global_data: dict[str, Any] = {SITE_RESOURCES_KEY: resources}
     init.execute(global_data)
     assert global_data["site_stats"]["dataset_available"] is True
-    assert global_data["materials_store_revision"] == init._store_revision(material_store_path)
+    assert global_data["materials_store_mode"] == "persistent"
+    assert global_data["materials_store_source"] == material_store_path
+    assert global_data["site_stats"]["store_mode"] == "persistent"
+    assert str(global_data["materials_store_revision"]).startswith("duckdb-")
     results, order = search_materials.search_materials(global_data["materials_store"], q="CrSb")
     assert [row["material"].id for row in results.page(size=1, order_by=order).rows] == ["anyt:am-1-0001"]
     resources.close()
     cleanup_material_store(global_data)
     assert "materials_database" not in global_data
+
+
+def test_runtime_falls_back_to_in_memory_store_when_persistent_store_is_absent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = write_source_tables(tmp_path / "tables")
+    missing_store = tmp_path / "not-built.duckdb"
+    monkeypatch.setenv("ALTERMAGNETS_STORE_PATH", str(missing_store))
+    monkeypatch.setenv("ALTERMAGNETS_DATA_DIR", str(source))
+    resources = SiteResources()
+    global_data: dict[str, Any] = {SITE_RESOURCES_KEY: resources}
+
+    init.execute(global_data)
+    try:
+        assert global_data["site_stats"]["dataset_available"] is True
+        assert global_data["materials_store_mode"] == "memory"
+        assert global_data["materials_store_source"] == source
+        assert global_data["site_stats"]["store_mode"] == "memory"
+        assert str(global_data["materials_store_revision"]).startswith("memory-")
+        results, order = search_materials.search_materials(global_data["materials_store"], q="CrSb")
+        assert [row["material"].id for row in results.page(size=1, order_by=order).rows] == [
+            "anyt:am-1-0001"
+        ]
+        assert not missing_store.exists()
+    finally:
+        resources.close()
 
 
 def test_missing_corrupt_and_zero_stores_are_unavailable(tmp_path: Path) -> None:
@@ -111,6 +141,7 @@ def test_missing_corrupt_and_zero_stores_are_unavailable(tmp_path: Path) -> None
     database = Database.duckdb(zero)
     database.dispose()
     assert open_prebuilt_store(zero) is None
+    assert open_material_store(tmp_path / "missing.duckdb", data_dir=tmp_path / "missing-tables") is None
 
 
 def test_initialization_registers_cleanup_before_feature_queries(material_store_path: Path, monkeypatch) -> None:

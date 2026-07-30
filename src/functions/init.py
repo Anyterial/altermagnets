@@ -12,7 +12,7 @@ from material_store import (
     PAPER_PICKED_MATERIALS,
     MaterialRecord,
     cleanup_material_store,
-    open_prebuilt_store,
+    open_material_store,
     resolve_store_path,
 )
 
@@ -128,7 +128,14 @@ def _build_featured_materials(store) -> dict[str, list[dict[str, Any]]]:
     }
 
 
-def _site_stats(store, *, total_materials: int, store_path: Path) -> dict[str, Any]:
+def _site_stats(
+    store,
+    *,
+    total_materials: int,
+    store_path: Path,
+    store_mode: str,
+    store_source: Path,
+) -> dict[str, Any]:
     classification_counts = {
         value: _material_count(store, "classification", value)
         for value in ("collinear", "noncollinear-derived", "mixed", "unclassified")
@@ -140,6 +147,8 @@ def _site_stats(store, *, total_materials: int, store_path: Path) -> dict[str, A
     return {
         "dataset_available": True,
         "store_path": str(store_path),
+        "store_mode": store_mode,
+        "store_source": str(store_source),
         "total_materials": total_materials,
         "classification_counts": classification_counts,
         "electronic_counts": electronic_counts,
@@ -151,6 +160,8 @@ def _unavailable_stats(store_path: Path) -> dict[str, Any]:
     return {
         "dataset_available": False,
         "store_path": str(store_path),
+        "store_mode": "unavailable",
+        "store_source": "",
         "total_materials": 0,
         "classification_counts": {value: 0 for value in CLASSIFICATION_LABELS},
         "electronic_counts": {value: 0 for value in ELECTRONIC_TYPE_LABELS},
@@ -159,13 +170,6 @@ def _unavailable_stats(store_path: Path) -> dict[str, Any]:
             "Dynamic pages still load, but no altermagnet entries are available to search."
         ),
     }
-
-
-def _store_revision(store_path: Path) -> str:
-    """Return a compact, path-independent identity for the mounted store."""
-
-    metadata = store_path.stat()
-    return f"{metadata.st_size:x}-{metadata.st_mtime_ns:x}"
 
 
 def _build_search_options() -> dict[str, Any]:
@@ -205,10 +209,10 @@ def _build_search_options() -> dict[str, Any]:
 
 
 def execute(global_data, **kwargs) -> None:
-    """Open the explicit persistent store; never rebuild or read CSV at runtime."""
+    """Open the persistent store or seed a small in-memory migration store."""
     cleanup_material_store(global_data)
     store_path = resolve_store_path()
-    opened = open_prebuilt_store(store_path)
+    opened = open_material_store(store_path)
     global_data["detail_assets_root"] = _default_details_dir()
     global_data["search_options"] = _build_search_options()
     global_data["classification_labels"] = dict(CLASSIFICATION_LABELS)
@@ -227,6 +231,8 @@ def execute(global_data, **kwargs) -> None:
     global_data["materials_database"] = opened.database
     global_data["materials_store"] = opened.store
     global_data["materials_store_path"] = store_path
+    global_data["materials_store_mode"] = opened.mode
+    global_data["materials_store_source"] = opened.source_path
     resources = global_data.get(SITE_RESOURCES_KEY)
     if not isinstance(resources, SiteResources):
         cleanup_material_store(global_data)
@@ -237,10 +243,12 @@ def execute(global_data, **kwargs) -> None:
         cleanup_material_store(global_data)
         raise
 
-    global_data["materials_store_revision"] = _store_revision(store_path)
+    global_data["materials_store_revision"] = opened.revision
     global_data["site_stats"] = _site_stats(
         opened.store,
         total_materials=opened.material_count,
         store_path=store_path,
+        store_mode=opened.mode,
+        store_source=opened.source_path,
     )
     global_data["featured_materials"] = _build_featured_materials(opened.store)

@@ -726,7 +726,7 @@ def build_store(
         database = created_database
         # This is a private, custom-record store rather than an OPTIMADE entry
         # store.  Declare that fact when creating its versioned layout.
-        store = SqlStore(created_database, entry_backings={})
+        store = SqlStore(created_database, entry_records={})
         store.ensure_tables(MaterialRecord)
         with store.transaction():
             for material in materials:
@@ -759,7 +759,7 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
             return None
         opened_database = Database.duckdb(store_path)
         database = opened_database
-        store = SqlStore(opened_database, layout_mode="verify")
+        store = SqlStore(opened_database)
         searcher = store.searcher()
         material = searcher.variable(MaterialRecord)
         material_count = searcher.count()
@@ -805,7 +805,7 @@ def open_in_memory_store(
         opened_database = Database.sqlite()
         database = opened_database
         # The in-memory fallback is another fresh private/custom store.
-        store = SqlStore(opened_database, entry_backings={})
+        store = SqlStore(opened_database, entry_records={})
         store.ensure_tables(MaterialRecord)
         with store.transaction():
             for material in materials:

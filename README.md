@@ -43,8 +43,10 @@ make serve
 ```
 
 `make build_store` atomically writes `data/altermagnets.duckdb`; runtime always
-prefers that store and never modifies it. Set `ALTERMAGNETS_STORE_PATH` to use
-a different runtime store path; the same variable (or
+prefers a current, matching-layout store and never modifies it. Older or
+unversioned stores are treated as unavailable and fall back to the source
+tables; rebuild them with `make build_store`. Set `ALTERMAGNETS_STORE_PATH` to
+use a different runtime store path; the same variable (or
 `python tools/build_store.py --target PATH`) selects the builder target.
 `ALTERMAGNETS_DATA_DIR` (or `--data-dir`) selects a different source-table
 directory. `ALTERMAGNETS_DETAILS_DIR` (or the builder's `--details-dir`)

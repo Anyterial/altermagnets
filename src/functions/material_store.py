@@ -724,7 +724,9 @@ def build_store(
     try:
         created_database = Database.duckdb(temporary_path)
         database = created_database
-        store = SqlStore(created_database)
+        # This is a private, custom-record store rather than an OPTIMADE entry
+        # store.  Declare that fact when creating its versioned layout.
+        store = SqlStore(created_database, entry_backings={})
         store.ensure_tables(MaterialRecord)
         with store.transaction():
             for material in materials:
@@ -743,9 +745,12 @@ def build_store(
 def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMaterialStore | None:
     """Open a nonempty prebuilt store, returning ``None`` for unavailable data.
 
-    This deliberately never creates tables or a missing file.  Runtime callers
-    can therefore keep the existing unavailable-page behavior when deployments
-    omit, corrupt, or accidentally ship an empty store.
+    This deliberately never creates tables, metadata, or a missing file.  The
+    store is opened in layout-verification mode, so an old/unversioned prebuilt
+    database is unavailable rather than silently adopted or altered. Runtime
+    callers can therefore keep the existing unavailable-page behavior when
+    deployments omit, corrupt, ship an empty store, or ship an incompatible
+    store.
     """
     store_path = resolve_store_path(path)
     database: Database | None = None
@@ -754,7 +759,7 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
             return None
         opened_database = Database.duckdb(store_path)
         database = opened_database
-        store = SqlStore(opened_database, create_tables=False)
+        store = SqlStore(opened_database, layout_mode="verify")
         searcher = store.searcher()
         material = searcher.variable(MaterialRecord)
         material_count = searcher.count()
@@ -799,7 +804,8 @@ def open_in_memory_store(
             return None
         opened_database = Database.sqlite()
         database = opened_database
-        store = SqlStore(opened_database)
+        # The in-memory fallback is another fresh private/custom store.
+        store = SqlStore(opened_database, entry_backings={})
         store.ensure_tables(MaterialRecord)
         with store.transaction():
             for material in materials:

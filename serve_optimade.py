@@ -26,8 +26,8 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
 
-from httk.atomistic import StructureEntryProvider, load_structure
-from httk.core import PropertyDefinition, RelatedEntry, register_definition_prefix
+from httk.atomistic import StructureEntryProvider
+from httk.core import PropertyDefinition, RelatedEntry, load, register_definition_prefix
 from httk.data import ReferenceEntryProvider, validate_record
 from httk.serve.optimade import adapter_from_providers, serve
 
@@ -129,7 +129,7 @@ def _load_structure_if_present(material_id: str) -> Optional[Any]:
     if not contcar.is_file():
         return None
     try:
-        return load_structure(str(contcar))
+        return load(str(contcar))
     except Exception:  # a malformed/unsupported CONTCAR must not sink the whole dataset
         return None
 

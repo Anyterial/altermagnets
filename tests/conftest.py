@@ -1,3 +1,4 @@
+import bz2
 import csv
 import json
 import sys
@@ -183,6 +184,42 @@ def write_detail_assets(directory: Path) -> Path:
         "<svg xmlns='http://www.w3.org/2000/svg'><text>band</text></svg>",
         encoding="utf-8",
     )
+    contcar = """Fixture POSCAR
+1.0
+1 0 0
+0 1 0
+0 0 1
+H He Li
+1 1 1
+Direct
+0 0 0
+0.5 0.5 0.5
+0.25 0.25 0.25
+"""
+    matching_magn = """ magnetization (x)
+
+# of ion       s       p       d       tot
+------------------------------------------
+    1        0.100   0.200   0.300   0.600
+    2       -0.100   0.000   0.100   0.000
+    3        0.000   0.000   1.250   1.250
+------------------------------------------
+tot         0.000   0.200   1.650   1.850
+"""
+    mismatched_magn = matching_magn.replace(
+        "    3        0.000   0.000   1.250   1.250\n", ""
+    )
+    for number in range(1, 4):
+        material_dir = directory / "amdb-1" / "0" / "00" / "000" / f"amdb-1-000{number}"
+        material_dir.mkdir(parents=True, exist_ok=True)
+        with bz2.open(material_dir / "CONTCAR.bz2", "wt", encoding="utf-8") as handle:
+            handle.write(contcar)
+        if number == 1:
+            with bz2.open(material_dir / "MAGN.bz2", "wt", encoding="utf-8") as handle:
+                handle.write(matching_magn)
+        elif number == 2:
+            with bz2.open(material_dir / "MAGN.bz2", "wt", encoding="utf-8") as handle:
+                handle.write(mismatched_magn)
     return directory
 
 

@@ -7,8 +7,10 @@ deliberately ordinary frozen dataclasses: the schema is declared with
 httk-core's storage markers and implemented by ``httk.data.db.SqlStore``.
 """
 
+import bz2
 import csv
 import hashlib
+import logging
 import math
 import os
 import re
@@ -16,9 +18,23 @@ import tempfile
 from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any, ClassVar
+from typing import Annotated, Any, ClassVar, cast
 
-from httk.core import File, Indexed, Skip, StorageInfo, Unique
+from httk.atomistic import (
+    CartesianSiteMoments,
+    UnitcellStructure,
+    UnitcellStructureView,
+)
+from httk.atomistic.storage.records import (
+    CellRecord,
+    NormalizedCompositionAmountRecord,
+    NormalizedCompositionRecord,
+    SitesRecord,
+    SpeciesRecord,
+    UnitcellStructureRecord,
+)
+from httk.core import File, Indexed, Skip, StorageInfo, Unique, load
+from httk.core.storage import project_storage_record
 from httk.data.db import Database, SqlStore
 
 __all__ = [
@@ -45,14 +61,19 @@ __all__ = [
     "default_details_dir",
     "default_store_path",
     "details_dir_for_material",
+    "load_material_structure",
     "material_id_aliases",
+    "material_structure",
     "open_in_memory_store",
     "open_material_store",
     "open_prebuilt_store",
+    "parse_magnetization_moments",
     "resolve_data_dir",
     "resolve_details_dir",
     "resolve_store_path",
 ]
+
+logger = logging.getLogger(__name__)
 
 ELEMENT_PATTERN = re.compile(r"[A-Z][a-z]?")
 SCREENING_RESULTS_FILENAME = "high_throughput_screening_results_fixed.csv"
@@ -62,9 +83,7 @@ AMDB_ID_COLUMN = "AMDBId"
 AMDB_DATASET = "1"
 STORE_PATH_ENVIRONMENT = "ALTERMAGNETS_STORE_PATH"
 DETAILS_PATH_ENVIRONMENT = "ALTERMAGNETS_DETAILS_DIR"
-MATERIAL_ID_PATTERN = re.compile(
-    r"^(?:anyt:)?(?P<family>am|amdb)-(?P<series>[A-Za-z0-9]+)-(?P<number>\d+)$"
-)
+MATERIAL_ID_PATTERN = re.compile(r"^(?:anyt:)?(?P<family>am|amdb)-(?P<series>[A-Za-z0-9]+)-(?P<number>\d+)$")
 LEGACY_MATERIAL_ID_PATTERN = re.compile(r"^(?:anyt:)?amdb-(?P<number>\d+)$")
 PLOT_FILENAMES: tuple[tuple[str, str], ...] = (
     ("band", "band.svg"),
@@ -161,9 +180,7 @@ class PlotFile(File):
     root-relative, containment-checked path to those bytes.
     """
 
-    __httk_storage__: ClassVar[StorageInfo] = StorageInfo(
-        storage_name="altermagnets_plot_files"
-    )
+    __httk_storage__: ClassVar[StorageInfo] = StorageInfo(storage_name="altermagnets_plot_files")
 
     url: Annotated[str, Indexed()]
     checksums: Annotated[Mapping[str, str] | None, Skip()] = None
@@ -173,9 +190,7 @@ class PlotFile(File):
 class MaterialFigure:
     """One named plot and its preferred light/dark File entries."""
 
-    __httk_storage__: ClassVar[StorageInfo] = StorageInfo(
-        storage_name="altermagnets_material_figures"
-    )
+    __httk_storage__: ClassVar[StorageInfo] = StorageInfo(storage_name="altermagnets_material_figures")
 
     key: Annotated[str, Indexed()]
     light: PlotFile
@@ -224,6 +239,7 @@ class MaterialRecord:
     icsd_ids: tuple[str, ...]
     dois: tuple[str, ...]
     search_text: str
+    structure: UnitcellStructureRecord | None = None
 
 
 @dataclass(frozen=True)
@@ -326,15 +342,138 @@ def details_dir_for_material(details_root: Path, material_id: str) -> Path | Non
         details_root / f"am-{series}" / padded_digits[:1] / padded_digits[:2] / padded_digits[:3],
         details_root / f"amdb-{series}" / padded_digits[:1] / padded_digits[:2] / padded_digits[:3],
     )
-    candidates = tuple(
-        shard_root / alias
-        for shard_root in shard_roots
-        for alias in material_id_aliases(material_id)
-    )
+    candidates = tuple(shard_root / alias for shard_root in shard_roots for alias in material_id_aliases(material_id))
     for candidate in candidates:
         if candidate.is_dir():
             return candidate
     return candidates[0] if candidates else None
+
+
+def parse_magnetization_moments(text: str) -> list[float]:
+    """Parse per-ion total moments from a VASP ``magnetization (x)`` block."""
+
+    lines = text.splitlines()
+    starts = [index for index, line in enumerate(lines) if "magnetization (x)" in line.lower()]
+    if not starts:
+        raise ValueError("No magnetization (x) section found")
+
+    start = starts[-1]
+    header = next(
+        (index for index in range(start + 1, len(lines)) if lines[index].strip().lower().startswith("# of ion")),
+        None,
+    )
+    if header is None:
+        raise ValueError("Magnetization section has no ion header")
+    separator = next(
+        (index for index in range(header + 1, len(lines)) if re.fullmatch(r"-{4,}", lines[index].strip())),
+        None,
+    )
+    if separator is None:
+        raise ValueError("Magnetization section has no opening separator")
+
+    moments: list[float] = []
+    closing_separator = None
+    for index in range(separator + 1, len(lines)):
+        stripped = lines[index].strip()
+        if not stripped:
+            continue
+        if re.fullmatch(r"-{4,}", stripped):
+            closing_separator = index
+            break
+        parts = stripped.split()
+        if len(parts) < 3:
+            raise ValueError(f"Malformed magnetization ion row: {lines[index]!r}")
+        try:
+            ion = int(parts[0])
+            values = [float(value) for value in parts[1:]]
+        except ValueError as error:
+            raise ValueError(f"Malformed magnetization ion row: {lines[index]!r}") from error
+        if ion <= 0 or not values or not all(math.isfinite(value) for value in values):
+            raise ValueError(f"Malformed magnetization ion row: {lines[index]!r}")
+        moments.append(values[-1])
+
+    if closing_separator is None or not moments:
+        raise ValueError("Magnetization section has no complete ion table")
+    if not any(lines[index].strip().lower().startswith("tot") for index in range(closing_separator + 1, len(lines))):
+        raise ValueError("Magnetization section has no total row")
+    return moments
+
+
+def load_material_structure(details_root: Path, material_id: str) -> UnitcellStructure | None:
+    """Load a material's exact structure and optional VASP z-axis moments.
+
+    VASP collinear moments are quantization-axis projections, so served moments
+    are represented as Cartesian vectors ``(0, 0, m)`` in µB.
+    """
+
+    details_dir = details_dir_for_material(details_root, material_id)
+    if details_dir is None or not details_dir.is_dir():
+        return None
+    contcar = details_dir / "CONTCAR.bz2"
+    if not contcar.is_file():
+        return None
+    try:
+        structure = load(str(contcar))
+    except Exception:  # noqa: BLE001 - a malformed/unsupported CONTCAR must not sink the dataset
+        return None
+
+    magn = details_dir / "MAGN.bz2"
+    try:
+        with bz2.open(magn, "rt", encoding="utf-8") as handle:
+            moments = parse_magnetization_moments(handle.read())
+    except (OSError, UnicodeError, ValueError) as error:
+        logger.warning("No usable MAGN moments for %s: %s", material_id, error)
+        return structure
+    if len(moments) != len(structure.sites):
+        logger.warning(
+            "Ignoring MAGN moments for %s: %d rows for %d sites",
+            material_id,
+            len(moments),
+            len(structure.sites),
+        )
+        return structure
+
+    return UnitcellStructure(
+        structure.cell,
+        structure.sites,
+        structure.species,
+        structure.species_at_sites,
+        site_moments=CartesianSiteMoments([[0.0, 0.0, moment] for moment in moments]),
+        molecular=structure.molecular,
+        assemblies=structure.assemblies,
+        symmetry=structure.symmetry,
+        chemical_composition=structure.chemical_composition,
+        chemical_formula_descriptive=structure.chemical_formula_descriptive,
+        chemical_formula_hill=structure.chemical_formula_hill,
+        optimization_type=structure.optimization_type,
+        immutable_id=structure.immutable_id,
+        last_modified=structure.last_modified,
+    )
+
+
+def _material_structure_record(structure: UnitcellStructure) -> UnitcellStructureRecord:
+    """Project a live structure using httk-atomistic's nested record idiom."""
+
+    projected = dict(project_storage_record(UnitcellStructureRecord, structure))
+    projected["cell"] = CellRecord(**project_storage_record(CellRecord, structure.cell))  # type: ignore[arg-type]
+    projected["sites"] = SitesRecord(**project_storage_record(SitesRecord, structure.sites))  # type: ignore[arg-type]
+    projected["species"] = tuple(
+        SpeciesRecord(**project_storage_record(SpeciesRecord, species))  # type: ignore[arg-type]
+        for species in structure.species
+    )
+    normalized = project_storage_record(NormalizedCompositionRecord, structure.composition)
+    normalized_amounts = cast(Any, normalized["amounts"])
+    projected["normalized_composition"] = NormalizedCompositionRecord(
+        tuple(NormalizedCompositionAmountRecord(*amount) for amount in normalized_amounts),
+        structure.composition.complete,
+    )
+    return UnitcellStructureRecord(**projected)  # type: ignore[arg-type]
+
+
+def material_structure(record: MaterialRecord) -> UnitcellStructure | None:
+    """Reconstruct the live structure stored on a material record."""
+
+    return None if record.structure is None else UnitcellStructureView(record.structure)
 
 
 def _plot_file(path: Path, *, details_root: Path, key: str, theme: str) -> PlotFile:
@@ -481,11 +620,7 @@ def _source_revision(data_dir: Path, *, details_dir: Path) -> str:
         digest.update(b"\0")
     if details_dir.is_dir():
         for path in sorted(
-            (
-                path
-                for path in details_dir.rglob("*")
-                if path.is_file() and path.suffix.lower() in {".svg", ".png"}
-            ),
+            (path for path in details_dir.rglob("*") if path.is_file() and path.suffix.lower() in {".svg", ".png"}),
             key=lambda path: path.as_posix(),
         ):
             metadata = path.stat()
@@ -527,7 +662,9 @@ def summarize_symmetry_rows(rows: list[dict[str, str]], *, source_kind: str) -> 
                         ),
                         symprec=symprec,
                         symprec_variants=len(variant_rows),
-                        magnetic_phases=_dedupe(_clean_display_text(row.get("MagneticPhaseShort", "")) for row in variant_rows),
+                        magnetic_phases=_dedupe(
+                            _clean_display_text(row.get("MagneticPhaseShort", "")) for row in variant_rows
+                        ),
                         wave_classes=_dedupe(_clean_display_text(row.get("WaveClass", "")) for row in variant_rows),
                         parent_spacegroups=_dedupe(
                             _clean_display_text(row.get("ParentSpacegroup", "")) for row in variant_rows
@@ -536,7 +673,9 @@ def summarize_symmetry_rows(rows: list[dict[str, str]], *, source_kind: str) -> 
                             _clean_latex_text(row.get("ParentSpacegroup", "")) for row in variant_rows
                         ),
                         bns_mcif_labels=_dedupe(_clean_display_text(row.get("BNSmcif", "")) for row in variant_rows),
-                        bns_mcif_labels_latex=_dedupe(_clean_latex_text(row.get("BNSmcif", "")) for row in variant_rows),
+                        bns_mcif_labels_latex=_dedupe(
+                            _clean_latex_text(row.get("BNSmcif", "")) for row in variant_rows
+                        ),
                         bns_labels=_dedupe(_clean_display_text(row.get("BNS", "")) for row in variant_rows),
                         bns_labels_latex=_dedupe(_clean_latex_text(row.get("BNS", "")) for row in variant_rows),
                         effective_bns_labels=_dedupe(
@@ -558,15 +697,25 @@ def summarize_symmetry_rows(rows: list[dict[str, str]], *, source_kind: str) -> 
                             _clean_latex_text(row.get("AGenopConnectingElement", "")) for row in variant_rows
                         ),
                         spin_angle_mismatch=max(
-                            (value for value in (_parse_float(row.get("SpinAngleMismatch", "")) for row in variant_rows) if value is not None),
+                            (
+                                value
+                                for value in (_parse_float(row.get("SpinAngleMismatch", "")) for row in variant_rows)
+                                if value is not None
+                            ),
                             default=None,
                         ),
                         spin_length_mismatch=max(
-                            (value for value in (_parse_float(row.get("SpinLengthMismatch", "")) for row in variant_rows) if value is not None),
+                            (
+                                value
+                                for value in (_parse_float(row.get("SpinLengthMismatch", "")) for row in variant_rows)
+                                if value is not None
+                            ),
                             default=None,
                         ),
                         icsd_ids=_dedupe(_clean_display_text(row.get("ICSDId", "")) for row in variant_rows),
-                        reference_dois=_dedupe(_clean_display_text(row.get("ReferenceDOI", "")) for row in variant_rows),
+                        reference_dois=_dedupe(
+                            _clean_display_text(row.get("ReferenceDOI", "")) for row in variant_rows
+                        ),
                         warnings=_dedupe(_clean_display_text(row.get("Warnings", "")) for row in variant_rows),
                         notes=_dedupe(_clean_display_text(row.get("Notes", "")) for row in variant_rows),
                     ),
@@ -615,8 +764,7 @@ def build_material_records(
         grouped_variants.setdefault(magndata_id, []).append(variant)
 
     magndata_records = {
-        identifier: MagndataRecord(identifier, tuple(variants))
-        for identifier, variants in grouped_variants.items()
+        identifier: MagndataRecord(identifier, tuple(variants)) for identifier, variants in grouped_variants.items()
     }
     materials: list[MaterialRecord] = []
     seen_material_ids: set[str] = set()
@@ -665,6 +813,7 @@ def build_material_records(
                 classification,
             )
         ).strip()
+        loaded_structure = None if details_dir is None else load_material_structure(details_dir, material_id)
         materials.append(
             MaterialRecord(
                 id=material_id,
@@ -689,6 +838,7 @@ def build_material_records(
                 icsd_ids=icsd_ids,
                 dois=dois,
                 search_text=search_text,
+                structure=None if loaded_structure is None else _material_structure_record(loaded_structure),
             )
         )
 
@@ -774,6 +924,7 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
         # lightweight schema probe so a pre-File store is considered stale and
         # the runtime can seed the current model in memory instead.
         tuple(sample["material"].figures)
+        _ = sample["material"].structure
         return OpenedMaterialStore(
             opened_database,
             store,

@@ -36,9 +36,7 @@ def _detail_url(context: ProviderContext, material_id: str, query: Mapping[str, 
     """Build one encoded detail URL with the normalized search snapshot."""
 
     snapshot = {
-        key: value
-        for key, value in query.items()
-        if value and not (key == "sort" and value == "screening_rank")
+        key: value for key, value in query.items() if value and not (key == "sort" and value == "screening_rank")
     }
     snapshot["id"] = material_id
     return context.url_for("material", query=snapshot)

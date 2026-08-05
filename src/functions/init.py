@@ -138,8 +138,7 @@ def _site_stats(
         for value in ("collinear", "noncollinear-derived", "mixed", "unclassified")
     }
     electronic_counts = {
-        value: _material_count(store, "electronic_type", value)
-        for value in ("metallic", "semiconducting", "unknown")
+        value: _material_count(store, "electronic_type", value) for value in ("metallic", "semiconducting", "unknown")
     }
     return {
         "dataset_available": True,

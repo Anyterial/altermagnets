@@ -38,7 +38,7 @@ def _close_created_web_app(app: Starlette, operation_error: BaseException) -> No
         return
     try:
         close()
-    except BaseException as cleanup_error:  # noqa: BLE001
+    except BaseException as cleanup_error:
         operation_error.add_note(f"Additional httk-serve web cleanup failure: {cleanup_error!r}")
 
 

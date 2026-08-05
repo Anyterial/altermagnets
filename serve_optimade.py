@@ -6,8 +6,9 @@ under ``data/tables/``, assembles OPTIMADE ``structures`` and ``references``
 records, and serves them through the generic *httk-serve* OPTIMADE engine. All of the
 reusable machinery lives in the httk modules:
 
-* crystal structures are parsed from the per-material ``CONTCAR.bz2`` files via
-  ``httk.core.load`` + ``httk.atomistic`` (VASP POSCAR reader + exact bridge);
+* crystal structures (with their VASP z-axis site moments) come from the shared
+  material store built by ``material_store`` from the per-material
+  ``CONTCAR.bz2`` + ``MAGN.bz2`` files;
 * the ``structures`` provider (with auto-derived composition fields, custom
   ``_anyt_`` properties, and null structure-less entries) and the ``references``
   provider come from *httk-atomistic* / *httk-data*;
@@ -270,7 +271,7 @@ def run_validation(providers: list[Any]) -> int:
                 candidate = _validation_record(record, columns)
                 try:
                     validate_record(definition, candidate)
-                except Exception as exc:  # noqa: BLE001 - validation reports every provider failure.
+                except Exception as exc:
                     failures += 1
                     print(f"INVALID {entry_type} {candidate.get('id')!r}: {exc}", file=sys.stderr)
     print(f"validated {total} record(s) across {len(providers)} provider(s): {failures} failure(s)")

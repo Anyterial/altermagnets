@@ -25,6 +25,8 @@ MAX_TEXT_TOKENS = 12
 MAX_ELEMENT_TOKEN_LENGTH = 8
 MAX_ELEMENT_TOKENS = 16
 MAX_PREDICATES = 40
+
+
 def _bounded_tokens(value: str, *, max_tokens: int, max_token_length: int) -> list[str]:
     tokens: list[str] = []
     for raw in value.replace(",", " ").split():

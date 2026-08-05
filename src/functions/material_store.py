@@ -414,7 +414,7 @@ def load_material_structure(details_root: Path, material_id: str) -> UnitcellStr
         return None
     try:
         structure = load(str(contcar))
-    except Exception:  # noqa: BLE001 - a malformed/unsupported CONTCAR must not sink the dataset
+    except Exception:
         return None
 
     magn = details_dir / "MAGN.bz2"
@@ -933,7 +933,7 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
             revision=_persistent_revision(store_path),
             source_path=store_path,
         )
-    except Exception:  # noqa: BLE001 - a corrupt or unsupported external store is unavailable to the site.
+    except Exception:
         if database is not None:
             database.dispose()
         return None
@@ -969,7 +969,7 @@ def open_in_memory_store(
             revision=_source_revision(source_dir, details_dir=resolved_details_dir),
             source_path=source_dir,
         )
-    except Exception:  # noqa: BLE001 - malformed or unavailable migration inputs leave the site data-less.
+    except Exception:
         if database is not None:
             database.dispose()
         return None

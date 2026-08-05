@@ -24,9 +24,7 @@ classifiers = [
 dev = [
   "pytest>=8.0",
   "httpx>=0.27",
-  "black",
-  "ruff",
-  "isort",
+  "ruff>=0.16,<0.17",
   "pyright",
   "mypy"
 ]
@@ -47,23 +45,22 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
-[tool.isort]
-profile = "black"
-extend_skip_glob = ["src/data/**"]
-
 [tool.ruff]
 target-version = "py312"
 src = ["src"]
+line-length = 120
 extend-exclude = ["src/data"]
 force-exclude = true
 
-[tool.black]
-target-version = ["py312"]
-line-length = 120
-skip-string-normalization = true
-force-exclude = '''
-/src/data/
-'''
+[tool.ruff.lint]
+# TRY002: raising plain Exception is accepted httk style.
+# TRY004: the ValueError/TypeError choice is public API; do not churn it.
+# BLE001: broad excepts deliberately isolate loader/page failures.
+ignore = ["TRY002", "TRY004", "BLE001"]
+
+[tool.ruff.format]
+# preserve replaces black's skip-string-normalization: existing quote styles are kept.
+quote-style = "preserve"
 
 [tool.pyright]
 pythonVersion = "3.12"

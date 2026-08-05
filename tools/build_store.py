@@ -23,10 +23,7 @@ def _arguments() -> argparse.Namespace:
         "--target",
         type=Path,
         default=None,
-        help=(
-            "output DuckDB file (default: ALTERMAGNETS_STORE_PATH, then "
-            f"{default_store_path()})"
-        ),
+        help=(f"output DuckDB file (default: ALTERMAGNETS_STORE_PATH, then {default_store_path()})"),
     )
     parser.add_argument(
         "--data-dir",
@@ -38,10 +35,7 @@ def _arguments() -> argparse.Namespace:
         "--details-dir",
         type=Path,
         default=None,
-        help=(
-            "directory containing generated plot assets "
-            "(default: ALTERMAGNETS_DETAILS_DIR, then data/details)"
-        ),
+        help=("directory containing generated plot assets (default: ALTERMAGNETS_DETAILS_DIR, then data/details)"),
     )
     return parser.parse_args()
 

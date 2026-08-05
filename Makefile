@@ -41,13 +41,11 @@ clean:
 	find . -name "__pycache__" -print0 | xargs -0 rm -rf
 
 format:
-	$(PYTHON) -m ruff check $(PY_SOURCES) --select F401 --fix
-	$(PYTHON) -m isort $(PY_SOURCES)
-	$(PYTHON) -m black $(PY_SOURCES)
+	$(PYTHON) -m ruff check $(PY_SOURCES) --fix
+	$(PYTHON) -m ruff format $(PY_SOURCES)
 
 format-check:
-	$(PYTHON) -m isort --check-only $(PY_SOURCES)
-	$(PYTHON) -m black --check $(PY_SOURCES)
+	$(PYTHON) -m ruff format --check $(PY_SOURCES)
 
 lint:
 	$(PYTHON) -m ruff check $(PY_SOURCES)

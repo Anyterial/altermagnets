@@ -455,7 +455,7 @@ def _structure_payload(material: MaterialRecord) -> dict[str, Any] | None:
                 None if moments is None else CartesianSiteMomentsView(moments).cartesian_moments.to_floats()
             ),
         }
-    except Exception as error:  # noqa: BLE001 - structure data must not sink the material page.
+    except Exception as error:
         logger.warning("Could not build structure payload for %s: %s", material.id, error)
         return None
 

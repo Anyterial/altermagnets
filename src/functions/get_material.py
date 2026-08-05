@@ -1,5 +1,6 @@
 import base64
 import json
+import logging
 import math
 import os
 import re
@@ -7,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from formula_katex import katex_formula_inline
+from httk.atomistic import CartesianSiteMomentsView
 from httk.data.db import SqlStore
 from input_sanitize import sanitize_material_id
 from material_store import (
@@ -16,7 +18,10 @@ from material_store import (
     SymmetryVariant,
     details_dir_for_material,
     material_id_aliases,
+    material_structure,
 )
+
+logger = logging.getLogger(__name__)
 
 CLASSIFICATION_LABELS = {
     "collinear": "Collinear",
@@ -435,6 +440,26 @@ def _find_material(store: SqlStore, material_id: str) -> MaterialRecord | None:
     return None
 
 
+def _structure_payload(material: MaterialRecord) -> dict[str, Any] | None:
+    try:
+        structure = material_structure(material)
+        if structure is None:
+            return None
+        moments = structure.site_moments
+        return {
+            "lattice_vectors": structure.cell.basis.to_floats(),
+            "species_at_sites": list(structure.species_at_sites),
+            "cartesian_site_positions": structure.cartesian_sites().to_floats(),
+            "fractional_site_positions": structure.sites.reduced_coords.to_floats(),
+            "site_moments": (
+                None if moments is None else CartesianSiteMomentsView(moments).cartesian_moments.to_floats()
+            ),
+        }
+    except Exception as error:  # noqa: BLE001 - structure data must not sink the material page.
+        logger.warning("Could not build structure payload for %s: %s", material.id, error)
+        return None
+
+
 def execute(global_data, id: str = "", **kwargs):
     store = global_data.get("materials_store")
     if not isinstance(store, SqlStore):
@@ -463,6 +488,7 @@ def execute(global_data, id: str = "", **kwargs):
     magndata_ids = [link.record.id for link in material.links]
     icsd_ids = list(material.icsd_ids)
     material_label = katex_formula_inline(material.formula) or material.formula
+    structure = _structure_payload(material)
 
     return {
         "material_id": material.id,
@@ -509,6 +535,7 @@ def execute(global_data, id: str = "", **kwargs):
         "detail_figure_count": detail_assets["available_count"],
         "detail_figure_total": len(detail_assets["figures"]),
         "detail_raw_path": detail_assets["raw_path"],
+        "structure": structure,
         "warnings": warnings,
         "notes": notes,
     }

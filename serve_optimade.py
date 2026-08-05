@@ -23,58 +23,33 @@ import csv
 import json
 import re
 import sys
+from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any
 
+ROOT = Path(__file__).resolve().parent
+FUNCTIONS_ROOT = ROOT / "src" / "functions"
+if str(FUNCTIONS_ROOT) not in sys.path:
+    sys.path.insert(0, str(FUNCTIONS_ROOT))
+
+import material_store
 from httk.atomistic import StructureEntryProvider
-from httk.core import PropertyDefinition, RelatedEntry, load, register_definition_prefix
+from httk.core import PropertyDefinition, RelatedEntry, register_definition_prefix
 from httk.data import ReferenceEntryProvider, validate_record
 from httk.serve.optimade import adapter_from_providers, serve
 
-ROOT = Path(__file__).resolve().parent
-DATA_TABLES = ROOT / "data" / "tables"
-DETAILS_ROOT = ROOT / "data" / "details"
 DEFS_JSON = ROOT / "optimade" / "property_definitions" / "json"
 
 #: The base URL under which the altermagnets custom property ``$id``s are minted.
 ANYT_DEFS_BASE = "https://anyterial.se/optimade/defs/properties"
 
-SCREENING_CSV = DATA_TABLES / "high_throughput_screening_results_fixed.csv"
-SYMMETRY_CSVS = ("altermagnets_collinear.csv", "altermagnets_noncollinear.csv")
-
-MATERIAL_ID_PATTERN = re.compile(r"^(?:anyt:)?(?P<family>am|amdb)-(?P<series>[A-Za-z0-9]+)-(?P<number>\d+)$")
-
-
-# --- id / shard resolution (mirrors src/functions/get_material.py) -------------
-
-
-def _parsed_material_id(material_id: str) -> Optional[tuple[str, str]]:
-    match = MATERIAL_ID_PATTERN.fullmatch(material_id.strip())
-    if match is None:
-        return None
-    return match.group("series"), match.group("number")
-
-
-def details_dir_for_material(material_id: str, details_root: Path = DETAILS_ROOT) -> Optional[Path]:
-    """The zero-padded shard leaf directory holding a material's detail assets, or None."""
-    parsed = _parsed_material_id(material_id)
-    if parsed is None:
-        return None
-    series, digits = parsed
-    if len(digits) < 3:
-        digits = digits.zfill(3)
-    shard = Path(digits[:1]) / digits[:2] / digits[:3]
-    for family in ("amdb", "am"):
-        leaf = details_root / f"{family}-{series}" / shard / f"{family}-{series}-{digits}"
-        if leaf.is_dir():
-            return leaf
-    return None
+SYMMETRY_CSVS = (material_store.MAGNDATA_COLLINEAR_FILENAME, material_store.MAGNDATA_NONCOLLINEAR_FILENAME)
 
 
 # --- small parsing helpers -----------------------------------------------------
 
 
-def _to_float(value: Optional[str]) -> Optional[float]:
+def _to_float(value: str | None) -> float | None:
     text = (value or "").strip()
     if not text or text == "?":
         return None
@@ -84,7 +59,7 @@ def _to_float(value: Optional[str]) -> Optional[float]:
         return None
 
 
-def _first_nonempty(values: Iterable[Optional[str]]) -> Optional[str]:
+def _first_nonempty(values: Iterable[str | None]) -> str | None:
     for value in values:
         text = (value or "").strip()
         if text:
@@ -92,7 +67,7 @@ def _first_nonempty(values: Iterable[Optional[str]]) -> Optional[str]:
     return None
 
 
-def strip_latex_bns(raw: Optional[str]) -> Optional[str]:
+def strip_latex_bns(raw: str | None) -> str | None:
     """Turn a LaTeX-wrapped BNS symbol into a plain ASCII ``symbol (number)`` string, or None."""
     text = (raw or "").strip()
     if not text or text == "?":
@@ -108,7 +83,7 @@ def strip_latex_bns(raw: Optional[str]) -> Optional[str]:
     return text or None
 
 
-def _electronic_type(band_gap: Optional[float]) -> str:
+def _electronic_type(band_gap: float | None) -> str:
     if band_gap is None:
         return "unknown"
     if band_gap <= 0:
@@ -119,19 +94,6 @@ def _electronic_type(band_gap: Optional[float]) -> str:
 def _read_csv(path: Path, delimiter: str) -> list[dict[str, str]]:
     with path.open(newline="", encoding="utf-8") as handle:
         return list(csv.DictReader(handle, delimiter=delimiter))
-
-
-def _load_structure_if_present(material_id: str) -> Optional[Any]:
-    leaf = details_dir_for_material(material_id)
-    if leaf is None:
-        return None
-    contcar = leaf / "CONTCAR.bz2"
-    if not contcar.is_file():
-        return None
-    try:
-        return load(str(contcar))
-    except Exception:  # a malformed/unsupported CONTCAR must not sink the whole dataset
-        return None
 
 
 # --- dataset assembly ----------------------------------------------------------
@@ -183,12 +145,31 @@ def build_dataset() -> tuple[
     dict[str, dict[str, Any]],
 ]:
     """Assemble the structures, per-material properties, relationships, and references."""
-    screening = _read_csv(SCREENING_CSV, delimiter=";")
+    data_dir = material_store.resolve_data_dir()
+    details_dir = material_store.resolve_details_dir()
+    screening = _read_csv(data_dir / material_store.SCREENING_RESULTS_FILENAME, delimiter=";")
+
+    stored_structures: dict[str, Any] = {}
+    opened = material_store.open_material_store(data_dir=data_dir, details_dir=details_dir)
+    if opened is not None:
+        owned_store = {"materials_database": opened.database}
+        try:
+            searcher = opened.store.searcher()
+            material = searcher.variable(material_store.MaterialRecord)
+            for result in searcher.results(material=material):
+                record = result["material"]
+                # The reconstructed view reads only from the fetched record, so it
+                # stays valid (with its stored precisions) after the store closes.
+                structure = material_store.material_structure(record)
+                if structure is not None:
+                    stored_structures[record.id] = structure
+        finally:
+            material_store.cleanup_material_store(owned_store)
 
     symmetry_by_magndata: dict[str, list[dict[str, str]]] = {}
     symmetry_rows: list[dict[str, str]] = []
     for filename in SYMMETRY_CSVS:
-        for row in _read_csv(DATA_TABLES / filename, delimiter=","):
+        for row in _read_csv(data_dir / filename, delimiter=","):
             magndata_id = (row.get("MAGNDATAId") or "").strip()
             if magndata_id:
                 symmetry_by_magndata.setdefault(magndata_id, []).append(row)
@@ -230,7 +211,7 @@ def build_dataset() -> tuple[
             "_anyt_magnetic_space_group_bns": _first_nonempty(strip_latex_bns(entry.get("BNS")) for entry in linked),
             "_anyt_magndata_ids": magndata_ids or None,
         }
-        structures[material_id] = _load_structure_if_present(material_id)
+        structures[material_id] = stored_structures.get(material_id)
 
         reference_ids: list[str] = []
         for entry in linked:
@@ -289,14 +270,14 @@ def run_validation(providers: list[Any]) -> int:
                 candidate = _validation_record(record, columns)
                 try:
                     validate_record(definition, candidate)
-                except Exception as exc:  # PropertyValidationError (a ValueError) or similar
+                except Exception as exc:  # noqa: BLE001 - validation reports every provider failure.
                     failures += 1
                     print(f"INVALID {entry_type} {candidate.get('id')!r}: {exc}", file=sys.stderr)
     print(f"validated {total} record(s) across {len(providers)} provider(s): {failures} failure(s)")
     return 1 if failures else 0
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Serve the altermagnets dataset over OPTIMADE.")
     parser.add_argument("--validate", action="store_true", help="validate every record and exit")
     parser.add_argument("--host", default="127.0.0.1", help="host to bind when serving")

@@ -3,6 +3,8 @@ import json
 import sys
 from pathlib import Path
 
+from conftest import write_detail_assets, write_source_tables
+
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "src" / "functions" / "get_material.py"
 sys.path.insert(0, str(MODULE_PATH.parent))
@@ -36,8 +38,7 @@ def test_load_detail_assets_reads_sharded_svg_outputs(tmp_path: Path) -> None:
     target_dir = details_root / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001"
     target_dir.mkdir(parents=True)
     (target_dir / "amdb-1-0001.json").write_text(
-        json.dumps({"raw_path": "2/Runs/ht.task.tetralith--default.CrSb_SCF.cleanup.0.unclaimed.3.finished"})
-        + "\n",
+        json.dumps({"raw_path": "2/Runs/ht.task.tetralith--default.CrSb_SCF.cleanup.0.unclaimed.3.finished"}) + "\n",
         encoding="utf-8",
     )
     (target_dir / "band.svg").write_text(
@@ -149,6 +150,34 @@ def test_load_detail_assets_handles_binary_svg_and_bad_metadata_safely(tmp_path:
     figures = {figure["key"]: figure for figure in assets["figures"]}
     assert figures["band"]["available"] is True
     assert figures["band"]["data_url"].startswith("data:image/svg+xml;base64,")
+
+
+def test_execute_includes_structure_payload_and_null_for_structureless_material(tmp_path: Path) -> None:
+    source = write_source_tables(tmp_path / "tables")
+    details = write_detail_assets(tmp_path / "details")
+    (details / "amdb-1" / "0" / "00" / "000" / "amdb-1-0003" / "CONTCAR.bz2").unlink()
+    store_path = material_store.build_store(tmp_path / "altermagnets.duckdb", data_dir=source, details_dir=details)
+    opened = material_store.open_prebuilt_store(store_path)
+    assert opened is not None
+    try:
+        result = MODULE.execute({"materials_store": opened.store}, id="anyt:am-1-0001")
+        assert result is not None
+        structure = result["structure"]
+        assert set(structure) == {
+            "lattice_vectors",
+            "species_at_sites",
+            "cartesian_site_positions",
+            "fractional_site_positions",
+            "site_moments",
+        }
+        assert structure["species_at_sites"] == ["H", "He", "Li"]
+        assert structure["site_moments"] == [[0.0, 0.0, 0.6], [0.0, 0.0, 0.0], [0.0, 0.0, 1.25]]
+
+        structureless = MODULE.execute({"materials_store": opened.store}, id="anyt:am-1-0003")
+        assert structureless is not None
+        assert structureless["structure"] is None
+    finally:
+        opened.database.dispose()
 
 
 def test_load_detail_assets_ignores_oversized_svg_files(tmp_path: Path) -> None:

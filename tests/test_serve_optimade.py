@@ -14,14 +14,13 @@ import pytest
 pytest.importorskip("httk.serve.optimade")
 pytest.importorskip("httk.atomistic")
 
-from starlette.testclient import TestClient  # noqa: E402
-
-from httk.serve.optimade import adapter_from_providers, create_asgi_app  # noqa: E402
+from httk.serve.optimade import adapter_from_providers, create_asgi_app
+from starlette.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import serve_optimade  # noqa: E402
+import serve_optimade
 
 
 @pytest.fixture(scope="module")
@@ -36,7 +35,7 @@ def client(providers: list) -> TestClient:
 
 
 def test_dataset_assembly_counts_and_exact_lattice() -> None:
-    structures, properties, relationships, references = serve_optimade.build_dataset()
+    structures, properties, _relationships, references = serve_optimade.build_dataset()
     assert len(structures) == 180
     assert len(properties) == 180
     assert references  # DOIs were collected across the symmetry tables
@@ -60,6 +59,33 @@ def test_null_structure_material_serves_null_lattice(providers: list) -> None:
     assert records[null_materials[0]]["species"] is None
 
 
+def test_moments_are_served_for_the_fixture_structure(providers: list) -> None:
+    records = {record["__id"]: record for record in providers[0].records("structures")}
+    assert records["anyt:am-1-0039"]["_httk_site_moments"] == [
+        [0.0, 0.0, -0.0],
+        [0.0, 0.0, -0.0],
+        [0.0, 0.0, -0.0],
+        [0.0, 0.0, -0.0],
+        [0.0, 0.0, 4.208],
+        [0.0, 0.0, -4.209],
+        [0.0, 0.0, 4.209],
+        [0.0, 0.0, -4.209],
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.001],
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.001],
+        [0.0, 0.0, 0.007],
+        [0.0, 0.0, -0.007],
+        [0.0, 0.0, 0.007],
+        [0.0, 0.0, -0.007],
+        [0.0, 0.0, 0.007],
+        [0.0, 0.0, -0.006],
+        [0.0, 0.0, 0.007],
+        [0.0, 0.0, -0.006],
+    ]
+    assert "_httk_magnetism" in records["anyt:am-1-0039"]["structure_features"]
+
+
 def test_info_structures_lists_anyt_and_standard_definitions(client: TestClient) -> None:
     response = client.get("/info/structures")
     assert response.status_code == 200
@@ -70,6 +96,7 @@ def test_info_structures_lists_anyt_and_standard_definitions(client: TestClient)
     properties = response.json()["data"]["properties"]
     assert "_anyt_magnetic_phase" in properties
     assert "_anyt_wave_class" in properties
+    assert "_httk_site_moments" in properties
 
 
 def test_filter_on_magnetic_phase_returns_rows(client: TestClient) -> None:

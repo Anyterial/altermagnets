@@ -506,7 +506,9 @@ def _material_structure_record(structure: UnitcellStructure) -> UnitcellStructur
 def material_structure(record: MaterialRecord) -> UnitcellStructure | None:
     """Reconstruct the live structure stored on a material record."""
 
-    return None if record.structure is None else UnitcellStructureView(record.structure)
+    # This site holds a record by construction; the kind hint selects the record
+    # backend directly instead of probing the raw-input backends.
+    return None if record.structure is None else UnitcellStructureView(record.structure, kind="record")
 
 
 def _plot_file(path: Path, *, details_root: Path, key: str, theme: str) -> PlotFile:

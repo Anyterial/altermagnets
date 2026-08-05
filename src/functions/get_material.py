@@ -9,6 +9,7 @@ from typing import Any
 
 from formula_katex import katex_formula_inline
 from httk.atomistic import CartesianSiteMomentsView
+from httk.core import report
 from httk.data.db import SqlStore
 from input_sanitize import sanitize_material_id
 from material_store import (
@@ -21,7 +22,7 @@ from material_store import (
     material_structure,
 )
 
-logger = logging.getLogger(__name__)
+logger = report.context_logger(logging.getLogger("httk.altermagnets.get_material"), "altermagnets")
 
 CLASSIFICATION_LABELS = {
     "collinear": "Collinear",

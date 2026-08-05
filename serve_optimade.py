@@ -22,6 +22,7 @@ assembled record against its definition and exit non-zero on any failure.
 import argparse
 import csv
 import json
+import logging
 import re
 import sys
 from collections.abc import Iterable, Mapping
@@ -35,9 +36,11 @@ if str(FUNCTIONS_ROOT) not in sys.path:
 
 import material_store
 from httk.atomistic import StructureEntryProvider
-from httk.core import PropertyDefinition, RelatedEntry, register_definition_prefix
+from httk.core import PropertyDefinition, RelatedEntry, register_definition_prefix, report
 from httk.data import ReferenceEntryProvider, validate_record
 from httk.serve.optimade import adapter_from_providers, serve
+
+logger = report.context_logger(logging.getLogger("httk.altermagnets.serve_optimade"), "altermagnets")
 
 DEFS_JSON = ROOT / "optimade" / "property_definitions" / "json"
 
@@ -152,7 +155,9 @@ def build_dataset() -> tuple[
 
     stored_structures: dict[str, Any] = {}
     opened = material_store.open_material_store(data_dir=data_dir, details_dir=details_dir)
-    if opened is not None:
+    if opened is None:
+        logger.warning("No material store could be opened; every structure will serve null")
+    else:
         owned_store = {"materials_database": opened.database}
         try:
             searcher = opened.store.searcher()
@@ -166,6 +171,12 @@ def build_dataset() -> tuple[
                     stored_structures[record.id] = structure
         finally:
             material_store.cleanup_material_store(owned_store)
+        logger.info("%d structures from the %s material store", len(stored_structures), opened.mode)
+        if not stored_structures:
+            logger.warning(
+                "The material store holds no structures; every structure will serve null "
+                "(was the store built with the detail tree and httk-io available?)"
+            )
 
     symmetry_by_magndata: dict[str, list[dict[str, str]]] = {}
     symmetry_rows: list[dict[str, str]] = []
@@ -283,7 +294,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--validate", action="store_true", help="validate every record and exit")
     parser.add_argument("--host", default="127.0.0.1", help="host to bind when serving")
     parser.add_argument("--port", type=int, default=8081, help="port to bind when serving")
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        help="report diagnostics on the httk channel (-v info, -vv debug)",
+    )
     args = parser.parse_args(argv)
+    if args.verbose:
+        report.configure_reporting(level="debug" if args.verbose > 1 else "info")
 
     providers = build_providers()
     if args.validate:

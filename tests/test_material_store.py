@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import material_store
 import pytest
 from conftest import write_detail_assets, write_source_tables
 from httk.atomistic import CartesianSiteMoments
@@ -80,3 +81,31 @@ def test_material_structure_round_trips_through_store(tmp_path: Path) -> None:
         assert actual.site_moments == expected.site_moments
     finally:
         opened.database.dispose()
+
+
+def test_stale_layout_store_is_rejected_and_falls_back(tmp_path: Path, monkeypatch, caplog) -> None:
+    source = write_source_tables(tmp_path / "tables")
+    details = write_detail_assets(tmp_path / "details")
+    store_path = build_store(tmp_path / "store.duckdb", data_dir=source, details_dir=details)
+
+    # A store from an older schema generation carries an older (or no) layout
+    # stamp; it must be treated as stale rather than silently adopted.
+    monkeypatch.setattr(material_store, "STORE_LAYOUT_VERSION", material_store.STORE_LAYOUT_VERSION + 1)
+    with caplog.at_level("INFO", logger="httk.altermagnets.material_store"):
+        assert open_prebuilt_store(store_path) is None
+    assert "stale" in caplog.text
+
+    fallback = material_store.open_material_store(store_path, data_dir=source, details_dir=details)
+    assert fallback is not None
+    try:
+        assert fallback.mode == "memory"
+    finally:
+        fallback.database.dispose()
+
+
+def test_build_reports_structure_summary(tmp_path: Path, caplog) -> None:
+    source = write_source_tables(tmp_path / "tables")
+    details = write_detail_assets(tmp_path / "details")
+    with caplog.at_level("INFO", logger="httk.altermagnets.material_store"):
+        build_store(tmp_path / "store.duckdb", data_dir=source, details_dir=details)
+    assert "material records" in caplog.text and "with structures" in caplog.text

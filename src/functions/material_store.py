@@ -33,7 +33,7 @@ from httk.atomistic.storage.records import (
     SpeciesRecord,
     UnitcellStructureRecord,
 )
-from httk.core import File, Indexed, Skip, StorageInfo, Unique, load
+from httk.core import File, Indexed, Skip, StorageInfo, Unique, load, report
 from httk.core.storage import project_storage_record
 from httk.data.db import Database, SqlStore
 
@@ -46,6 +46,7 @@ __all__ = [
     "MAGNDATA_NONCOLLINEAR_FILENAME",
     "PAPER_PICKED_MATERIALS",
     "SCREENING_RESULTS_FILENAME",
+    "STORE_LAYOUT_VERSION",
     "STORE_PATH_ENVIRONMENT",
     "MagndataRecord",
     "MaterialFigure",
@@ -53,6 +54,7 @@ __all__ = [
     "MaterialRecord",
     "OpenedMaterialStore",
     "PlotFile",
+    "StoreLayout",
     "SymmetryVariant",
     "build_material_records",
     "build_store",
@@ -73,7 +75,18 @@ __all__ = [
     "resolve_store_path",
 ]
 
-logger = logging.getLogger(__name__)
+# Site diagnostics ride the unified httk reporting channel (httk.core.report):
+# emission is plain stdlib logging under the "httk" hierarchy, tagged with the
+# "altermagnets" context. `httk.core.report.configure_reporting(level="info")`
+# (or `context_levels={"altermagnets": "debug"}`) turns them on.
+logger = report.context_logger(logging.getLogger("httk.altermagnets.material_store"), "altermagnets")
+
+#: The record-schema generation of the prebuilt store. Stamped by :func:`build_store`
+#: and required by :func:`open_prebuilt_store`, so a store built before a schema
+#: change is treated as stale (falling back to in-memory seeding) instead of being
+#: silently adopted with missing child tables reading as ``None``. Bump on every
+#: stored-record schema change.
+STORE_LAYOUT_VERSION = 2
 
 ELEMENT_PATTERN = re.compile(r"[A-Z][a-z]?")
 SCREENING_RESULTS_FILENAME = "high_throughput_screening_results_fixed.csv"
@@ -109,6 +122,19 @@ PAPER_PICKED_MATERIALS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("NbMnP", ("nbmnp", "mnnbp")),
     ("YRuO3", ("yruo3",)),
 )
+
+
+@dataclass(frozen=True)
+class StoreLayout:
+    """The prebuilt store's record-schema generation, stamped at build time.
+
+    A missing row (older store) or a mismatched version marks the store stale;
+    see :data:`STORE_LAYOUT_VERSION`.
+    """
+
+    __httk_storage__: ClassVar[StorageInfo] = StorageInfo(storage_name="altermagnets_store_layout")
+
+    version: int
 
 
 @dataclass(frozen=True)
@@ -408,14 +434,21 @@ def load_material_structure(details_root: Path, material_id: str) -> UnitcellStr
 
     details_dir = details_dir_for_material(details_root, material_id)
     if details_dir is None or not details_dir.is_dir():
+        logger.debug("No details directory for %s under %s", material_id, details_root)
         return None
     contcar = details_dir / "CONTCAR.bz2"
     if not contcar.is_file():
+        logger.debug("No CONTCAR.bz2 for %s in %s", material_id, details_dir)
         return None
     try:
         structure = load(str(contcar))
-    except Exception:
+    except Exception as error:
+        # A malformed CONTCAR must not sink the dataset, but the failure must be
+        # visible: an environmental cause (e.g. the CONTCAR reader missing) fails
+        # here for EVERY material, which the summary log then makes obvious.
+        logger.warning("Could not load %s: %s", contcar, error)
         return None
+    logger.debug("Loaded structure for %s: %d sites", material_id, len(structure.sites))
 
     magn = details_dir / "MAGN.bz2"
     try:
@@ -842,6 +875,19 @@ def build_material_records(
             )
         )
 
+    with_structures = sum(1 for material in materials if material.structure is not None)
+    logger.info(
+        "Built %d material records, %d with structures (details dir: %s)",
+        len(materials),
+        with_structures,
+        details_dir,
+    )
+    if details_dir is not None and materials and with_structures == 0:
+        logger.warning(
+            "No material got a structure: check that %s holds the detail shard tree "
+            "and that the CONTCAR reader is importable (httk-io)",
+            details_dir,
+        )
     return tuple(materials)
 
 
@@ -879,6 +925,7 @@ def build_store(
         store = SqlStore(created_database, entry_records={})
         store.ensure_tables(MaterialRecord)
         with store.transaction():
+            store.save(StoreLayout(STORE_LAYOUT_VERSION))
             for material in materials:
                 store.save(material)
         created_database.dispose()
@@ -906,14 +953,33 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
     database: Database | None = None
     try:
         if not store_path.is_file() or store_path.stat().st_size == 0:
+            logger.info("No prebuilt store at %s", store_path)
             return None
         opened_database = Database.duckdb(store_path)
         database = opened_database
         store = SqlStore(opened_database)
+        # The layout stamp is the authoritative staleness check: a store built
+        # before a schema change lacks the row (or carries an older version).
+        # Reads treat a missing child table as None rather than erroring, so
+        # merely touching new record fields cannot detect such a store.
+        layout_searcher = store.searcher()
+        layout = layout_searcher.variable(StoreLayout)
+        layout_row = layout_searcher.results(layout=layout).first()
+        stamped = None if layout_row is None else layout_row["layout"].version
+        if stamped != STORE_LAYOUT_VERSION:
+            logger.info(
+                "Prebuilt store %s is stale (layout %s, need %d); rebuild with `make build_store`",
+                store_path,
+                stamped,
+                STORE_LAYOUT_VERSION,
+            )
+            opened_database.dispose()
+            return None
         searcher = store.searcher()
         material = searcher.variable(MaterialRecord)
         material_count = searcher.count()
         if material_count <= 0:
+            logger.info("Prebuilt store %s holds no materials", store_path)
             opened_database.dispose()
             return None
         sample = searcher.results(material=material).first()
@@ -921,10 +987,11 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
             opened_database.dispose()
             return None
         # Counting only touches the root table. Reconstruct one record as a
-        # lightweight schema probe so a pre-File store is considered stale and
-        # the runtime can seed the current model in memory instead.
+        # lightweight schema probe so drifted child tables fail here rather
+        # than at first use.
         tuple(sample["material"].figures)
         _ = sample["material"].structure
+        logger.info("Opened prebuilt store %s: %d materials", store_path, material_count)
         return OpenedMaterialStore(
             opened_database,
             store,
@@ -933,7 +1000,8 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
             revision=_persistent_revision(store_path),
             source_path=store_path,
         )
-    except Exception:
+    except Exception as error:
+        logger.warning("Prebuilt store %s is unusable: %s", store_path, error)
         if database is not None:
             database.dispose()
         return None
@@ -950,6 +1018,11 @@ def open_in_memory_store(
     resolved_details_dir = resolve_details_dir(details_dir)
     database: Database | None = None
     try:
+        logger.info(
+            "Seeding an in-memory store from %s (details: %s) — slow; prefer `make build_store`",
+            source_dir,
+            resolved_details_dir,
+        )
         materials = _load_source_materials(source_dir, details_dir=resolved_details_dir)
         if not materials:
             return None

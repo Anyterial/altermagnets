@@ -37,11 +37,22 @@ def _arguments() -> argparse.Namespace:
         default=None,
         help=("directory containing generated plot assets (default: ALTERMAGNETS_DETAILS_DIR, then data/details)"),
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        help="report diagnostics on the httk channel (-v info, -vv debug)",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     arguments = _arguments()
+    if arguments.verbose:
+        from httk.core import report
+
+        report.configure_reporting(level="debug" if arguments.verbose > 1 else "info")
     target = build_store(
         arguments.target,
         data_dir=arguments.data_dir,

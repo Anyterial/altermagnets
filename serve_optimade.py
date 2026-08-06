@@ -49,6 +49,10 @@ ANYT_DEFS_BASE = "https://anyterial.se/optimade/defs/properties"
 
 SYMMETRY_CSVS = (material_store.MAGNDATA_COLLINEAR_FILENAME, material_store.MAGNDATA_NONCOLLINEAR_FILENAME)
 
+# In-memory fallback stores kept alive because harvested record-backed views read
+# from them lazily for the process lifetime; see build_dataset.
+_RETAINED_STORES: list[Any] = []
+
 
 # --- small parsing helpers -----------------------------------------------------
 
@@ -164,13 +168,18 @@ def build_dataset() -> tuple[
             material = searcher.variable(material_store.MaterialRecord)
             for result in searcher.results(material=material):
                 record = result["material"]
-                # The reconstructed view reads only from the fetched record, so it
-                # stays valid (with its stored precisions) after the store closes.
                 structure = material_store.material_structure(record)
                 if structure is not None:
                     stored_structures[record.id] = structure
         finally:
-            material_store.cleanup_material_store(owned_store)
+            # Record-backed views read lazily, so the store must outlive them. A
+            # file-backed engine reconnects after dispose, but disposing the
+            # in-memory fallback destroys the seeded database under the views —
+            # retain it for the process lifetime instead.
+            if opened.mode != "memory":
+                material_store.cleanup_material_store(owned_store)
+            else:
+                _RETAINED_STORES.append(opened)
         logger.info("%d structures from the %s material store", len(stored_structures), opened.mode)
         if not stored_structures:
             logger.warning(

@@ -86,7 +86,7 @@ logger = report.context_logger(logging.getLogger("httk.altermagnets.material_sto
 #: change is treated as stale (falling back to in-memory seeding) instead of being
 #: silently adopted with missing child tables reading as ``None``. Bump on every
 #: stored-record schema change.
-STORE_LAYOUT_VERSION = 2
+STORE_LAYOUT_VERSION = 3
 
 ELEMENT_PATTERN = re.compile(r"[A-Z][a-z]?")
 SCREENING_RESULTS_FILENAME = "high_throughput_screening_results_fixed.csv"

@@ -22,6 +22,49 @@ sys.path.insert(0, str(ROOT))
 
 import serve_optimade
 
+EXPECTED_DEFINITION_PROVENANCE = {
+    "_anyterial_avg_spin_splitting": (
+        "https://schemas.anyterial.se/defs/v0.1/properties/altermagnets/avg_spin_splitting",
+        "avg_spin_splitting",
+    ),
+    "_anyterial_max_spin_splitting": (
+        "https://schemas.anyterial.se/defs/v0.1/properties/altermagnets/max_spin_splitting",
+        "max_spin_splitting",
+    ),
+    "_anyterial_spin_splitting_fraction": (
+        "https://schemas.anyterial.se/defs/v0.1/properties/altermagnets/spin_splitting_fraction",
+        "spin_splitting_fraction",
+    ),
+    "_anyterial_magnetic_phase": (
+        "https://schemas.anyterial.se/defs/v0.1/properties/altermagnets/magnetic_phase",
+        "magnetic_phase",
+    ),
+    "_anyterial_wave_class": (
+        "https://schemas.anyterial.se/defs/v0.1/properties/altermagnets/wave_class",
+        "wave_class",
+    ),
+    "_anyterial_electronic_type": (
+        "https://schemas.anyterial.se/defs/v0.1/properties/altermagnets/electronic_type",
+        "electronic_type",
+    ),
+    "_anyterial_min_crustal_abundance": (
+        "https://schemas.anyterial.se/defs/v0.1/properties/altermagnets/min_crustal_abundance",
+        "min_crustal_abundance",
+    ),
+    "_httk_dft_band_gap": (
+        "https://schemas.httk.org/defs/v0.1/properties/electronic/dft_band_gap",
+        "dft_band_gap",
+    ),
+    "_httk_magnetic_space_group_bns": (
+        "https://schemas.httk.org/defs/v0.1/properties/magnetism/magnetic_space_group_bns",
+        "magnetic_space_group_bns",
+    ),
+    "_httk_magndata_ids": (
+        "https://schemas.httk.org/defs/v0.1/properties/magnetism/magndata_ids",
+        "magndata_ids",
+    ),
+}
+
 
 @pytest.fixture(scope="module")
 def providers() -> list:
@@ -39,6 +82,8 @@ def test_dataset_assembly_counts_and_exact_lattice() -> None:
     assert len(structures) == 180
     assert len(properties) == 180
     assert references  # DOIs were collected across the symmetry tables
+    for property_values in properties.values():
+        assert set(property_values) == set(EXPECTED_DEFINITION_PROVENANCE)
 
     smfeo3 = structures["anyt:am-1-0039"]
     assert smfeo3 is not None
@@ -48,6 +93,15 @@ def test_dataset_assembly_counts_and_exact_lattice() -> None:
     assert row0[1] == 0.0
     assert abs(row0[2]) < 1e-15  # the "~3e-16" residual is numerically zero
     assert properties["anyt:am-1-0039"]["_anyterial_magnetic_phase"] == "altermagnet"
+
+
+def test_live_definition_contract() -> None:
+    definitions = serve_optimade.load_schema_definitions()
+    assert set(definitions) == set(EXPECTED_DEFINITION_PROVENANCE)
+    for served_name, (expected_id, expected_name) in EXPECTED_DEFINITION_PROVENANCE.items():
+        document = definitions[served_name].as_optimade()
+        assert document["$id"] == expected_id
+        assert document["x-optimade-definition"]["name"] == expected_name
 
 
 def test_null_structure_material_serves_null_lattice(providers: list) -> None:
@@ -86,27 +140,27 @@ def test_moments_are_served_for_the_fixture_structure(providers: list) -> None:
     assert "_httk_magnetism" in records["anyt:am-1-0039"]["structure_features"]
 
 
-def test_info_structures_lists_anyterial_and_standard_definitions(client: TestClient) -> None:
+def test_info_structures_lists_custom_and_standard_definitions(client: TestClient) -> None:
     response = client.get("/info/structures")
     assert response.status_code == 200
     blob = json.dumps(response.json())
-    # Custom _anyterial_ definitions carry anyterial.se $ids; standard ones stay canonical.
-    assert "https://anyterial.se/optimade/defs/properties/_anyterial_max_spin_splitting" in blob
+    # Published custom definitions retain their authoritative $ids; standard ones stay canonical.
+    assert "https://schemas.anyterial.se/defs/v0.1/properties/altermagnets/max_spin_splitting" in blob
     assert "https://schemas.optimade.org/defs/v1.2/properties/optimade/structures/nelements" in blob
     properties = response.json()["data"]["properties"]
     expected_custom_properties = {
         "_anyterial_avg_spin_splitting",
-        "_anyterial_band_gap",
         "_anyterial_electronic_type",
-        "_anyterial_magndata_ids",
         "_anyterial_magnetic_phase",
-        "_anyterial_magnetic_space_group_bns",
         "_anyterial_max_spin_splitting",
         "_anyterial_min_crustal_abundance",
         "_anyterial_spin_splitting_fraction",
         "_anyterial_wave_class",
     }
     assert {name for name in properties if name.startswith("_anyterial_")} == expected_custom_properties
+    assert "_httk_dft_band_gap" in properties
+    assert "_httk_magnetic_space_group_bns" in properties
+    assert "_httk_magndata_ids" in properties
     assert "_anyterial_magnetic_phase" in properties
     assert "_anyterial_wave_class" in properties
     assert "_httk_site_moments" in properties

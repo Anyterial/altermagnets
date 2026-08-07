@@ -1,0 +1,12 @@
+[submodule "dependencies/submodules/optimade-schemas"]
+	path = dependencies/submodules/optimade-schemas
+	url = https://github.com/Materials-Consortia/schemas
+	branch = master
+[submodule "dependencies/submodules/httk-schemas"]
+	path = dependencies/submodules/httk-schemas
+	url = https://github.com/httk/schemas.git
+	branch = main
+[submodule "dependencies/submodules/anyterial-schemas"]
+	path = dependencies/submodules/anyterial-schemas
+	url = https://github.com/Anyterial/schemas.git
+	branch = main

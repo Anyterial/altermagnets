@@ -81,14 +81,14 @@ API by the thin `serve_optimade.py` entry point, built on the httk₂ modules
 (*httk-core*, *httk-io*, *httk-atomistic*, *httk-data*, *httk-serve*). It
 reads the three CSV tables under `data/tables/`, parses each material's
 `CONTCAR.bz2` into an exact crystal structure, and serves 180 `structures`
-(with auto-derived composition fields and ten custom `_anyterial_` properties) plus
+(with auto-derived composition fields and seven `_anyterial_` plus three `_httk_`
+custom properties) plus
 the deduplicated `references`, linked via OPTIMADE relationships.
 
-The custom property definitions live under `optimade/property_definitions/` as
-self-contained YAML authored with the optimade-property-yaml skill; run
-`python optimade/render_definitions.py` to (re)render the checked-in JSON under
-`optimade/property_definitions/json/`. The custom properties use the `_anyterial_`
-prefix with `$id`s under `https://anyterial.se/optimade/defs/properties/`.
+The custom property definitions are loaded verbatim from the live schema submodules:
+Anyterial-defined properties use the `_anyterial_*` prefix and HTTK-defined properties
+use `_httk_*`. Clone with `git clone --recurse-submodules`, or initialize/update the
+schemas with `make update_schemas`.
 
 ```bash
 # Install the optional OPTIMADE dependencies (in the workspace they resolve via PYTHONPATH):

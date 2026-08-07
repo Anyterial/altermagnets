@@ -72,6 +72,10 @@ def test_combined_app_mounts_the_real_pilot_and_preserves_versioned_pagination()
     assert versions.status_code == 200
     assert info.status_code == 200
     assert structures_info.status_code == 200
+    structures_properties = structures_info.json()["data"]["properties"]
+    assert "_httk_dft_band_gap" in structures_properties
+    assert "_httk_magnetic_space_group_bns" in structures_properties
+    assert "_httk_magndata_ids" in structures_properties
     assert table_script.status_code == 200
     assert table_script.headers["content-type"].startswith("text/javascript")
     assert first.status_code == 200

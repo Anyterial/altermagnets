@@ -1,7 +1,7 @@
 PYTHON ?= python3
-PY_SOURCES := src/functions tools/build_store.py serve_dynamic.py serve_combined.py serve_optimade.py publish_static.py optimade/render_definitions.py
+PY_SOURCES := src/functions tools/build_store.py serve_dynamic.py serve_combined.py serve_optimade.py publish_static.py
 
-.PHONY: docs docs-live docs-clean clean format format-check typecheck typecheck_pyright lint test test_fastfail audit build_store generate_details sync_detail_raw_paths serve_combined serve_optimade validate_optimade render_definitions
+.PHONY: docs docs-live docs-clean clean format format-check typecheck typecheck_pyright lint test test_fastfail audit build_store generate_details sync_detail_raw_paths serve_combined serve_optimade validate_optimade update_schemas
 
 serve:
 	python3 ./serve_dynamic.py
@@ -18,8 +18,14 @@ serve_optimade:
 validate_optimade:
 	python3 ./serve_optimade.py --validate
 
-render_definitions:
-	python3 ./optimade/render_definitions.py
+update_schemas:
+	git submodule update --init dependencies/submodules/optimade-schemas dependencies/submodules/httk-schemas dependencies/submodules/anyterial-schemas
+	git -C dependencies/submodules/optimade-schemas checkout master
+	git -C dependencies/submodules/optimade-schemas pull
+	git -C dependencies/submodules/httk-schemas checkout main
+	git -C dependencies/submodules/httk-schemas pull
+	git -C dependencies/submodules/anyterial-schemas checkout main
+	git -C dependencies/submodules/anyterial-schemas pull
 
 generate:
 	python3 ./publish_static.py

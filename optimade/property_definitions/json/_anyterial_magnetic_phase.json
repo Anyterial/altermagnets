@@ -1,14 +1,14 @@
 {
   "$schema": "https://schemas.optimade.org/meta/v1.2/optimade/property_definition.json",
-  "$id": "https://anyterial.se/optimade/defs/properties/_anyt_magnetic_phase",
+  "$id": "https://anyterial.se/optimade/defs/properties/_anyterial_magnetic_phase",
   "title": "Magnetic phase",
   "x-optimade-type": "string",
   "x-optimade-definition": {
     "kind": "property",
     "version": "1.2.0",
     "format": "1.2",
-    "name": "_anyt_magnetic_phase",
-    "label": "_anyt_magnetic_phase_structures"
+    "name": "_anyterial_magnetic_phase",
+    "label": "_anyterial_magnetic_phase_structures"
   },
   "x-optimade-unit": "inapplicable",
   "type": [

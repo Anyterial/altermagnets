@@ -64,8 +64,8 @@ def test_combined_app_mounts_the_real_pilot_and_preserves_versioned_pagination()
     assert [column["key"] for column in columns] == [
         "id",
         "chemical_formula_reduced",
-        "_anyt_magnetic_phase",
-        "_anyt_max_spin_splitting",
+        "_anyterial_magnetic_phase",
+        "_anyterial_max_spin_splitting",
     ]
     assert "next" not in configuration and "previous" not in configuration
     assert search.status_code == 200

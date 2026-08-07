@@ -1,14 +1,14 @@
 {
   "$schema": "https://schemas.optimade.org/meta/v1.2/optimade/property_definition.json",
-  "$id": "https://anyterial.se/optimade/defs/properties/_anyt_avg_spin_splitting",
+  "$id": "https://anyterial.se/optimade/defs/properties/_anyterial_avg_spin_splitting",
   "title": "Average spin splitting",
   "x-optimade-type": "float",
   "x-optimade-definition": {
     "kind": "property",
     "version": "1.2.0",
     "format": "1.2",
-    "name": "_anyt_avg_spin_splitting",
-    "label": "_anyt_avg_spin_splitting_structures"
+    "name": "_anyterial_avg_spin_splitting",
+    "label": "_anyterial_avg_spin_splitting_structures"
   },
   "x-optimade-unit": "eV",
   "x-optimade-unit-definitions": [

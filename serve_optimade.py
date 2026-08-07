@@ -10,7 +10,7 @@ reusable machinery lives in the httk modules:
   material store built by ``material_store`` from the per-material
   ``CONTCAR.bz2`` + ``MAGN.bz2`` files;
 * the ``structures`` provider (with auto-derived composition fields, custom
-  ``_anyt_`` properties, and null structure-less entries) and the ``references``
+  ``_anyterial_`` properties, and null structure-less entries) and the ``references``
   provider come from *httk-atomistic* / *httk-data*;
 * the custom property definitions are authored under
   ``optimade/property_definitions/`` and rendered to JSON there.
@@ -45,7 +45,7 @@ logger = report.context_logger(logging.getLogger("httk.altermagnets.serve_optima
 DEFS_JSON = ROOT / "optimade" / "property_definitions" / "json"
 
 #: The base URL under which the altermagnets custom property ``$id``s are minted.
-ANYT_DEFS_BASE = "https://anyterial.se/optimade/defs/properties"
+ANYTERIAL_DEFS_BASE = "https://anyterial.se/optimade/defs/properties"
 
 SYMMETRY_CSVS = (material_store.MAGNDATA_COLLINEAR_FILENAME, material_store.MAGNDATA_NONCOLLINEAR_FILENAME)
 
@@ -137,7 +137,7 @@ class AltermagnetStructureProvider(StructureEntryProvider):
 
 
 def load_property_definitions() -> dict[str, PropertyDefinition]:
-    """Load the rendered ``_anyt_`` property definitions keyed by property name."""
+    """Load the rendered ``_anyterial_`` property definitions keyed by property name."""
     definitions: dict[str, PropertyDefinition] = {}
     for path in sorted(DEFS_JSON.glob("*.json")):
         document = json.loads(path.read_text(encoding="utf-8"))
@@ -221,16 +221,16 @@ def build_dataset() -> tuple[
         band_gap = _to_float(row.get("Bandgap"))
         fraction = _to_float(row.get("FdeltaPct"))
         properties[material_id] = {
-            "_anyt_max_spin_splitting": _to_float(row.get("MaxSS")),
-            "_anyt_avg_spin_splitting": _to_float(row.get("AvgSS")),
-            "_anyt_spin_splitting_fraction": None if fraction is None else fraction / 100.0,
-            "_anyt_band_gap": band_gap,
-            "_anyt_electronic_type": _electronic_type(band_gap),
-            "_anyt_min_crustal_abundance": _to_float(row.get("MinAbundPpm")),
-            "_anyt_magnetic_phase": _first_nonempty(entry.get("MagneticPhase") for entry in linked),
-            "_anyt_wave_class": _first_nonempty(entry.get("WaveClassSimple") for entry in linked),
-            "_anyt_magnetic_space_group_bns": _first_nonempty(strip_latex_bns(entry.get("BNS")) for entry in linked),
-            "_anyt_magndata_ids": magndata_ids or None,
+            "_anyterial_max_spin_splitting": _to_float(row.get("MaxSS")),
+            "_anyterial_avg_spin_splitting": _to_float(row.get("AvgSS")),
+            "_anyterial_spin_splitting_fraction": None if fraction is None else fraction / 100.0,
+            "_anyterial_band_gap": band_gap,
+            "_anyterial_electronic_type": _electronic_type(band_gap),
+            "_anyterial_min_crustal_abundance": _to_float(row.get("MinAbundPpm")),
+            "_anyterial_magnetic_phase": _first_nonempty(entry.get("MagneticPhase") for entry in linked),
+            "_anyterial_wave_class": _first_nonempty(entry.get("WaveClassSimple") for entry in linked),
+            "_anyterial_magnetic_space_group_bns": _first_nonempty(strip_latex_bns(entry.get("BNS")) for entry in linked),
+            "_anyterial_magndata_ids": magndata_ids or None,
         }
         structures[material_id] = stored_structures.get(material_id)
 
@@ -246,8 +246,8 @@ def build_dataset() -> tuple[
 
 
 def build_providers() -> list[Any]:
-    """Register the ``_anyt_`` prefix and build the structures + references providers."""
-    register_definition_prefix("_anyt_", ANYT_DEFS_BASE)
+    """Register the ``_anyterial_`` prefix and build the structures + references providers."""
+    register_definition_prefix("_anyterial_", ANYTERIAL_DEFS_BASE)
     structures, properties, relationships, references = build_dataset()
     structure_provider = AltermagnetStructureProvider(
         structures,

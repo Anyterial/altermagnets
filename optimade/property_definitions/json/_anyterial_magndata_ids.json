@@ -1,14 +1,14 @@
 {
   "$schema": "https://schemas.optimade.org/meta/v1.2/optimade/property_definition.json",
-  "$id": "https://anyterial.se/optimade/defs/properties/_anyt_magndata_ids",
+  "$id": "https://anyterial.se/optimade/defs/properties/_anyterial_magndata_ids",
   "title": "MAGNDATA identifiers",
   "x-optimade-type": "list",
   "x-optimade-definition": {
     "kind": "property",
     "version": "1.2.0",
     "format": "1.2",
-    "name": "_anyt_magndata_ids",
-    "label": "_anyt_magndata_ids_structures"
+    "name": "_anyterial_magndata_ids",
+    "label": "_anyterial_magndata_ids_structures"
   },
   "x-optimade-unit": "inapplicable",
   "type": [

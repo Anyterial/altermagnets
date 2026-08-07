@@ -1,14 +1,14 @@
 {
   "$schema": "https://schemas.optimade.org/meta/v1.2/optimade/property_definition.json",
-  "$id": "https://anyterial.se/optimade/defs/properties/_anyt_wave_class",
+  "$id": "https://anyterial.se/optimade/defs/properties/_anyterial_wave_class",
   "title": "Wave class",
   "x-optimade-type": "string",
   "x-optimade-definition": {
     "kind": "property",
     "version": "1.2.0",
     "format": "1.2",
-    "name": "_anyt_wave_class",
-    "label": "_anyt_wave_class_structures"
+    "name": "_anyterial_wave_class",
+    "label": "_anyterial_wave_class_structures"
   },
   "x-optimade-unit": "inapplicable",
   "type": [

@@ -1,13 +1,13 @@
 $$schema: https://schemas.optimade.org/meta/v1.2/optimade/property_definition.json
-$id: https://anyterial.se/optimade/defs/properties/_anyt_magnetic_space_group_bns
+$id: https://anyterial.se/optimade/defs/properties/_anyterial_magnetic_space_group_bns
 title: Magnetic space group (BNS)
 x-optimade-type: string
 x-optimade-definition:
   kind: property
   version: 1.2.0
   format: '1.2'
-  name: _anyt_magnetic_space_group_bns
-  label: _anyt_magnetic_space_group_bns_structures
+  name: _anyterial_magnetic_space_group_bns
+  label: _anyterial_magnetic_space_group_bns_structures
 x-optimade-unit: inapplicable
 type:
 - string

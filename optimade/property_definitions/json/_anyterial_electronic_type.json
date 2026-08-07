@@ -1,14 +1,14 @@
 {
   "$schema": "https://schemas.optimade.org/meta/v1.2/optimade/property_definition.json",
-  "$id": "https://anyterial.se/optimade/defs/properties/_anyt_electronic_type",
+  "$id": "https://anyterial.se/optimade/defs/properties/_anyterial_electronic_type",
   "title": "Electronic type",
   "x-optimade-type": "string",
   "x-optimade-definition": {
     "kind": "property",
     "version": "1.2.0",
     "format": "1.2",
-    "name": "_anyt_electronic_type",
-    "label": "_anyt_electronic_type_structures"
+    "name": "_anyterial_electronic_type",
+    "label": "_anyterial_electronic_type_structures"
   },
   "x-optimade-unit": "inapplicable",
   "type": [

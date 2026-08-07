@@ -47,7 +47,7 @@ def test_dataset_assembly_counts_and_exact_lattice() -> None:
     assert row0[0] == 5.3982999999999999
     assert row0[1] == 0.0
     assert abs(row0[2]) < 1e-15  # the "~3e-16" residual is numerically zero
-    assert properties["anyt:am-1-0039"]["_anyt_magnetic_phase"] == "altermagnet"
+    assert properties["anyt:am-1-0039"]["_anyterial_magnetic_phase"] == "altermagnet"
 
 
 def test_null_structure_material_serves_null_lattice(providers: list) -> None:
@@ -86,28 +86,41 @@ def test_moments_are_served_for_the_fixture_structure(providers: list) -> None:
     assert "_httk_magnetism" in records["anyt:am-1-0039"]["structure_features"]
 
 
-def test_info_structures_lists_anyt_and_standard_definitions(client: TestClient) -> None:
+def test_info_structures_lists_anyterial_and_standard_definitions(client: TestClient) -> None:
     response = client.get("/info/structures")
     assert response.status_code == 200
     blob = json.dumps(response.json())
-    # Custom _anyt_ definitions carry anyterial.se $ids; standard ones stay canonical.
-    assert "https://anyterial.se/optimade/defs/properties/_anyt_max_spin_splitting" in blob
+    # Custom _anyterial_ definitions carry anyterial.se $ids; standard ones stay canonical.
+    assert "https://anyterial.se/optimade/defs/properties/_anyterial_max_spin_splitting" in blob
     assert "https://schemas.optimade.org/defs/v1.2/properties/optimade/structures/nelements" in blob
     properties = response.json()["data"]["properties"]
-    assert "_anyt_magnetic_phase" in properties
-    assert "_anyt_wave_class" in properties
+    expected_custom_properties = {
+        "_anyterial_avg_spin_splitting",
+        "_anyterial_band_gap",
+        "_anyterial_electronic_type",
+        "_anyterial_magndata_ids",
+        "_anyterial_magnetic_phase",
+        "_anyterial_magnetic_space_group_bns",
+        "_anyterial_max_spin_splitting",
+        "_anyterial_min_crustal_abundance",
+        "_anyterial_spin_splitting_fraction",
+        "_anyterial_wave_class",
+    }
+    assert {name for name in properties if name.startswith("_anyterial_")} == expected_custom_properties
+    assert "_anyterial_magnetic_phase" in properties
+    assert "_anyterial_wave_class" in properties
     assert "_httk_site_moments" in properties
 
 
 def test_filter_on_magnetic_phase_returns_rows(client: TestClient) -> None:
     response = client.get(
         "/structures",
-        params={"filter": '_anyt_magnetic_phase = "altermagnet"', "response_fields": "_anyt_magnetic_phase"},
+        params={"filter": '_anyterial_magnetic_phase = "altermagnet"', "response_fields": "_anyterial_magnetic_phase"},
     )
     assert response.status_code == 200
     data = response.json()["data"]
     assert len(data) > 0
-    assert all(item["attributes"]["_anyt_magnetic_phase"] == "altermagnet" for item in data)
+    assert all(item["attributes"]["_anyterial_magnetic_phase"] == "altermagnet" for item in data)
 
 
 def test_references_endpoint_and_include(client: TestClient) -> None:

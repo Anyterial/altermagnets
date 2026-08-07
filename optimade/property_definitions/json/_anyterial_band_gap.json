@@ -1,14 +1,14 @@
 {
   "$schema": "https://schemas.optimade.org/meta/v1.2/optimade/property_definition.json",
-  "$id": "https://anyterial.se/optimade/defs/properties/_anyt_band_gap",
+  "$id": "https://anyterial.se/optimade/defs/properties/_anyterial_band_gap",
   "title": "Band gap",
   "x-optimade-type": "float",
   "x-optimade-definition": {
     "kind": "property",
     "version": "1.2.0",
     "format": "1.2",
-    "name": "_anyt_band_gap",
-    "label": "_anyt_band_gap_structures"
+    "name": "_anyterial_band_gap",
+    "label": "_anyterial_band_gap_structures"
   },
   "x-optimade-unit": "eV",
   "x-optimade-unit-definitions": [

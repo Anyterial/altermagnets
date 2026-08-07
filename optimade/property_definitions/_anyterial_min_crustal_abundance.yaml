@@ -1,13 +1,13 @@
 $$schema: https://schemas.optimade.org/meta/v1.2/optimade/property_definition.json
-$id: https://anyterial.se/optimade/defs/properties/_anyt_min_crustal_abundance
+$id: https://anyterial.se/optimade/defs/properties/_anyterial_min_crustal_abundance
 title: Minimum crustal abundance
 x-optimade-type: float
 x-optimade-definition:
   kind: property
   version: 1.2.0
   format: '1.2'
-  name: _anyt_min_crustal_abundance
-  label: _anyt_min_crustal_abundance_structures
+  name: _anyterial_min_crustal_abundance
+  label: _anyterial_min_crustal_abundance_structures
 x-optimade-unit: ppm
 x-optimade-unit-definitions:
 - symbol: ppm

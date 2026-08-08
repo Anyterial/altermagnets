@@ -15,6 +15,7 @@ import math
 import os
 import re
 import tempfile
+import time
 from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -898,16 +899,24 @@ def build_store(
     *,
     data_dir: str | os.PathLike[str] | None = None,
     details_dir: str | os.PathLike[str] | None = None,
+    timings: MutableMapping[str, float] | None = None,
 ) -> Path:
     """Build a fresh store next to ``target`` and atomically replace it.
 
     The caller never sees a partially written target: the DuckDB connection is
     disposed before :func:`os.replace` commits the completed temporary file.
+
+    When ``timings`` is supplied it is populated with the wall-clock seconds of
+    the ``load`` (source parsing), ``write`` (the bulk-ingest context) and
+    ``finalize`` (dispose plus atomic replace) phases, and the ``total``.
     """
+    total_started = time.perf_counter()
     resolved_target = resolve_store_path(target)
     source_dir = resolve_data_dir(data_dir)
     resolved_details_dir = resolve_details_dir(details_dir)
+    load_started = time.perf_counter()
     materials = _load_source_materials(source_dir, details_dir=resolved_details_dir)
+    load_elapsed = time.perf_counter() - load_started
 
     resolved_target.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
@@ -925,19 +934,29 @@ def build_store(
         # This is a private, custom-record store rather than an OPTIMADE entry
         # store.  Declare that fact when creating its versioned layout.
         store = SqlStore(created_database, entry_records={})
-        store.ensure_tables(MaterialRecord)
-        with store.transaction():
-            store.save(StoreLayout(STORE_LAYOUT_VERSION))
+        # Bulk ingestion creates the tables index-less and builds the indexes
+        # once the stream completes, so no separate ensure_tables/transaction.
+        write_started = time.perf_counter()
+        with store.bulk_ingest() as bulk:
+            bulk.save(StoreLayout(STORE_LAYOUT_VERSION))
             for material in materials:
-                store.save(material)
+                bulk.save(material)
+        write_elapsed = time.perf_counter() - write_started
+        finalize_started = time.perf_counter()
         created_database.dispose()
         database = None
         os.replace(temporary_path, resolved_target)
+        finalize_elapsed = time.perf_counter() - finalize_started
     except BaseException:
         if database is not None:
             database.dispose()
         temporary_path.unlink(missing_ok=True)
         raise
+    if timings is not None:
+        timings["load"] = load_elapsed
+        timings["write"] = write_elapsed
+        timings["finalize"] = finalize_elapsed
+        timings["total"] = time.perf_counter() - total_started
     return resolved_target
 
 
@@ -1032,10 +1051,10 @@ def open_in_memory_store(
         database = opened_database
         # The in-memory fallback is another fresh private/custom store.
         store = SqlStore(opened_database, entry_records={})
-        store.ensure_tables(MaterialRecord)
-        with store.transaction():
+        # Bulk ingestion creates the tables and their indexes itself.
+        with store.bulk_ingest() as bulk:
             for material in materials:
-                store.save(material)
+                bulk.save(material)
         return OpenedMaterialStore(
             opened_database,
             store,

@@ -53,14 +53,18 @@ def main() -> int:
         from httk.core import report
 
         report.configure_reporting(level="debug" if arguments.verbose > 1 else "info")
+    timings: dict[str, float] = {}
     target = build_store(
         arguments.target,
         data_dir=arguments.data_dir,
         details_dir=arguments.details_dir,
+        timings=timings,
     )
     print(
         f"Built {target} from {resolve_data_dir(arguments.data_dir)} "
-        f"with plots from {resolve_details_dir(arguments.details_dir)}"
+        f"with plots from {resolve_details_dir(arguments.details_dir)} "
+        f"in {timings['total']:.1f}s "
+        f"(load {timings['load']:.1f}s, write {timings['write']:.1f}s, finalize {timings['finalize']:.1f}s)"
     )
     return 0
 

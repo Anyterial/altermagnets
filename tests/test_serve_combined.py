@@ -35,11 +35,10 @@ def _widget_configuration(document: str) -> dict[str, object]:
     return json.loads(match.group(1))
 
 
-def test_combined_app_mounts_the_real_pilot_and_preserves_versioned_pagination() -> None:
+def test_combined_app_mounts_the_search_widget_and_preserves_versioned_pagination() -> None:
     app = serve_combined.create_combined_app()
 
     with TestClient(app, base_url="http://testserver") as client:
-        pilot = client.get("/optimade-search", params={"filter": 'elements HAS "Fe"'})
         search = client.get("/search")
         versions = client.get("/optimade/versions")
         info = client.get("/optimade/v1/info")
@@ -48,27 +47,31 @@ def test_combined_app_mounts_the_real_pilot_and_preserves_versioned_pagination()
         first = client.get("/optimade/v1/structures", params={"page_limit": "2"})
         second = client.get(first.json()["links"]["next"])
 
-    assert pilot.status_code == 200
-    assert ">OPTIMADE</a>" in pilot.text
-    assert 'data-httk-serve-optimade-table="1"' in pilot.text
-    assert "/_httk/serve/assets/serve-optimade-table.mjs" in pilot.text
-    configuration = _widget_configuration(pilot.text)
+    assert search.status_code == 200
+    assert 'data-httk-serve-optimade-table="1"' in search.text
+    assert "/_httk/serve/assets/serve-optimade-table.mjs" in search.text
+    configuration = _widget_configuration(search.text)
     assert configuration["base_url"] == "/optimade"
     assert configuration["entry_type"] == "structures"
     assert configuration["filter_query"] == "filter"
+    assert configuration["sort_query"] == "sort"
     assert configuration["detail_route"] == "material"
-    assert configuration["detail_column"] == "chemical_formula_reduced"
+    assert configuration["detail_column"] == "_anyterial_formula"
     assert configuration["detail_query"] == "id"
     assert configuration["page_size"] == 50
     columns = cast(list[dict[str, object]], configuration["columns"])
     assert [column["key"] for column in columns] == [
-        "id",
-        "chemical_formula_reduced",
-        "_anyterial_magnetic_phase",
+        "_anyterial_formula",
+        "_httk_magndata_ids",
+        "_anyterial_classification",
+        "_anyterial_space_group",
         "_anyterial_max_spin_splitting",
+        "_anyterial_avg_spin_splitting",
+        "_anyterial_spin_splitting_fraction",
+        "_httk_dft_band_gap",
+        "_anyterial_min_crustal_abundance",
     ]
     assert "next" not in configuration and "previous" not in configuration
-    assert search.status_code == 200
     assert versions.status_code == 200
     assert info.status_code == 200
     assert structures_info.status_code == 200
@@ -106,8 +109,8 @@ def test_combined_figure_route_and_public_base() -> None:
     assert served.headers["content-type"] == "image/svg+xml"
 
 
-def test_standalone_dynamic_site_does_not_advertise_the_combined_pilot() -> None:
-    app = serve_combined.create_web_asgi_app(ROOT / "src", config_name="config_dynamic")
+def test_standalone_static_site_does_not_advertise_the_combined_pilot() -> None:
+    app = serve_combined.create_web_asgi_app(ROOT / "src", config_name="config")
 
     with TestClient(app, base_url="http://testserver") as client:
         home = client.get("/")

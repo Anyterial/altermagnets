@@ -17,7 +17,7 @@ DETAIL_ASSET_PATHS = [
 
 
 def _request(path: str, *, params: dict[str, str] | None = None) -> httpx.Response:
-    app = create_asgi_app(ROOT / "src", config_name="config_dynamic")
+    app = create_asgi_app(ROOT / "src", config_name="config")
 
     async def _call() -> httpx.Response:
         transport = httpx.ASGITransport(app=app)
@@ -27,37 +27,44 @@ def _request(path: str, *, params: dict[str, str] | None = None) -> httpx.Respon
     return asyncio.run(_call())
 
 
-def test_home_page_renders_without_cookies(material_store_path, monkeypatch) -> None:
-    monkeypatch.setenv("ALTERMAGNETS_STORE_PATH", str(material_store_path))
+def test_home_page_renders_static_placeholders_and_without_cookies() -> None:
     response = _request("/")
 
     assert response.status_code == 200
     assert "Altermagnets Database" in response.text
+    assert 'data-site-stat="total">—' in response.text
+    assert "site-stats.mjs" in response.text
+    assert 'href="./material?id=anyt:am-1-0001"' in response.text
     assert response.headers.get("set-cookie") is None
 
 
-def test_search_page_uses_prebuilt_store(material_store_path, monkeypatch) -> None:
-    monkeypatch.setenv("ALTERMAGNETS_STORE_PATH", str(material_store_path))
-    response = _request("/search", params={"q": "CrSb"})
-    trailing_zero_response = _request("/search", params={"q": "0.800"})
+def test_highlights_page_renders_curated_static_cards() -> None:
+    response = _request("/highlights")
 
     assert response.status_code == 200
-    assert "CrSb" in response.text
-    assert trailing_zero_response.status_code == 200
-    assert "0.800" in trailing_zero_response.text
+    assert 'href="./material?id=anyt:am-1-0005"' in response.text
+    assert 'href="./material?id=anyt:am-1-0101"' in response.text
+    assert "current snapshot leader" in response.text
 
 
-def test_material_detail_page_uses_prebuilt_store(material_store_path, monkeypatch) -> None:
-    monkeypatch.setenv("ALTERMAGNETS_STORE_PATH", str(material_store_path))
+def test_search_page_renders_the_browser_widget() -> None:
+    response = _request("/search")
+
+    assert response.status_code == 200
+    assert 'data-httk-serve-optimade-table="1"' in response.text
+    assert "search-form.js" in response.text
+
+
+def test_material_detail_page_renders_the_static_widget_shell() -> None:
     response = _request("/material", params={"id": PRIMARY_MATERIAL_ID})
 
     assert response.status_code == 200
-    assert "MAGNDATA" in response.text
-    assert "index=0.528" in response.text
+    assert 'data-site-material-detail="1"' in response.text
+    assert "site-material-detail.mjs" in response.text
+    assert "serve-optimade-table-protocol.mjs" in response.text
 
 
-def test_search_handles_unexpected_query_payloads_without_crashing(material_store_path, monkeypatch) -> None:
-    monkeypatch.setenv("ALTERMAGNETS_STORE_PATH", str(material_store_path))
+def test_search_handles_unexpected_query_payloads_without_crashing() -> None:
     weird_query = "''; DROP TABLE materials; -- \x00 \xff \\u202e"
     params = {
         "q": weird_query,
@@ -74,11 +81,10 @@ def test_search_handles_unexpected_query_payloads_without_crashing(material_stor
 
     assert response.status_code == 200
     assert response.headers.get("set-cookie") is None
-    assert "Results" in response.text or "Search" in response.text
+    assert "data-httk-serve-optimade-table" in response.text
 
 
-def test_search_handles_numeric_edge_case_inputs_without_crashing(material_store_path, monkeypatch) -> None:
-    monkeypatch.setenv("ALTERMAGNETS_STORE_PATH", str(material_store_path))
+def test_search_handles_numeric_edge_case_inputs_without_crashing() -> None:
     params = {
         "min_max_ss": "nan",
         "min_avg_ss": "inf",
@@ -91,12 +97,11 @@ def test_search_handles_numeric_edge_case_inputs_without_crashing(material_store
     response = _request("/search", params=params)
 
     assert response.status_code == 200
-    assert "Search" in response.text
+    assert "data-httk-serve-optimade-table" in response.text
 
 
-def test_material_detail_handles_path_traversal_like_identifier_safely(material_store_path, monkeypatch) -> None:
-    monkeypatch.setenv("ALTERMAGNETS_STORE_PATH", str(material_store_path))
+def test_material_detail_handles_path_traversal_like_identifier_safely() -> None:
     response = _request("/material", params={"id": "../../etc/passwd"})
 
     assert response.status_code == 200
-    assert "Material id not found." in response.text
+    assert 'data-site-material-detail="1"' in response.text

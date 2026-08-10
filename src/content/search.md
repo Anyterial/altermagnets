@@ -2,6 +2,6 @@
 title: Search
 template: search_page
 base_template: base_default
-hosting: dynamic
+hosting: static
 ---
-{{ widget("table", id="materials-results", provider="materials", row_template="material_search_row", page_size=50, caption="Screened altermagnet search results") }}
+{{ widget("site.search_table", id="materials-results") }}

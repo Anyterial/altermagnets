@@ -1,8 +1,9 @@
 Anyterial altermagnets (httk-serve app)
 ------------------------------------
 
-This repository is a dynamic httk-serve app prototype for browsing and searching
-mock altermagnetic material records.
+This repository is a static httk-serve site for browsing and searching
+altermagnetic material records. Browser-side search and material details fetch
+all changing data from the OPTIMADE service.
 
 Current functionality
 ---------------------
@@ -33,8 +34,8 @@ application, obtain the deployment's source tables and put them under
 - `altermagnets_collinear.csv`
 - `altermagnets_noncollinear.csv`
 
-For the current 180-material dataset, `make serve` is enough: startup discovers
-the tables and seeds memory. To exercise the scalable persistent path, build
+For the current 180-material dataset, `make serve` starts the combined local
+site and OPTIMADE service. To exercise the scalable persistent path, build
 the DuckDB store first:
 
 ```bash
@@ -42,10 +43,11 @@ make build_store
 make serve
 ```
 
-`make build_store` atomically writes `data/altermagnets.duckdb`; runtime always
-prefers a current, matching-layout store and never modifies it. Older or
-unversioned stores are treated as unavailable and fall back to the source
-tables; rebuild them with `make build_store`. Set `ALTERMAGNETS_STORE_PATH` to
+`make build_store` atomically writes `data/altermagnets.duckdb`; the OPTIMADE
+service always prefers a current, matching-layout store and never modifies it.
+Older or unversioned stores are treated as unavailable and fall back to the
+source tables; rebuild them with `make build_store` after a store layout-version
+change. Set `ALTERMAGNETS_STORE_PATH` to
 use a different runtime store path; the same variable (or
 `python tools/build_store.py --target PATH`) selects the builder target.
 `ALTERMAGNETS_DATA_DIR` (or `--data-dir`) selects a different source-table
@@ -70,8 +72,24 @@ Try queries such as:
 - `Fe As`
 - `P4/nmm`
 
-Static publish mode is available for layout preview (`make generate`), but core
-search/detail behavior relies on dynamic httk-serve functions in `src/functions/`.
+Static publishing emits the complete site, including browser-side OPTIMADE
+search, material details, home-page counts, and curated highlights:
+
+```bash
+ALTERMAGNETS_OPTIMADE_BASE_URL=https://api.example.org/optimade make generate
+# equivalent:
+python publish_static.py --optimade-base-url https://api.example.org/optimade
+```
+
+Host `public/` on any static web server. Run the API separately with an exact
+site origin allowed for CORS; the API host also serves figure bytes:
+
+```bash
+python serve_optimade.py --cors-origin https://www.example.org \
+  --public-base-url https://api.example.org/optimade
+```
+
+Use HTTPS for both origins so browser figure requests do not downgrade to HTTP.
 
 OPTIMADE service
 ----------------
@@ -101,18 +119,18 @@ make validate_optimade        # (python serve_optimade.py --validate)
 make serve_optimade           # (python serve_optimade.py --port 8081)
 ```
 
-Combined dynamic site and OPTIMADE pilot
-----------------------------------------
+Local combined development
+---------------------------
 
-The existing dynamic website and standalone OPTIMADE server remain independent.
-For local exploration, the opt-in combined server mounts the API at
-`/optimade` beside the dynamic website:
+For local exploration, `make serve` runs the static site and mounts the API at
+`/optimade` on the same origin:
 
 ```bash
-make serve                    # dynamic website: http://127.0.0.1:8080/
+make serve                    # site + API: http://127.0.0.1:8080/
 make serve_optimade           # OPTIMADE only: http://127.0.0.1:8081/v1/
-make serve_combined           # both: http://127.0.0.1:8080/ and /optimade/v1/
+make serve_combined           # same combined server explicitly
 ```
 
-The combined server also provides `/optimade-search`, a browser table that
-uses the mounted API and accepts an OPTIMADE `filter` query parameter.
+The static output defaults to `/optimade` as its browser API base. Set
+`ALTERMAGNETS_OPTIMADE_BASE_URL` or use `--optimade-base-url` when the API is
+hosted elsewhere.

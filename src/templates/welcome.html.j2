@@ -4,22 +4,21 @@
     {{ content }}
   </header>
 
-  {% if site_stats.dataset_available %}
   <section class="hero-metrics">
     <a class="metric-card metric-link" href="{{ page.relbaseurl }}/search">
-      <span class="metric-value">{{ site_stats.total_materials }}</span>
+      <span class="metric-value" data-site-stat="total">—</span>
       <span class="metric-label">screened entries</span>
     </a>
     <a class="metric-card metric-link" href="{{ page.relbaseurl }}/search?classification=collinear">
-      <span class="metric-value">{{ site_stats.classification_counts.collinear }}</span>
+      <span class="metric-value" data-site-stat="collinear">—</span>
       <span class="metric-label">naturally collinear</span>
     </a>
     <a class="metric-card metric-link" href="{{ page.relbaseurl }}/search?classification=noncollinear-derived">
-      <span class="metric-value">{{ site_stats.classification_counts["noncollinear-derived"] }}</span>
+      <span class="metric-value" data-site-stat="noncollinear-derived">—</span>
       <span class="metric-label">noncollinear-derived</span>
     </a>
     <a class="metric-card metric-link" href="{{ page.relbaseurl }}/search?electronic_type=semiconducting">
-      <span class="metric-value">{{ site_stats.electronic_counts.semiconducting }}</span>
+      <span class="metric-value" data-site-stat="semiconducting">—</span>
       <span class="metric-label">semiconducting</span>
     </a>
   </section>
@@ -29,11 +28,12 @@
       <h3>Picked interesting altermagnets</h3>
     </div>
     <div class="highlight-grid">
-      {% for item in featured_materials.picked_interesting %}
+      {% for item in pages("highlights", "featured_materials").picked_interesting %}
       <a class="highlight-card highlight-link" href="{{ page.relbaseurl }}/material?id={{ item.material_id }}">
         <h3>{{ item.material_label if item.material_label else item.material }}</h3>
         <p>{{ item.space_group }} | {{ item.classification_label }}</p>
         <p><strong>$\Delta E^{\mathrm{max}}_{\mathrm{split}}$:</strong> {{ item.max_ss_display }} eV</p>
+        <p>{{ item.blurb }}</p>
       </a>
       {% endfor %}
     </div>
@@ -44,7 +44,7 @@
       <h3>Altermagnets with maximum spin splitting</h3>
     </div>
     <div class="highlight-grid">
-      {% for item in featured_materials.largest_splitting %}
+      {% for item in pages("highlights", "featured_materials").largest_splitting %}
       <a class="highlight-card highlight-link" href="{{ page.relbaseurl }}/material?id={{ item.material_id }}">
         <h3>{{ item.material_label if item.material_label else item.material }}</h3>
         <p>{{ item.space_group }} | {{ item.classification_label }}</p>
@@ -53,9 +53,4 @@
       {% endfor %}
     </div>
   </section>
-  {% else %}
-  <div class="notice-block">
-    <p>{{ site_stats.notice }}</p>
-  </div>
-  {% endif %}
 </article>

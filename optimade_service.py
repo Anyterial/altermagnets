@@ -124,7 +124,7 @@ def _read_file(file: _StoredFile, details_root: Path) -> bytes | None:
 
 
 def _dark_svg(svg: bytes) -> bytes | None:
-    """Apply the existing dark SVG transformation without importing get_material."""
+    """Apply the existing dark SVG transformation without importing the legacy detail renderer."""
     from re import compile, sub
 
     text = svg.decode("utf-8", errors="replace")

@@ -1,4 +1,12 @@
+import init
 from material_store import summarize_symmetry_rows
+
+
+def test_init_only_registers_static_search_options() -> None:
+    data = {}
+    init.execute(data)
+    assert data["search_options"]["classifications"][1] == {"value": "collinear", "label": "Collinear"}
+    assert set(data) == {"search_options"}
 
 
 def test_summarize_symmetry_rows_splits_entries_by_symprec() -> None:

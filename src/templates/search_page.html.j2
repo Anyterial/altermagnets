@@ -2,14 +2,9 @@
   <header class="hero-block compact">
     <h2>{{ title }}</h2>
     <p class="search-note">
-      Search is executed server-side against the screened materials table and the linked MAGNDATA symmetry summaries.
+      Search is executed in the browser against the screened materials OPTIMADE service.
     </p>
   </header>
-  {% if site_stats.dataset_available %}
   {{ content }}
-  {% else %}
-  <div class="notice-block">
-    <p>{{ site_stats.notice }}</p>
-  </div>
-  {% endif %}
+  <script src="{{ page.relbaseurl }}/search-form.js" defer></script>
 </article>

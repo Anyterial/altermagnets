@@ -4,7 +4,6 @@
     {{ content }}
   </header>
 
-  {% if site_stats.dataset_available %}
   {% if featured_materials.picked_interesting %}
   <section class="section-block">
     <div class="section-heading">
@@ -16,6 +15,7 @@
         <h3>{{ item.material_label if item.material_label else item.material }}</h3>
         <p>{{ item.space_group }} | {{ item.classification_label }}</p>
         <p><strong>$\Delta E^{\mathrm{max}}_{\mathrm{split}}$:</strong> {{ item.max_ss_display }} eV</p>
+        <p>{{ item.blurb }}</p>
       </a>
       {% endfor %}
     </div>
@@ -33,6 +33,7 @@
         <h3>{{ item.material_label if item.material_label else item.material }}</h3>
         <p>{{ item.space_group }} | {{ item.classification_label }}</p>
         <p><strong>$\Delta E^{\mathrm{max}}_{\mathrm{split}}$:</strong> {{ item.max_ss_display }} eV</p>
+        <p>{{ item.blurb }}</p>
       </a>
       {% endfor %}
     </div>
@@ -49,6 +50,7 @@
         <h3>{{ item.material_label if item.material_label else item.material }}</h3>
         <p>{{ item.space_group }} | {{ item.classification_label }}</p>
         <p><strong>KS Gap:</strong> {{ item.bandgap_display }} eV</p>
+        <p>{{ item.blurb }}</p>
       </a>
       {% endfor %}
     </div>
@@ -65,13 +67,9 @@
         <h3>{{ item.material_label if item.material_label else item.material }}</h3>
         <p>{{ item.space_group }} | {{ item.classification_label }}</p>
         <p><strong>Min abundance:</strong> {{ item.abundance_display }}</p>
+        <p>{{ item.blurb }}</p>
       </a>
       {% endfor %}
     </div>
   </section>
-  {% else %}
-  <div class="notice-block">
-    <p>{{ site_stats.notice }}</p>
-  </div>
-  {% endif %}
 </article>

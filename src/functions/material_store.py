@@ -41,11 +41,8 @@ from httk.data.db import Database, SqlStore
 __all__ = [
     "AMDB_DATASET",
     "AMDB_ID_COLUMN",
-    "CLASSIFICATION_LABELS",
-    "ELECTRONIC_TYPE_LABELS",
     "MAGNDATA_COLLINEAR_FILENAME",
     "MAGNDATA_NONCOLLINEAR_FILENAME",
-    "PAPER_PICKED_MATERIALS",
     "SCREENING_RESULTS_FILENAME",
     "STORE_LAYOUT_VERSION",
     "STORE_PATH_ENVIRONMENT",
@@ -103,25 +100,6 @@ PLOT_FILENAMES: tuple[tuple[str, str], ...] = (
     ("band", "band.svg"),
     ("structure", "structure.svg"),
     ("bz", "bz.svg"),
-)
-
-CLASSIFICATION_LABELS = {
-    "collinear": "Collinear",
-    "noncollinear-derived": "Based on noncollinear",
-    "mixed": "Both",
-    "unclassified": "Not classified yet",
-}
-
-ELECTRONIC_TYPE_LABELS = {
-    "metallic": "Metallic",
-    "semiconducting": "Semiconducting",
-    "unknown": "KS gap unavailable",
-}
-
-PAPER_PICKED_MATERIALS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("UCr2Si2C", ("ucr2si2c",)),
-    ("NbMnP", ("nbmnp", "mnnbp")),
-    ("YRuO3", ("yruo3",)),
 )
 
 

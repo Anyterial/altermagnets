@@ -2,6 +2,7 @@
 title: How to cite
 template: default
 base_template: base_default
+hosting: static
 ---
 
 Please acknowledge the use of the Altermagnets Database when using this website and data.

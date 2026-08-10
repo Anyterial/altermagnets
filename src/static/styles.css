@@ -295,7 +295,6 @@ html[data-theme="dark"] .theme-icon {
 .section-note,
 .search-note,
 .meta-line,
-.cell-meta,
 .notice-block p {
   margin: 0;
   color: var(--ink-soft);
@@ -438,8 +437,7 @@ html[data-theme="dark"] .theme-icon {
 
 .metric-card,
 .highlight-card,
-.notice-block,
-.result-summary {
+.notice-block {
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--surface-soft);
@@ -524,19 +522,16 @@ html[data-theme="dark"] .theme-icon {
   margin: 0;
 }
 
-.notice-block,
-.result-summary {
+.notice-block {
   padding: 14px;
 }
 
-.filter-pill-row,
 .badge-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.filter-pill,
 .badge {
   border-radius: 999px;
   border: 1px solid var(--line);
@@ -545,23 +540,9 @@ html[data-theme="dark"] .theme-icon {
   font-size: 13px;
 }
 
-.filter-pill strong {
-  margin-right: 4px;
-}
-
 .table-wrap {
   overflow-x: auto;
   border-radius: 14px;
-}
-
-.result-summary {
-  position: relative;
-  z-index: 1;
-}
-
-.search-table-wrap {
-  position: relative;
-  z-index: 4;
 }
 
 .results-table {
@@ -585,162 +566,6 @@ html[data-theme="dark"] .theme-icon {
   color: var(--ink-soft);
   background: var(--table-head);
   white-space: nowrap;
-}
-
-.search-results-table th {
-  padding: 10px 8px;
-}
-
-.search-results-table td {
-  padding: 0;
-}
-
-.result-row-link {
-  display: block;
-  min-height: 100%;
-  padding: 10px 8px;
-  color: inherit;
-  text-decoration: none;
-}
-
-.result-row-link:focus-visible {
-  outline: 2px solid rgba(var(--accent-rgb), 0.5);
-  outline-offset: -2px;
-}
-
-.search-results-table .cell-meta {
-  font-size: 12px;
-}
-
-.search-results-table .cell-meta-id {
-  font-size: 11px;
-  letter-spacing: 0.01em;
-}
-
-.search-results-table .col-material {
-  min-width: 80px;
-}
-
-.search-results-table .cell-title {
-  font-size: 16px;
-  line-height: 1.25;
-}
-
-.search-results-table .col-magndata {
-  min-width: 80px;
-}
-
-.search-results-table .col-collinearity {
-  min-width: 130px;
-}
-
-.search-results-table .col-spacegroup {
-  min-width: 80px;
-}
-
-.search-results-table .col-maxss,
-.search-results-table .col-avgss,
-.search-results-table .col-fdelta,
-.search-results-table .col-gap {
-  min-width: 80px;
-}
-
-.search-results-table .col-abundance {
-  min-width: 108px;
-}
-
-.cell-title {
-  font-weight: 600;
-  margin-bottom: 4px;
-}
-
-.cell-meta {
-  font-size: 13px;
-}
-
-.result-row:hover {
-  background: rgba(var(--accent-rgb), 0.08);
-}
-
-/* The built-in httk.serve.table shell intentionally inherits the established
- * altermagnet search-table presentation.  Site-local row markup only owns
- * the rich cells; pagination and the accessible table structure are reusable.
- */
-body .httk-serve-table {
-  overflow-x: auto;
-  border-radius: 14px;
-  position: relative;
-  z-index: 4;
-}
-
-body .httk-serve-table table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-body .httk-serve-table th,
-body .httk-serve-table td {
-  text-align: left;
-  padding: 12px 10px;
-  border-bottom: 1px solid var(--line);
-  font-size: 14px;
-  vertical-align: top;
-}
-
-body .httk-serve-table th {
-  padding: 10px 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.11em;
-  font-size: 11px;
-  color: var(--ink-soft);
-  background: var(--table-head);
-  white-space: nowrap;
-}
-
-body .httk-serve-table td {
-  padding: 0;
-}
-
-body .httk-serve-table .cell-meta {
-  font-size: 12px;
-}
-
-body .httk-serve-table .cell-meta-id {
-  font-size: 11px;
-  letter-spacing: 0.01em;
-}
-
-body .httk-serve-table .col-material {
-  min-width: 80px;
-}
-
-body .httk-serve-table .cell-title {
-  font-size: 16px;
-  line-height: 1.25;
-}
-
-body .httk-serve-table .col-magndata {
-  min-width: 80px;
-}
-
-body .httk-serve-table .col-collinearity {
-  min-width: 130px;
-}
-
-body .httk-serve-table .col-spacegroup,
-body .httk-serve-table .col-maxss,
-body .httk-serve-table .col-avgss,
-body .httk-serve-table .col-fdelta,
-body .httk-serve-table .col-gap {
-  min-width: 80px;
-}
-
-body .httk-serve-table .col-abundance {
-  min-width: 108px;
-}
-
-body .httk-serve-table__pager {
-  margin-top: 14px;
 }
 
 .material-header {

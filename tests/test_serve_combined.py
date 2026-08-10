@@ -109,6 +109,25 @@ def test_combined_figure_route_and_public_base() -> None:
     assert served.headers["content-type"] == "image/svg+xml"
 
 
+def test_combined_public_base_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(serve_combined, "create_combined_app", lambda **kwargs: kwargs)
+    monkeypatch.setattr(serve_combined, "run_dev_server", lambda **kwargs: captured.update(kwargs))
+
+    assert serve_combined.main(["--host", "127.0.0.1", "--port", "9000"]) == 0
+    assert captured["app"] == {"public_base_url": "http://127.0.0.1:9000/optimade"}
+
+    assert serve_combined.main(["--host", "::1", "--port", "9000"]) == 0
+    assert captured["app"] == {"public_base_url": "http://[::1]:9000/optimade"}
+
+    with pytest.raises(SystemExit):
+        serve_combined.main(["--host", "0.0.0.0"])
+    assert serve_combined.main(
+        ["--host", "0.0.0.0", "--public-base-url", "https://site.example/optimade"]
+    ) == 0
+    assert captured["app"] == {"public_base_url": "https://site.example/optimade"}
+
+
 def test_standalone_static_site_does_not_advertise_the_combined_pilot() -> None:
     app = serve_combined.create_web_asgi_app(ROOT / "src", config_name="config")
 

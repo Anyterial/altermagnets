@@ -1,15 +1,16 @@
 """Render the browser-side OPTIMADE material detail widget."""
 
-import json
 import os
 from html import escape
 from pathlib import Path
 
+from _internal import safe_json
 from httk.serve.web.widgets import WidgetAsset, WidgetRenderResult, optimade_protocol_asset, optimade_protocol_href
 
 RESPONSE_FIELDS = (
     "chemical_formula_reduced",
     "_anyterial_formula",
+    "_anyterial_elements",
     "_anyterial_space_group",
     "_anyterial_classification",
     "_anyterial_electronic_type",
@@ -19,7 +20,6 @@ RESPONSE_FIELDS = (
     "_anyterial_icsd_ids",
     "_httk_magndata_ids",
     "_httk_dft_band_gap",
-    "_httk_magnetic_space_group_bns",
     "_anyterial_max_spin_splitting",
     "_anyterial_avg_spin_splitting",
     "_anyterial_spin_splitting_fraction",
@@ -27,18 +27,6 @@ RESPONSE_FIELDS = (
     "_anyterial_magndata_variants",
     "_anyterial_figures",
 )
-
-
-def _safe_json(value: object) -> str:
-    """Encode widget configuration safely inside a JSON script element."""
-    return (
-        json.dumps(value, ensure_ascii=True, separators=(",", ":"))
-        .replace("<", "\u003c")
-        .replace(">", "\u003e")
-        .replace("&", "\u0026")
-        .replace("\u2028", "\\u2028")
-        .replace("\u2029", "\\u2029")
-    )
 
 
 def render(context, **props):
@@ -67,7 +55,7 @@ def render(context, **props):
         f'data-config-id="{config_id}" aria-busy="true">'
         '<p class="empty" data-material-detail-status role="status" aria-live="polite">Loading material details.</p>'
         '<noscript><p class="empty">Material details require JavaScript and an OPTIMADE data service.</p></noscript>'
-        f'<script id="{config_id}" type="application/json">{_safe_json(config)}</script>'
+        f'<script id="{config_id}" type="application/json">{safe_json(config)}</script>'
         "</section>"
     )
     return WidgetRenderResult(html, assets=(optimade_protocol_asset(), asset))

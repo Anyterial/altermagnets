@@ -20,12 +20,14 @@ import pytest
 pytest.importorskip("httk.serve.optimade")
 pytest.importorskip("httk.atomistic")
 
+from httk.core import EntryTypeDefinition, PropertyDefinition
 from httk.serve.optimade import adapter_from_providers, create_asgi_app
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import material_store
+import optimade_service
 import serve_optimade
 from optimade_service import build_service_app
 
@@ -225,6 +227,43 @@ def test_service_figure_route_whitelist_headers_and_dark_cache(providers: list, 
     assert client.get(f"/figures/{material_id}/%2e%2e/CONTCAR").status_code == 404
 
 
+def test_service_dark_cache_respects_byte_budget(providers: list, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    dataset, material_id, svg_path, _ = _figure_dataset(tmp_path)
+    monkeypatch.setattr(optimade_service, "DARK_CACHE_MAX_BYTES", 1)
+    app = build_service_app(
+        public_base_url="http://testserver",
+        providers=providers,
+        dataset=dataset,
+        details_root=tmp_path,
+    )
+    client = ApiClient(app)
+
+    assert client.get(f"/figures/{material_id}/dark--plot.svg").status_code == 200
+    svg_path.unlink()
+    assert client.get(f"/figures/{material_id}/dark--plot.svg").status_code == 404
+
+
+def test_size_none_is_unavailable_in_projection_and_route(providers: list, tmp_path: Path) -> None:
+    dataset, material_id, _svg_path, _ = _figure_dataset(tmp_path)
+    record = dataset[material_id]
+    record.figures = (replace(record.figures[0], light=replace(record.figures[0].light, size=None)), *record.figures[1:])
+    projected = serve_optimade._figure_payload(record, "http://testserver")
+    assert projected[0] == {
+        "key": "band",
+        "url": None,
+        "dark_url": None,
+        "media_type": None,
+        "available": False,
+    }
+    app = build_service_app(
+        public_base_url="http://testserver",
+        providers=providers,
+        dataset=dataset,
+        details_root=tmp_path,
+    )
+    assert ApiClient(app).get(f"/figures/{material_id}/plot.svg").status_code == 404
+
+
 def test_service_figure_route_missing_file_and_recorded_size_cap(providers: list, tmp_path: Path) -> None:
     dataset, material_id, _svg_path, png_path = _figure_dataset(tmp_path)
     record = dataset[material_id]
@@ -283,14 +322,25 @@ def test_standalone_service_api_figure_url_resolves_through_same_app() -> None:
         dataset=records,
     )
     client = ApiClient(app)
-    response = client.get(
-        "/structures",
-        params={"filter": 'id = "anyt:am-1-0001"', "response_fields": "_anyterial_figures"},
-    )
-    assert response.status_code == 200
-    figures = response.json()["data"][0]["attributes"]["_anyterial_figures"]
-    served = [client.get(urlsplit(figure["url"]).path) for figure in figures if figure["available"]]
-    assert any(response.status_code == 200 for response in served)
+    all_data: list[dict[str, Any]] = []
+    next_url: str | None = "/structures"
+    params = {"response_fields": "_anyterial_figures", "page_limit": "200"}
+    while next_url is not None:
+        response = client.get(next_url, params=params)
+        assert response.status_code == 200
+        all_data.extend(response.json()["data"])
+        next_url = response.json()["links"].get("next")
+        params = None
+
+    assert len(all_data) == 180
+    for item in all_data:
+        for figure in item["attributes"]["_anyterial_figures"]:
+            if not figure["available"]:
+                assert figure["url"] is None and figure["dark_url"] is None
+                continue
+            assert client.get(urlsplit(figure["url"]).path).status_code == 200
+            if figure["dark_url"] is not None:
+                assert client.get(urlsplit(figure["dark_url"]).path).status_code == 200
 
 
 def test_dataset_assembly_counts_and_exact_lattice() -> None:
@@ -420,6 +470,43 @@ def test_references_endpoint_and_include(client: ApiClient) -> None:
 
 def test_validate_all_records_passes(providers: list) -> None:
     assert serve_optimade.run_validation(providers) == 0
+
+
+class _ValidationProvider:
+    def __init__(self, definition: EntryTypeDefinition, records: list[dict[str, Any]]) -> None:
+        self.definition = definition
+        self._records = records
+
+    def entry_types(self) -> dict[str, EntryTypeDefinition]:
+        return {"structures": self.definition}
+
+    def property_keys(self, _: str) -> dict[str, str]:
+        return {"id": "__id", "type": "__type", "value": "value"}
+
+    def records(self, _: str) -> list[dict[str, Any]]:
+        return self._records
+
+
+def test_validation_retains_nulls_and_rejects_empty_entry_types(capsys: pytest.CaptureFixture[str]) -> None:
+    definition = EntryTypeDefinition(
+        "structures",
+        "test",
+        {
+            name: PropertyDefinition.from_simple(name, description=name, fulltype="string")
+            for name in ("id", "type", "value")
+        },
+    )
+    valid = _ValidationProvider(
+        definition,
+        [{"__id": "m-1", "__type": "structures", "value": None}],
+    )
+    assert serve_optimade.run_validation([valid]) == 0
+
+    empty = _ValidationProvider(definition, [])
+    assert serve_optimade.run_validation([empty]) == 1
+    assert "no records were served" in capsys.readouterr().err
+    assert serve_optimade.run_validation([]) == 1
+    assert "no records were served by any provider" in capsys.readouterr().err
 
 
 def test_detail_properties_and_absolute_figures(client: ApiClient) -> None:

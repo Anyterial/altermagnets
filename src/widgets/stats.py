@@ -1,23 +1,11 @@
 """Render the home-page OPTIMADE count widget."""
 
-import json
 import os
 from html import escape
 from pathlib import Path
 
+from _internal import safe_json
 from httk.serve.web.widgets import WidgetAsset, WidgetRenderResult
-
-
-def _safe_json(value: object) -> str:
-    """Encode trusted configuration safely inside a JSON script element."""
-    return (
-        json.dumps(value, ensure_ascii=True, separators=(",", ":"))
-        .replace("<", "\\u003c")
-        .replace(">", "\\u003e")
-        .replace("&", "\\u0026")
-        .replace("\u2028", "\\u2028")
-        .replace("\u2029", "\\u2029")
-    )
 
 
 def render(context, **props):
@@ -31,7 +19,7 @@ def render(context, **props):
     asset_href = f"{relative_base.rstrip('/')}/_httk/serve/assets/site-stats.mjs"
     html = (
         f'<script type="module" src="{escape(asset_href, quote=True)}"></script>'
-        f'<script id="{config_id}" type="application/json">{_safe_json({"base_url": base_url})}</script>'
+        f'<script id="{config_id}" type="application/json">{safe_json({"base_url": base_url})}</script>'
     )
     asset = WidgetAsset(
         "site-stats.mjs",

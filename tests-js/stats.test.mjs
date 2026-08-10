@@ -28,11 +28,11 @@ async function importStats(document, fetch, suffix) {
   await tick();
 }
 
-test("stats fills all placeholders from meta.data_returned", async () => {
+test("stats fills all placeholders from meta.data_available", async () => {
   const { document, targets } = statsDocument();
   let call = 0;
   await importStats(document, async () => {
-    const response = new Response(JSON.stringify({ meta: { data_available: 7, data_returned: 7 } }), {
+    const response = new Response(JSON.stringify({ meta: { data_available: 7, data_returned: 1 } }), {
       headers: { "content-type": "application/vnd.api+json" },
     });
     call += 1;
@@ -45,5 +45,13 @@ test("stats fills all placeholders from meta.data_returned", async () => {
 test("stats leaves placeholders intact when the count request fails", async () => {
   const { document, targets } = statsDocument();
   await importStats(document, async () => { throw new Error("offline"); }, "failure");
+  names.forEach((name) => assert.equal(targets[name].textContent, "—"));
+});
+
+test("stats leaves placeholders intact when data_available is absent", async () => {
+  const { document, targets } = statsDocument();
+  await importStats(document, async () => new Response(JSON.stringify({ meta: { data_returned: 1 } }), {
+    headers: { "content-type": "application/vnd.api+json" },
+  }), "missing-available");
   names.forEach((name) => assert.equal(targets[name].textContent, "—"));
 });

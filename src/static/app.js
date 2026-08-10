@@ -276,22 +276,6 @@
 
   renderMath(document.body);
 
-  document.addEventListener("httk-serve:table-updated", (event) => {
-    const table = event.target;
-    if (!(table instanceof Element)) {
-      return;
-    }
-    const tbody = table.querySelector("tbody");
-    if (!tbody) {
-      return;
-    }
-    // httk.serve.table replaces tbody.innerHTML while retaining tbody attributes.
-    // Clearing this marker makes each new page render once without rerendering
-    // the surrounding document or the already-rendered table headers.
-    delete tbody.dataset.katexRendered;
-    renderMath(tbody);
-  });
-
   window.altermagnetsUi = {
     initSubtree(subtree) {
       if (!(subtree instanceof Element)) {

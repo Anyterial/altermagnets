@@ -1,4 +1,3 @@
-const MAX_BODY_BYTES = 64 * 1024;
 const FILTERS = {
   total: null,
   collinear: '_anyterial_classification = "collinear"',
@@ -14,12 +13,10 @@ async function count(baseUrl, filter) {
   if (filter) endpoint.searchParams.set("filter", filter);
   const response = await fetch(endpoint, { headers: { Accept: "application/vnd.api+json, application/json" } });
   if (!response.ok) throw new Error(`OPTIMADE count request failed: ${response.status}`);
-  const body = await response.text();
-  if (new TextEncoder().encode(body).byteLength > MAX_BODY_BYTES) throw new Error("OPTIMADE count response too large");
-  const document = JSON.parse(body);
-  const returned = document?.meta?.data_returned;
-  if (!validCount(returned)) throw new Error("Invalid OPTIMADE count response");
-  return returned;
+  const document = await response.json();
+  const available = document?.meta?.data_available;
+  if (!validCount(available)) throw new Error("Invalid OPTIMADE count response");
+  return available;
 }
 
 async function load() {

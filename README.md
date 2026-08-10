@@ -54,13 +54,13 @@ use a different runtime store path; the same variable (or
 directory. `ALTERMAGNETS_DETAILS_DIR` (or the builder's `--details-dir`)
 selects the generated detail-asset tree.
 
-Plot metadata is part of the material object graph as OPTIMADE `File` entries.
-The database stores the root-relative locator, name, size, media type, and
-description; the potentially large plot bytes remain in `data/details/` (or
-the configured details directory) and are loaded on demand with containment
-and size checks. Generate or update detail plots before `make build_store` so
-the persistent store records them. The in-memory fallback discovers the
-current plot set each time the site starts.
+Plot metadata is part of the material object graph and is exposed through the
+custom `_anyterial_figures` structures property. The database stores the
+root-relative locator, name, size, media type, and description; the potentially
+large plot bytes remain in `data/details/` (or the configured details directory)
+and are loaded on demand with containment and size checks. Generate or update
+detail plots before `make build_store` so the persistent store records them.
+The in-memory fallback discovers the current plot set each time the site starts.
 
 Then open:
 
@@ -99,8 +99,8 @@ API by the thin `serve_optimade.py` entry point, built on the httk₂ modules
 (*httk-core*, *httk-io*, *httk-atomistic*, *httk-data*, *httk-serve*). It
 reads the three CSV tables under `data/tables/`, parses each material's
 `CONTCAR.bz2` into an exact crystal structure, and serves 180 `structures`
-(with auto-derived composition fields and seven `_anyterial_` plus three `_httk_`
-custom properties) plus
+(with auto-derived composition fields and 19 `_anyterial_` plus three `_httk_`
+custom properties, including the `_anyterial_figures` plot metadata) plus
 the deduplicated `references`, linked via OPTIMADE relationships.
 
 The custom property definitions are loaded verbatim from the live schema submodules:

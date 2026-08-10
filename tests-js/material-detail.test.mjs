@@ -1,24 +1,42 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { OptimadeTransport } from "/home/rar/Documents/containers/devel/agents/httk2/httk-serve/src/httk/serve/web/assets/serve-optimade-table-protocol.mjs";
 import { DomDocument, element, installDom } from "./dom.mjs";
 
 const API = "https://api.example.test/optimade";
 const MATERIAL_ID = "anyt:am-1/0001";
-const protocolImport = pathToFileURL("/home/rar/Documents/containers/devel/agents/httk2/httk-serve/src/httk/serve/web/assets/serve-optimade-table-protocol.mjs").href;
+const siblingProtocol = new URL("../../httk-serve/src/httk/serve/web/assets/serve-optimade-table-protocol.mjs", import.meta.url);
+
+function resolveProtocolImport() {
+  const override = process.env.ALTERMAGNETS_PROTOCOL_MJS;
+  if (override) {
+    if (!existsSync(override)) throw new Error(`ALTERMAGNETS_PROTOCOL_MJS does not exist: ${override}`);
+    return pathToFileURL(override);
+  }
+  if (existsSync(siblingProtocol)) return siblingProtocol;
+  const installed = spawnSync("python", ["-c", "from importlib.resources import files; print(files('httk.serve.web').joinpath('assets/serve-optimade-table-protocol.mjs'))"], { encoding: "utf8" });
+  const installedPath = installed.status === 0 ? installed.stdout.trim() : "";
+  if (installedPath && existsSync(installedPath)) return pathToFileURL(installedPath);
+  throw new Error(`Unable to resolve serve-optimade-table-protocol.mjs; checked ${siblingProtocol.pathname} and the installed httk.serve.web package`);
+}
+
+const protocolImport = resolveProtocolImport();
 installDom(new DomDocument());
 globalThis.window = { location: { search: "" } };
 globalThis.console = { error() {}, warn() {} };
+const { OptimadeTransport } = await import(protocolImport.href);
 const source = await readFile(new URL("../src/widgets/material-detail.mjs", import.meta.url), "utf8");
-const material = await import(`data:text/javascript,${encodeURIComponent(source.replace('from "./serve-optimade-table-protocol.mjs";', `from ${JSON.stringify(protocolImport)};`))}`);
+const material = await import(`data:text/javascript,${encodeURIComponent(source.replace('from "./serve-optimade-table-protocol.mjs";', `from ${JSON.stringify(protocolImport.href)};`))}`);
 
+// Keep this list aligned with tests/test_material_widget.py::test_material_widget_requests_every_attribute_used_by_detail_js.
 const fields = [
-  "chemical_formula_reduced", "_anyterial_formula", "_anyterial_space_group", "_anyterial_classification",
+  "chemical_formula_reduced", "_anyterial_formula", "_anyterial_elements", "_anyterial_space_group", "_anyterial_classification",
   "_anyterial_electronic_type", "_anyterial_magnetic_phases", "_anyterial_wave_classes", "_anyterial_parent_spacegroups",
-  "_anyterial_icsd_ids", "_httk_magndata_ids", "_httk_dft_band_gap", "_httk_magnetic_space_group_bns",
+  "_anyterial_icsd_ids", "_httk_magndata_ids", "_httk_dft_band_gap",
   "_anyterial_max_spin_splitting", "_anyterial_avg_spin_splitting", "_anyterial_spin_splitting_fraction",
   "_anyterial_min_crustal_abundance", "_anyterial_magndata_variants", "_anyterial_figures",
 ];
@@ -61,8 +79,7 @@ function fetchFor(resource, included = []) {
       },
     }, url.href);
     if (url.pathname.startsWith("/optimade/v1/structures/")) {
-      const complete = resource && { ...resource, attributes: { ...Object.fromEntries(fields.map((name) => [name, null])), ...resource.attributes } };
-      return jsonResponse(pageResponse(complete, included), url.href);
+      return jsonResponse(pageResponse(resource, included), url.href);
     }
     throw new Error(`unexpected URL ${url}`);
   };
@@ -85,6 +102,7 @@ const realisticResource = {
   type: "structures",
   attributes: {
     chemical_formula_reduced: "Fe2O3<script>alert(1)</script>",
+    _anyterial_formula: null,
     _anyterial_elements: ["Fe", "O"],
     _anyterial_space_group: "P2_1/c",
     _anyterial_classification: "collinear",
@@ -135,7 +153,10 @@ test("material detail renders payload, safe figures, links, references, and aggr
 });
 
 test("placeholder variants retain the MAGNDATA id and figures use missing placeholders", async () => {
-  const resource = { id: "placeholder", type: "structures", attributes: { chemical_formula_reduced: "MnO", _httk_magndata_ids: ["m-1"] } };
+  const resource = {
+    id: "placeholder", type: "structures",
+    attributes: { ...Object.fromEntries(fields.map((name) => [name, null])), chemical_formula_reduced: "MnO", _httk_magndata_ids: ["m-1"] },
+  };
   const { result } = shell({ response_fields: fields });
   const network = fetchFor(resource);
   globalThis.fetch = network.fetch;

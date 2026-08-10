@@ -104,9 +104,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Serve the altermagnets website and OPTIMADE API together.")
     parser.add_argument("--host", default="127.0.0.1", help="host to bind when serving")
     parser.add_argument("--port", type=int, default=8080, help="port to bind when serving")
+    parser.add_argument(
+        "--public-base-url",
+        help="public OPTIMADE base URL; required when binding 0.0.0.0 or ::",
+    )
     args = parser.parse_args(argv)
+    if args.public_base_url is None:
+        if args.host in {"0.0.0.0", "::"}:
+            parser.error("--public-base-url is required when binding a wildcard host")
+        public_host = f"[{args.host}]" if ":" in args.host else args.host
+        args.public_base_url = f"http://{public_host}:{args.port}/optimade"
     run_dev_server(
-        app=create_combined_app(public_base_url=f"http://{args.host}:{args.port}/optimade"),
+        app=create_combined_app(public_base_url=args.public_base_url),
         host=args.host,
         port=args.port,
     )

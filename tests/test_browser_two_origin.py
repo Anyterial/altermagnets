@@ -1,6 +1,7 @@
 """Browser contract for the separately hosted static site and OPTIMADE API."""
 
 import json
+import os
 import socket
 import threading
 import time
@@ -12,18 +13,34 @@ from typing import ClassVar
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-import pytest
-
-pytest.importorskip("playwright.sync_api")
-
+import material_store
 import publish_static
+import pytest
+import serve_optimade
+from conftest import write_detail_assets, write_source_tables
 from optimade_service import build_service_app
-from playwright.sync_api import Browser, Page, sync_playwright
-from playwright.sync_api import Error as PlaywrightError
+
+BROWSER_REQUIRED = os.environ.get("ALTERMAGNETS_BROWSER_REQUIRED") == "1"
+
+
+def _unavailable(message: str) -> None:
+    if BROWSER_REQUIRED:
+        pytest.fail(message)
+    pytest.skip(message)
+
+
+try:
+    from playwright.sync_api import Browser, Page, sync_playwright
+    from playwright.sync_api import Error as PlaywrightError
+except ImportError as error:
+    if BROWSER_REQUIRED:
+        pytest.fail(f"Playwright is unavailable: {error}")
+    pytest.skip(f"Playwright is unavailable: {error}", allow_module_level=True)
 
 pytestmark = pytest.mark.browser
 
 TIMEOUT_MS = 30_000
+SYNTHETIC_DATA_ENVIRONMENT = "ALTERMAGNETS_BROWSER_SYNTHETIC"
 
 
 @dataclass(frozen=True)
@@ -114,19 +131,68 @@ def _detail_record(origins: Origins) -> dict[str, object]:
     pytest.fail("The OPTIMADE dataset has no material with variants and a theme-aware figure")
 
 
+def _has_source_tables() -> bool:
+    data_dir = material_store.resolve_data_dir()
+    return all(
+        (data_dir / filename).is_file()
+        for filename in (
+            material_store.SCREENING_RESULTS_FILENAME,
+            material_store.MAGNDATA_COLLINEAR_FILENAME,
+            material_store.MAGNDATA_NONCOLLINEAR_FILENAME,
+        )
+    )
+
+
+def _synthetic_app(tmp_path_factory: pytest.TempPathFactory, api_url: str, site_url: str):
+    root = tmp_path_factory.mktemp("browser-data")
+    source = write_source_tables(root / "tables", material_count=51)
+    details = write_detail_assets(root / "details")
+    overrides = {
+        "ALTERMAGNETS_DATA_DIR": str(source),
+        "ALTERMAGNETS_DETAILS_DIR": str(details),
+        "ALTERMAGNETS_STORE_PATH": str(root / "missing.duckdb"),
+    }
+    previous = {name: os.environ.get(name) for name in overrides}
+    os.environ.update(overrides)
+    try:
+        records: dict[str, object] = {}
+        providers = serve_optimade.build_providers(public_base_url=api_url, material_records=records)
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+    return build_service_app(
+        public_base_url=api_url,
+        cors_origins=(site_url,),
+        providers=providers,
+        dataset=records,
+        details_root=details,
+    )
+
+
 @pytest.fixture(scope="session")
 def two_origins(tmp_path_factory: pytest.TempPathFactory) -> Origins:
-    uvicorn = pytest.importorskip("uvicorn")
+    try:
+        import uvicorn
+    except ImportError as error:
+        _unavailable(f"Uvicorn is unavailable: {error}")
     try:
         api_port = _free_port()
     except PermissionError as error:
-        pytest.skip(f"Localhost sockets are unavailable: {error}")
+        _unavailable(f"Localhost sockets are unavailable: {error}")
     api_url = f"http://127.0.0.1:{api_port}"
     static_root = tmp_path_factory.mktemp("static-site")
     publish_static.publish_site(static_root, optimade_base_url=api_url)
     static_server, static_thread = _start_static_server(static_root)
     site_url = f"http://127.0.0.1:{static_server.server_port}"
-    app = build_service_app(public_base_url=api_url, cors_origins=(site_url,))
+    use_synthetic = os.environ.get(SYNTHETIC_DATA_ENVIRONMENT) == "1" or not _has_source_tables()
+    app = (
+        _synthetic_app(tmp_path_factory, api_url, site_url)
+        if use_synthetic
+        else build_service_app(public_base_url=api_url, cors_origins=(site_url,))
+    )
     api_server = uvicorn.Server(
         uvicorn.Config(app, host="127.0.0.1", port=api_port, log_level="warning", access_log=False)
     )
@@ -141,7 +207,7 @@ def two_origins(tmp_path_factory: pytest.TempPathFactory) -> Origins:
                     headless=True, args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
                 )
             except PlaywrightError as error:
-                pytest.skip(f"Chromium is unavailable: {error}")
+                _unavailable(f"Chromium is unavailable: {error}")
             yield Origins(site_url=site_url, api_url=api_url, browser=browser)
             browser.close()
     finally:
@@ -159,7 +225,7 @@ def page(two_origins: Origins) -> Page:
         page = context.new_page()
     except PlaywrightError as error:
         context.close()
-        pytest.skip(f"This environment cannot run browser pages: {error}")
+        _unavailable(f"This environment cannot run browser pages: {error}")
     try:
         yield page
     finally:
@@ -172,7 +238,7 @@ def test_search_paginates_and_renders_formula(two_origins: Origins, page: Page) 
     rows.first.wait_for(state="visible", timeout=TIMEOUT_MS)
     assert page.locator('[data-httk-serve-optimade-table] thead th').count() == 9
     formula = rows.first.locator("td").first
-    assert formula.locator(".katex").count() or formula.inner_text().strip()
+    assert formula.locator(".katex").count(), "Formula cell did not render KaTeX."
     first_row = rows.first.inner_text()
     next_button = page.locator("[data-httk-serve-optimade-next]")
     next_button.wait_for(state="visible", timeout=TIMEOUT_MS)
@@ -256,7 +322,7 @@ def test_detail_loads_variants_references_and_figures(two_origins: Origins, page
 
 def test_home_stats_match_api_count(two_origins: Origins, page: Page) -> None:
     body, _ = _api(two_origins, "/v1/structures", {"page_limit": 1000})
-    expected = str(body["meta"]["data_returned"])
+    expected = str(body["meta"]["data_available"])
     page.goto(f"{two_origins.site_url}/index.html", wait_until="domcontentloaded")
     total = page.locator('[data-site-stat="total"]')
     total.wait_for(state="visible", timeout=TIMEOUT_MS)

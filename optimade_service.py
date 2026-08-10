@@ -3,6 +3,7 @@
 import logging
 import mimetypes
 import sys
+from collections import OrderedDict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +26,13 @@ import material_store
 logger = report.context_logger(logging.getLogger("httk.altermagnets.optimade"), "optimade")
 
 MAX_FIGURE_BYTES = 8 * 1024 * 1024
+DARK_CACHE_MAX_ENTRIES = 32
+DARK_CACHE_MAX_BYTES = 64 * 1024 * 1024
+
+
+def figure_file_is_servable(size: int | None) -> bool:
+    """Return whether recorded figure metadata permits serving the file."""
+    return size is not None and 0 <= size <= MAX_FIGURE_BYTES
 
 
 @dataclass(frozen=True)
@@ -115,7 +123,9 @@ def _read_file(file: _StoredFile, details_root: Path) -> bytes | None:
     if path is None:
         return None
     actual_size = path.stat().st_size
-    if actual_size > MAX_FIGURE_BYTES or (file.size is not None and (file.size < 0 or actual_size > file.size)):
+    if not figure_file_is_servable(file.size) or actual_size > MAX_FIGURE_BYTES:
+        return None
+    if file.size is not None and actual_size > file.size:
         return None
     try:
         return path.read_bytes()
@@ -197,9 +207,11 @@ def build_service_app(
     else:
         index = _figure_index(dataset)
     resolved_details_root = (details_root or material_store.resolve_details_dir()).resolve()
-    dark_cache: dict[tuple[str, str], bytes] = {}
+    dark_cache: OrderedDict[tuple[str, str], bytes] = OrderedDict()
+    dark_cache_bytes = 0
 
     async def figure_response(request: Request) -> Response:
+        nonlocal dark_cache_bytes
         material_id = request.path_params["material_id"]
         filename = request.path_params["filename"]
         match = index.get(material_id)
@@ -213,8 +225,10 @@ def build_service_app(
             return Response(status_code=404)
         file, generated_dark = selected
         cache_key = (canonical_id, filename)
-        if generated_dark and cache_key in dark_cache:
-            body = dark_cache[cache_key]
+        cached = dark_cache.pop(cache_key, None) if generated_dark else None
+        if cached is not None:
+            dark_cache[cache_key] = cached
+            body = cached
         else:
             raw = _read_file(file, resolved_details_root)
             if raw is None:
@@ -227,6 +241,10 @@ def build_service_app(
             body = generated_body
             if generated_dark:
                 dark_cache[cache_key] = body
+                dark_cache_bytes += len(body)
+                while len(dark_cache) > DARK_CACHE_MAX_ENTRIES or dark_cache_bytes > DARK_CACHE_MAX_BYTES:
+                    _, evicted = dark_cache.popitem(last=False)
+                    dark_cache_bytes -= len(evicted)
         return Response(
             body,
             media_type="image/svg+xml" if generated_dark else _media_type(file),

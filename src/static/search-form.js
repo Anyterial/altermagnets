@@ -10,7 +10,7 @@
     wave_class: new Set(["", "a", "b", "c", "d", "e", "f", "g", "d/g", "s"]),
     sort: new Set(["screening_rank", "max_ss_desc", "avg_ss_desc", "bandgap_desc", "abundance_desc"]),
   };
-  const numericPattern = /[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/;
+  const numericPattern = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
   const maxLengths = {
     q: 256, elements: 128, classification: 40, electronic_type: 40, magnetic_phase: 80, wave_class: 8,
     space_group: 80, sort: 32, min_max_ss: 32, min_avg_ss: 32, min_fdelta_pct: 32, min_bandgap: 32,
@@ -23,9 +23,9 @@
     .filter(Boolean).slice(0, maxTokens).map((token) => token.slice(0, maxLength));
   const literal = (value) => `"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
   const finiteNumber = (value) => {
-    const token = (value || "").match(numericPattern)?.[0] || "";
+    const token = (value || "").trim();
     if (!token || !Number.isFinite(Number(token))) return null;
-    return token;
+    return numericPattern.test(token) ? token : null;
   };
   const readFields = (form) => Object.fromEntries(fields.map((name) => [name, form.elements[name]?.value || ""]));
   const sanitize = (raw) => {
@@ -72,6 +72,7 @@
     };
     return { value, filter: predicates.join(" AND "), sort: sorts[value.sort] };
   };
+  globalThis.altermagnetsSearch = { buildQuery, literal, sanitize };
   const form = document.querySelector("form.search-form")?.querySelector('[name="q"]')?.form;
   if (!form) return;
   const restore = () => {

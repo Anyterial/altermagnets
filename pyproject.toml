@@ -44,6 +44,10 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not browser'"
+markers = [
+  "browser: end-to-end browser tests requiring Playwright and Chromium",
+]
 
 [tool.ruff]
 target-version = "py312"

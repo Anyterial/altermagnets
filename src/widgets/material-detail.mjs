@@ -369,7 +369,7 @@ function showNoSelection(shell) {
   shell.setAttribute("aria-busy", "false");
 }
 
-async function loadShell(shell) {
+async function loadShell(shell, Transport = OptimadeTransport) {
   const configNode = shell.querySelector('script[type="application/json"]');
   let config;
   try {
@@ -385,7 +385,7 @@ async function loadShell(shell) {
     return;
   }
   try {
-    const transport = new OptimadeTransport(config, { documentBase: document.baseURI });
+    const transport = new Transport(config, { documentBase: document.baseURI });
     const result = await transport.fetchOne(id, { include: ["references"] });
     if (result === null) {
       showState(shell, "The requested material entry could not be found.");
@@ -404,3 +404,5 @@ async function loadShell(shell) {
 const start = () => document.querySelectorAll("[data-site-material-detail]").forEach((shell) => loadShell(shell));
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
 else start();
+
+export { figureUrl, loadShell };

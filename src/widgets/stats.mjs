@@ -17,10 +17,9 @@ async function count(baseUrl, filter) {
   const body = await response.text();
   if (new TextEncoder().encode(body).byteLength > MAX_BODY_BYTES) throw new Error("OPTIMADE count response too large");
   const document = JSON.parse(body);
-  const available = document?.meta?.data_available;
   const returned = document?.meta?.data_returned;
-  if (!validCount(available) || !validCount(returned) || returned > 1) throw new Error("Invalid OPTIMADE count response");
-  return available;
+  if (!validCount(returned)) throw new Error("Invalid OPTIMADE count response");
+  return returned;
 }
 
 async function load() {

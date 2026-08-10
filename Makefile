@@ -1,7 +1,7 @@
 PYTHON ?= python3
 PY_SOURCES := src/functions src/widgets tools/build_store.py serve_combined.py serve_optimade.py optimade_service.py publish_static.py
 
-.PHONY: docs docs-live docs-clean clean format format-check typecheck typecheck_pyright lint test test_fastfail audit build_store generate_details sync_detail_raw_paths serve_combined serve_optimade validate_optimade update_schemas
+.PHONY: docs docs-live docs-clean clean format format-check typecheck typecheck_pyright lint test test-browser test-js test_fastfail audit build_store generate_details sync_detail_raw_paths serve_combined serve_optimade validate_optimade update_schemas
 
 serve:
 	python3 ./serve_combined.py
@@ -65,7 +65,13 @@ typecheck:
 test:
 	$(PYTHON) -m pytest
 
+test-browser:
+	$(PYTHON) -m pytest -q -m browser --override-ini addopts=
+
+test-js:
+	node --test tests-js/
+
 test_fastfail:
 	$(PYTHON) -m pytest -q -x
 
-ci: format-check lint typecheck test_fastfail
+ci: format-check lint typecheck test-js test_fastfail

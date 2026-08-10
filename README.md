@@ -96,7 +96,7 @@ OPTIMADE service
 
 The same dataset is also served over the [OPTIMADE](https://www.optimade.org/)
 API by the thin `serve_optimade.py` entry point, built on the httk₂ modules
-(*httk-core*, *httk-io*, *httk-atomistic*, *httk-data*, *httk-serve*). It
+(*httk-core*, *httk-io*, *httk-atomistic*, *httk-store*, *httk-serve*). It
 reads the three CSV tables under `data/tables/`, parses each material's
 `CONTCAR.bz2` into an exact crystal structure, and serves 180 `structures`
 (with auto-derived composition fields and 19 `_anyterial_` plus three `_httk_`

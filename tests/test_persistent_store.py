@@ -2,7 +2,7 @@ from pathlib import Path
 
 from conftest import write_detail_assets, write_source_tables
 from httk.core import File
-from httk.data.db import Database
+from httk.store.db import Database
 from material_store import (
     MaterialRecord,
     build_material_records,

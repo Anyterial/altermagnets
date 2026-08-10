@@ -11,7 +11,7 @@ reusable machinery lives in the httk modules:
   ``CONTCAR.bz2`` + ``MAGN.bz2`` files;
 * the ``structures`` provider (with auto-derived composition fields, custom
   ``_anyterial_`` and ``_httk_`` properties, and null structure-less entries) and the ``references``
-  provider come from *httk-atomistic* / *httk-data*;
+  provider come from *httk-atomistic* / *httk-store*;
 * the custom property definitions are loaded verbatim from the schema submodules.
 
 Run ``python serve_optimade.py`` to serve, or ``--validate`` to validate every
@@ -34,7 +34,7 @@ if str(FUNCTIONS_ROOT) not in sys.path:
 import material_store
 from httk.atomistic import StructureEntryProvider
 from httk.core import PropertyDefinition, RelatedEntry, register_definition_prefix, report
-from httk.data import ReferenceEntryProvider, validate_record
+from httk.store import ReferenceEntryProvider, validate_record
 from httk.serve.web.runtime.devserver import run_dev_server
 from optimade_service import build_service_app, figure_file_is_servable
 

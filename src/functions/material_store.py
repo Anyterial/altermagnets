@@ -4,7 +4,7 @@ Runtime prefers an offline-built DuckDB file, but can seed the same
 ``SqlStore`` schema into an in-memory SQLite database from the three source
 tables when the persistent store is absent or unusable. The record classes are
 deliberately ordinary frozen dataclasses: the schema is declared with
-httk-core's storage markers and implemented by ``httk.data.db.SqlStore``.
+httk-core's storage markers and implemented by ``httk.store.db.SqlStore``.
 """
 
 import bz2
@@ -36,7 +36,7 @@ from httk.atomistic.storage.records import (
 )
 from httk.core import File, Indexed, Skip, StorageInfo, Unique, load, report
 from httk.core.storage import project_storage_record
-from httk.data.db import Database, SqlStore
+from httk.store.db import Database, SqlStore
 
 __all__ = [
     "AMDB_DATASET",

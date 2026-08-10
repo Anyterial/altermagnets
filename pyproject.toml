@@ -64,14 +64,14 @@ quote-style = "preserve"
 
 [tool.pyright]
 pythonVersion = "3.12"
-include = ["src/functions", "tools/build_store.py", "serve_dynamic.py", "serve_combined.py", "serve_optimade.py", "publish_static.py"]
+include = ["src/functions", "tools/build_store.py", "serve_dynamic.py", "serve_combined.py", "serve_optimade.py", "optimade_service.py", "publish_static.py"]
 exclude = ["src/data"]
 extraPaths = ["src", "src/functions"]
 reportMissingImports = true
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src/functions", "tools/build_store.py", "serve_dynamic.py", "serve_combined.py", "serve_optimade.py", "publish_static.py"]
+files = ["src/functions", "tools/build_store.py", "serve_dynamic.py", "serve_combined.py", "serve_optimade.py", "optimade_service.py", "publish_static.py"]
 mypy_path = ["src", "src/functions"]
 namespace_packages = true
 explicit_package_bases = true

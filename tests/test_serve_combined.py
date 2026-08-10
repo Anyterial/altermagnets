@@ -85,6 +85,27 @@ def test_combined_app_mounts_the_real_pilot_and_preserves_versioned_pagination()
     assert len(second.json()["data"]) == 2
 
 
+def test_combined_figure_route_and_public_base() -> None:
+    app = serve_combined.create_combined_app()
+
+    with TestClient(app, base_url="http://testserver") as client:
+        response = client.get(
+            "/optimade/v1/structures",
+            params={
+                "filter": 'id = "anyt:am-1-0001"',
+                "response_fields": "_anyterial_figures",
+            },
+        )
+        assert response.status_code == 200
+        figures = response.json()["data"][0]["attributes"]["_anyterial_figures"]
+        figure = next(item for item in figures if item["key"] == "structure")
+        assert figure["url"].startswith("http://127.0.0.1:8080/optimade/figures/")
+        served = client.get(urlsplit(figure["url"]).path)
+
+    assert served.status_code == 200
+    assert served.headers["content-type"] == "image/svg+xml"
+
+
 def test_standalone_dynamic_site_does_not_advertise_the_combined_pilot() -> None:
     app = serve_combined.create_web_asgi_app(ROOT / "src", config_name="config_dynamic")
 

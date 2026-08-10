@@ -19,12 +19,10 @@ assembled record against its definition and exit non-zero on any failure.
 """
 
 import argparse
-import csv
 import json
 import logging
-import re
 import sys
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, MutableMapping
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +35,8 @@ import material_store
 from httk.atomistic import StructureEntryProvider
 from httk.core import PropertyDefinition, RelatedEntry, register_definition_prefix, report
 from httk.data import ReferenceEntryProvider, validate_record
-from httk.serve.optimade import adapter_from_providers, serve
+from httk.serve.web.runtime.devserver import run_dev_server
+from optimade_service import build_service_app
 
 logger = report.context_logger(logging.getLogger("httk.altermagnets.serve_optimade"), "altermagnets")
 
@@ -45,6 +44,18 @@ logger = report.context_logger(logging.getLogger("httk.altermagnets.serve_optima
 ANYTERIAL_DEFS_BASE = "https://schemas.anyterial.se/defs/v0.1/properties"
 
 ANYTERIAL_DEFINITION_PATHS = {
+    "_anyterial_formula": "formula.json",
+    "_anyterial_elements": "elements_present.json",
+    "_anyterial_space_group": "space_group.json",
+    "_anyterial_space_group_search": "space_group_search.json",
+    "_anyterial_classification": "classification.json",
+    "_anyterial_magnetic_phases": "magnetic_phases.json",
+    "_anyterial_wave_classes": "wave_classes.json",
+    "_anyterial_parent_spacegroups": "parent_spacegroups.json",
+    "_anyterial_icsd_ids": "icsd_ids.json",
+    "_anyterial_search_text": "search_text.json",
+    "_anyterial_magndata_variants": "magndata_variants.json",
+    "_anyterial_figures": "figures.json",
     "_anyterial_avg_spin_splitting": "avg_spin_splitting.json",
     "_anyterial_max_spin_splitting": "max_spin_splitting.json",
     "_anyterial_spin_splitting_fraction": "spin_splitting_fraction.json",
@@ -62,61 +73,26 @@ HTTK_DEFINITION_PATHS = {
 ANYTERIAL_DEFS_DIR = ROOT / "dependencies/submodules/anyterial-schemas/defs/v0.1/properties/altermagnets"
 HTTK_DEFS_DIR = ROOT / "dependencies/submodules/httk-schemas/defs/v0.1/properties"
 
-SYMMETRY_CSVS = (material_store.MAGNDATA_COLLINEAR_FILENAME, material_store.MAGNDATA_NONCOLLINEAR_FILENAME)
+DEFAULT_PUBLIC_BASE_URL = "http://127.0.0.1:8081"
+FIGURE_KEYS = ("band", "structure", "bz")
+SCREENING_PHASE_LABELS = {
+    "AM": "altermagnet",
+    "FiM": "compensated ferrimagnet",
+}
+SORTABLE_PROPERTIES = {
+    "structures": (
+        "id",
+        "_anyterial_max_spin_splitting",
+        "_anyterial_avg_spin_splitting",
+        "_anyterial_spin_splitting_fraction",
+        "_httk_dft_band_gap",
+        "_anyterial_min_crustal_abundance",
+    )
+}
 
 # In-memory fallback stores kept alive because harvested record-backed views read
 # from them lazily for the process lifetime; see build_dataset.
 _RETAINED_STORES: list[Any] = []
-
-
-# --- small parsing helpers -----------------------------------------------------
-
-
-def _to_float(value: str | None) -> float | None:
-    text = (value or "").strip()
-    if not text or text == "?":
-        return None
-    try:
-        return float(text)
-    except ValueError:
-        return None
-
-
-def _first_nonempty(values: Iterable[str | None]) -> str | None:
-    for value in values:
-        text = (value or "").strip()
-        if text:
-            return text
-    return None
-
-
-def strip_latex_bns(raw: str | None) -> str | None:
-    """Turn a LaTeX-wrapped BNS symbol into a plain ASCII ``symbol (number)`` string, or None."""
-    text = (raw or "").strip()
-    if not text or text == "?":
-        return None
-    text = text.replace("$", "")
-    text = re.sub(r"\\overline\{([^}]*)\}", r"-\1", text)
-    text = re.sub(r"\\mathrm\{([^}]*)\}", r"\1", text)
-    text = text.replace("^{\\prime}", "'").replace("^\\prime", "'").replace("\\prime", "'")
-    text = re.sub(r"_\{([^}]*)\}", r"_\1", text)
-    text = re.sub(r"\^\{([^}]*)\}", r"^\1", text)
-    text = text.replace("{", "").replace("}", "")
-    text = re.sub(r"\s+", " ", text).strip()
-    return text or None
-
-
-def _electronic_type(band_gap: float | None) -> str:
-    if band_gap is None:
-        return "unknown"
-    if band_gap <= 0:
-        return "metallic"
-    return "semiconducting"
-
-
-def _read_csv(path: Path, delimiter: str) -> list[dict[str, str]]:
-    with path.open(newline="", encoding="utf-8") as handle:
-        return list(csv.DictReader(handle, delimiter=delimiter))
 
 
 # --- dataset assembly ----------------------------------------------------------
@@ -167,7 +143,111 @@ def load_schema_definitions() -> dict[str, PropertyDefinition]:
     return definitions
 
 
-def build_dataset() -> tuple[
+def _nullable_list(values: Iterable[str]) -> list[str] | None:
+    """Return an ordinary nullable JSON list while preserving source order."""
+    result = list(values)
+    return result or None
+
+
+def _screening_phase(value: str | None) -> str | None:
+    """Map the store's short phase vocabulary to the existing scalar contract."""
+    return None if value is None else SCREENING_PHASE_LABELS.get(value, value)
+
+
+def _variant_payload(magndata_id: str, variant: Any) -> dict[str, Any]:
+    """Project one stored symmetry variant into the detail widget contract."""
+    return {
+        "magndata_id": magndata_id,
+        "source": variant.source_kind,
+        "formula": variant.formula or None,
+        "symprec": variant.symprec,
+        "phases": _nullable_list(variant.magnetic_phases),
+        "wave_classes": _nullable_list(variant.wave_classes),
+        "bns": _nullable_list(variant.bns_labels),
+        "bns_latex": _nullable_list(variant.bns_labels_latex),
+        "bns_mcif": _nullable_list(variant.bns_mcif_labels),
+        "bns_mcif_latex": _nullable_list(variant.bns_mcif_labels_latex),
+        "effective_bns": _nullable_list(variant.effective_bns_labels),
+        "effective_bns_latex": _nullable_list(variant.effective_bns_labels_latex),
+        "parent_spacegroups": _nullable_list(variant.parent_spacegroups),
+        "parent_spacegroups_latex": _nullable_list(variant.parent_spacegroups_latex),
+        "connecting_elements": _nullable_list(variant.connecting_elements),
+        "connecting_elements_latex": _nullable_list(variant.connecting_elements_latex),
+        "g_laue_classes": _nullable_list(variant.g_laue_classes),
+        "h_laue_classes": _nullable_list(variant.h_laue_classes),
+        "spin_angle_mismatch": variant.spin_angle_mismatch,
+        "spin_length_mismatch": variant.spin_length_mismatch,
+        "reference_dois": _nullable_list(variant.reference_dois),
+        "warnings": _nullable_list(variant.warnings),
+        "notes": _nullable_list(variant.notes),
+    }
+
+
+def _figure_payload(record: Any, public_base_url: str) -> list[dict[str, Any]]:
+    """Project stored figure filenames into absolute, route-ready metadata."""
+    stored = {figure.key: figure for figure in record.figures}
+    figures: list[dict[str, Any]] = []
+    for key in FIGURE_KEYS:
+        figure = stored.get(key)
+        if figure is None:
+            figures.append({"key": key, "url": None, "dark_url": None, "media_type": None, "available": False})
+            continue
+        base = f"{public_base_url}/figures/{record.id}"
+        light_name = figure.light.name
+        dark_url = None
+        if figure.dark is not None:
+            dark_url = f"{base}/{figure.dark.name}"
+        elif figure.light.media_type == "image/svg+xml":
+            # The dark SVG route/variant is generated by the Phase-2b figure service.
+            dark_url = f"{base}/dark--{light_name}"
+        figures.append(
+            {
+                "key": key,
+                "url": f"{base}/{light_name}",
+                "dark_url": dark_url,
+                "media_type": figure.light.media_type,
+                "available": True,
+            }
+        )
+    return figures
+
+
+def _material_properties(record: Any, public_base_url: str) -> dict[str, Any]:
+    """Project one :class:`MaterialRecord` into served custom properties."""
+    variants = [_variant_payload(link.record.id, variant) for link in record.links for variant in link.record.variants]
+    return {
+        "_anyterial_formula": record.formula or None,
+        "_anyterial_elements": sorted(record.elements) or None,
+        "_anyterial_space_group": record.space_group or None,
+        "_anyterial_space_group_search": record.space_group_search or None,
+        "_anyterial_classification": record.classification or None,
+        "_anyterial_magnetic_phases": _nullable_list(record.magnetic_phases),
+        "_anyterial_wave_classes": _nullable_list(record.wave_classes),
+        "_anyterial_parent_spacegroups": _nullable_list(record.parent_spacegroups),
+        "_anyterial_icsd_ids": _nullable_list(record.icsd_ids),
+        "_anyterial_search_text": record.search_text or None,
+        # An unresolved linked MAGNDATA id deliberately produces []: the detail
+        # page renders its no-symmetry-record placeholder from that state.
+        "_anyterial_magndata_variants": variants,
+        "_anyterial_figures": _figure_payload(record, public_base_url),
+        "_anyterial_max_spin_splitting": record.max_ss,
+        "_anyterial_avg_spin_splitting": record.avg_ss,
+        "_anyterial_spin_splitting_fraction": (None if record.fdelta_pct is None else record.fdelta_pct / 100.0),
+        "_httk_dft_band_gap": record.bandgap,
+        "_anyterial_electronic_type": record.electronic_type,
+        "_anyterial_min_crustal_abundance": record.min_abund_ppm,
+        "_anyterial_magnetic_phase": _screening_phase(record.magnetic_phases[0]) if record.magnetic_phases else None,
+        "_anyterial_wave_class": record.wave_classes[0] if record.wave_classes else None,
+        "_httk_magnetic_space_group_bns": (variants[0]["bns"][0] if variants and variants[0]["bns"] else None),
+        "_httk_magndata_ids": [link.record.id for link in record.links] or None,
+    }
+
+
+def build_dataset(
+    public_base_url: str = DEFAULT_PUBLIC_BASE_URL,
+    *,
+    records_out: MutableMapping[str, Any] | None = None,
+) -> tuple[
     dict[str, Any],
     dict[str, dict[str, Any]],
     dict[str, dict[str, tuple[str, ...]]],
@@ -176,9 +256,10 @@ def build_dataset() -> tuple[
     """Assemble the structures, per-material properties, relationships, and references."""
     data_dir = material_store.resolve_data_dir()
     details_dir = material_store.resolve_details_dir()
-    screening = _read_csv(data_dir / material_store.SCREENING_RESULTS_FILENAME, delimiter=";")
+    public_base_url = public_base_url.rstrip("/")
 
     stored_structures: dict[str, Any] = {}
+    material_records: dict[str, Any] = {}
     opened = material_store.open_material_store(data_dir=data_dir, details_dir=details_dir)
     if opened is None:
         logger.warning("No material store could be opened; every structure will serve null")
@@ -189,6 +270,7 @@ def build_dataset() -> tuple[
             material = searcher.variable(material_store.MaterialRecord)
             for result in searcher.results(material=material):
                 record = result["material"]
+                material_records[record.id] = record
                 structure = material_store.material_structure(record)
                 if structure is not None:
                     stored_structures[record.id] = structure
@@ -208,68 +290,47 @@ def build_dataset() -> tuple[
                 "(was the store built with the detail tree and httk-io available?)"
             )
 
-    symmetry_by_magndata: dict[str, list[dict[str, str]]] = {}
-    symmetry_rows: list[dict[str, str]] = []
-    for filename in SYMMETRY_CSVS:
-        for row in _read_csv(data_dir / filename, delimiter=","):
-            magndata_id = (row.get("MAGNDATAId") or "").strip()
-            if magndata_id:
-                symmetry_by_magndata.setdefault(magndata_id, []).append(row)
-            symmetry_rows.append(row)
-
-    # References: dedupe DOIs across both symmetry tables in first-seen order.
+    # References: dedupe DOIs across the normalized material records in first-seen order.
     reference_id_by_doi: dict[str, str] = {}
     references: dict[str, dict[str, Any]] = {}
-    for row in symmetry_rows:
-        doi = (row.get("ReferenceDOI") or "").strip()
-        if not doi or doi == "?" or doi in reference_id_by_doi:
-            continue
-        reference_id = f"anyt:ref-{len(references) + 1:04d}"
-        reference_id_by_doi[doi] = reference_id
-        references[reference_id] = {"doi": doi}
+    for record in material_records.values():
+        for doi in record.dois:
+            if doi not in reference_id_by_doi:
+                reference_id = f"anyt:ref-{len(references) + 1:04d}"
+                reference_id_by_doi[doi] = reference_id
+                references[reference_id] = {"doi": doi}
 
     structures: dict[str, Any] = {}
     properties: dict[str, dict[str, Any]] = {}
     relationships: dict[str, dict[str, tuple[str, ...]]] = {}
 
-    for row in screening:
-        material_id = (row.get("AMDBId") or "").strip()
-        if not material_id:
-            continue
-        magndata_ids = [part.strip() for part in (row.get("MAGNDATA ID") or "").split(",") if part.strip()]
-        linked = [entry for magndata_id in magndata_ids for entry in symmetry_by_magndata.get(magndata_id, [])]
-
-        band_gap = _to_float(row.get("Bandgap"))
-        fraction = _to_float(row.get("FdeltaPct"))
-        properties[material_id] = {
-            "_anyterial_max_spin_splitting": _to_float(row.get("MaxSS")),
-            "_anyterial_avg_spin_splitting": _to_float(row.get("AvgSS")),
-            "_anyterial_spin_splitting_fraction": None if fraction is None else fraction / 100.0,
-            "_httk_dft_band_gap": band_gap,
-            "_anyterial_electronic_type": _electronic_type(band_gap),
-            "_anyterial_min_crustal_abundance": _to_float(row.get("MinAbundPpm")),
-            "_anyterial_magnetic_phase": _first_nonempty(entry.get("MagneticPhase") for entry in linked),
-            "_anyterial_wave_class": _first_nonempty(entry.get("WaveClassSimple") for entry in linked),
-            "_httk_magnetic_space_group_bns": _first_nonempty(strip_latex_bns(entry.get("BNS")) for entry in linked),
-            "_httk_magndata_ids": magndata_ids or None,
-        }
+    for material_id, record in material_records.items():
+        properties[material_id] = _material_properties(record, public_base_url)
         structures[material_id] = stored_structures.get(material_id)
 
         reference_ids: list[str] = []
-        for entry in linked:
-            matched = reference_id_by_doi.get((entry.get("ReferenceDOI") or "").strip())
+        for doi in record.dois:
+            matched = reference_id_by_doi.get(doi)
             if matched is not None and matched not in reference_ids:
                 reference_ids.append(matched)
         if reference_ids:
             relationships[material_id] = {"references": tuple(reference_ids)}
 
+    if records_out is not None:
+        records_out.update(material_records)
     return structures, properties, relationships, references
 
 
-def build_providers() -> list[Any]:
+def build_providers(
+    public_base_url: str = DEFAULT_PUBLIC_BASE_URL,
+    *,
+    material_records: MutableMapping[str, Any] | None = None,
+) -> list[Any]:
     """Register the ``_anyterial_`` prefix and build the structures + references providers."""
     register_definition_prefix("_anyterial_", ANYTERIAL_DEFS_BASE)
-    structures, properties, relationships, references = build_dataset()
+    structures, properties, relationships, references = build_dataset(
+        public_base_url=public_base_url, records_out=material_records
+    )
     structure_provider = AltermagnetStructureProvider(
         structures,
         extra_definitions=load_schema_definitions(),
@@ -325,6 +386,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default="127.0.0.1", help="host to bind when serving")
     parser.add_argument("--port", type=int, default=8081, help="port to bind when serving")
     parser.add_argument(
+        "--public-base-url",
+        default=DEFAULT_PUBLIC_BASE_URL,
+        help="absolute base URL used in figure metadata",
+    )
+    parser.add_argument(
+        "--cors-origin",
+        action="append",
+        default=[],
+        help="exact browser origin allowed to query OPTIMADE (repeatable)",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="count",
@@ -335,10 +407,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.verbose:
         report.configure_reporting(level="debug" if args.verbose > 1 else "info")
 
-    providers = build_providers()
+    records: dict[str, Any] = {}
+    providers = build_providers(public_base_url=args.public_base_url, material_records=records)
     if args.validate:
         return run_validation(providers)
-    serve(adapter_from_providers(providers), host=args.host, port=args.port)
+    app = build_service_app(
+        public_base_url=args.public_base_url,
+        cors_origins=args.cors_origin,
+        providers=providers,
+        dataset=records,
+    )
+    run_dev_server(app=app, host=args.host, port=args.port)
     return 0
 
 

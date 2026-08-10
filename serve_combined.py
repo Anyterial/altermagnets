@@ -5,13 +5,12 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
-from httk.serve.optimade import OptimadeConfig, adapter_from_providers
-from httk.serve.optimade import create_asgi_app as create_optimade_asgi_app
 from httk.serve.web import create_asgi_app as create_web_asgi_app
 from httk.serve.web.runtime.devserver import run_dev_server
 from starlette.applications import Starlette
 from starlette.routing import Mount
 
+from optimade_service import build_service_app  # isort: skip
 from serve_optimade import build_providers  # isort: skip
 
 ROOT = Path(__file__).resolve().parent
@@ -21,12 +20,13 @@ def _default_web_app() -> Starlette:
     return create_web_asgi_app(ROOT / "src", config_name="config_combined")
 
 
-def _default_optimade_app() -> Starlette:
-    return create_optimade_asgi_app(
-        adapter_from_providers(build_providers()),
-        OptimadeConfig(cors_origins=()),
-        baseurl=None,
-    )
+DEFAULT_COMBINED_PUBLIC_BASE_URL = "http://127.0.0.1:8080/optimade"
+
+
+def _default_optimade_app(public_base_url: str = DEFAULT_COMBINED_PUBLIC_BASE_URL) -> Starlette:
+    records: dict[str, object] = {}
+    providers = build_providers(public_base_url=public_base_url, material_records=records)
+    return build_service_app(public_base_url=public_base_url, providers=providers, dataset=records)
 
 
 def _close_created_web_app(app: Starlette, operation_error: BaseException) -> None:
@@ -60,6 +60,7 @@ def create_combined_app(
     optimade_app: Starlette | None = None,
     web_factory: Callable[[], Starlette] | None = None,
     optimade_factory: Callable[[], Starlette] | None = None,
+    public_base_url: str = DEFAULT_COMBINED_PUBLIC_BASE_URL,
 ) -> Starlette:
     """Create the opt-in combined app with OPTIMADE mounted before web routes.
 
@@ -78,7 +79,8 @@ def create_combined_app(
         web_app = (web_factory or _default_web_app)()
     try:
         if optimade_app is None:
-            optimade_app = (optimade_factory or _default_optimade_app)()
+            factory = optimade_factory or (lambda: _default_optimade_app(public_base_url))
+            optimade_app = factory()
     except BaseException as exc:
         if created_web_app:
             _close_created_web_app(web_app, exc)
@@ -103,7 +105,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default="127.0.0.1", help="host to bind when serving")
     parser.add_argument("--port", type=int, default=8080, help="port to bind when serving")
     args = parser.parse_args(argv)
-    run_dev_server(app=create_combined_app(), host=args.host, port=args.port)
+    run_dev_server(
+        app=create_combined_app(public_base_url=f"http://{args.host}:{args.port}/optimade"),
+        host=args.host,
+        port=args.port,
+    )
     return 0
 
 

@@ -1,0 +1,44 @@
+[workflow]
+id = "altermagnets.relax-and-scf-httk-v1"
+description = "Collect finished altermagnets VASP relaxation/SCF results from a httk v1 tree."
+declaration_uri = "https://schemas.httk.org/defs/v0.1/workflows/altermagnets-relax-and-scf-httk-v1"
+
+[workflow.runner]
+language = "httk-v1"
+
+[workflow.collect]
+file = "collect.py"
+
+[workflow.inputs.input_structure]
+role = "input_structure"
+entry_type = "structures"
+
+[workflow.outputs.relaxed_structure]
+role = "relaxed_structure"
+entry_type = "structures"
+ref = "https://schemas.optimade.org/defs/v1.3/entrytypes/optimade/structures"
+product_of = "input_structure"
+
+[workflow.outputs.total_energy]
+role = "total_energy"
+entry_type = "_httk_records"
+ref = "https://schemas.httk.org/defs/v0.1/properties/core/total_energy"
+product_of = "relaxed_structure"
+
+[workflow.outputs.vasprun]
+role = "vasprun"
+entry_type = "files"
+product_of = "relaxed_structure"
+
+[workflow.outputs.doscar]
+role = "doscar"
+entry_type = "files"
+product_of = "relaxed_structure"
+
+[workflow.outputs.splitting_figure]
+role = "splitting_figure"
+entry_type = "files"
+product_of = "relaxed_structure"
+
+# WAVECAR, CHGCAR, and PROCAR are deliberately excluded: they are bulk
+# binaries and are not needed for this ingestion.

@@ -11,6 +11,7 @@ if str(FUNCTIONS) not in sys.path:
 
 from material_store import (
     build_store,
+    default_runs_dir,
     default_store_path,
     resolve_data_dir,
     resolve_details_dir,
@@ -38,6 +39,17 @@ def _arguments() -> argparse.Namespace:
         help=("directory containing generated plot assets (default: ALTERMAGNETS_DETAILS_DIR, then data/details)"),
     )
     parser.add_argument(
+        "--runs-dir",
+        type=Path,
+        default=None,
+        help=f"directory containing finished httk v1 runs (default: {default_runs_dir()})",
+    )
+    parser.add_argument(
+        "--legacy",
+        action="store_true",
+        help="preserve the old details-based structure build and skip v1 ingestion",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="count",
@@ -58,6 +70,8 @@ def main() -> int:
         arguments.target,
         data_dir=arguments.data_dir,
         details_dir=arguments.details_dir,
+        runs_dir=arguments.runs_dir,
+        legacy=arguments.legacy,
         timings=timings,
     )
     print(

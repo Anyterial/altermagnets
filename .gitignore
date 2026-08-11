@@ -1,5 +1,9 @@
 /tools
-/data
+!/data/
+/data/*
+!/data/tables/
+/data/tables/*
+!/data/tables/amdb_run_content_ids.csv
 /public
 *~
 \#*\#

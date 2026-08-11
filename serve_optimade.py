@@ -34,8 +34,8 @@ if str(FUNCTIONS_ROOT) not in sys.path:
 import material_store
 from httk.atomistic import StructureEntryProvider
 from httk.core import PropertyDefinition, RelatedEntry, register_definition_prefix, report
-from httk.store import ReferenceEntryProvider, validate_record
 from httk.serve.web.runtime.devserver import run_dev_server
+from httk.store import ReferenceEntryProvider, validate_record
 from optimade_service import build_service_app, figure_file_is_servable
 
 logger = report.context_logger(logging.getLogger("httk.altermagnets.serve_optimade"), "altermagnets")

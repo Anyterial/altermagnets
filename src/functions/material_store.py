@@ -17,7 +17,7 @@ import re
 import tempfile
 import time
 from collections.abc import Iterable, Mapping, MutableMapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, cast
 
@@ -26,15 +26,21 @@ from httk.atomistic import (
     UnitcellStructure,
     UnitcellStructureView,
 )
+from httk.atomistic.entries.structures import StructureEntry
 from httk.atomistic.storage.records import (
+    ASUStructureRecord,
     CellRecord,
+    FundamentalDomainStructureRecord,
     NormalizedCompositionAmountRecord,
     NormalizedCompositionRecord,
     SitesRecord,
     SpeciesRecord,
     UnitcellStructureRecord,
 )
-from httk.core import File, Indexed, Skip, StorageInfo, Unique, load, report
+from httk.core import DataRecord, File, FileRecord, Indexed, Skip, StorageInfo, Unique, load, report
+from httk.core.data_records import DataRecordEntry
+from httk.core.files import FileEntry
+from httk.core.provenance import Run, RunEntry
 from httk.core.storage import project_storage_record
 from httk.store.db import Database, SqlStore
 
@@ -59,6 +65,7 @@ __all__ = [
     "cleanup_material_store",
     "default_data_dir",
     "default_details_dir",
+    "default_runs_dir",
     "default_store_path",
     "details_dir_for_material",
     "load_material_structure",
@@ -70,6 +77,7 @@ __all__ = [
     "parse_magnetization_moments",
     "resolve_data_dir",
     "resolve_details_dir",
+    "resolve_runs_dir",
     "resolve_store_path",
 ]
 
@@ -93,6 +101,8 @@ MAGNDATA_NONCOLLINEAR_FILENAME = "altermagnets_noncollinear.csv"
 AMDB_ID_COLUMN = "AMDBId"
 AMDB_DATASET = "1"
 STORE_PATH_ENVIRONMENT = "ALTERMAGNETS_STORE_PATH"
+RUNS_PATH_ENVIRONMENT = "ALTERMAGNETS_RUNS_DIR"
+COUPLING_FILENAME = "amdb_run_content_ids.csv"
 DETAILS_PATH_ENVIRONMENT = "ALTERMAGNETS_DETAILS_DIR"
 MATERIAL_ID_PATTERN = re.compile(r"^(?:anyt:)?(?P<family>am|amdb)-(?P<series>[A-Za-z0-9]+)-(?P<number>\d+)$")
 LEGACY_MATERIAL_ID_PATTERN = re.compile(r"^(?:anyt:)?amdb-(?P<number>\d+)$")
@@ -269,6 +279,11 @@ def default_details_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "data" / "details"
 
 
+def default_runs_dir() -> Path:
+    """The conventional imported httk v1 result tree."""
+    return Path(__file__).resolve().parents[2] / "data" / "raw_httk_v1" / "1" / "Runs"
+
+
 def default_store_path() -> Path:
     """The checked-in-location persistent site store (normally git-ignored)."""
     return Path(__file__).resolve().parents[2] / "data" / "altermagnets.duckdb"
@@ -293,6 +308,16 @@ def resolve_details_dir(value: str | os.PathLike[str] | None = None) -> Path:
     if override:
         return Path(override).expanduser().resolve()
     return default_details_dir()
+
+
+def resolve_runs_dir(value: str | os.PathLike[str] | None = None) -> Path:
+    """Resolve the imported v1 result tree."""
+    if value is not None:
+        return Path(value).expanduser().resolve()
+    override = os.environ.get(RUNS_PATH_ENVIRONMENT, "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    return default_runs_dir()
 
 
 def resolve_store_path(value: str | os.PathLike[str] | None = None) -> Path:
@@ -613,13 +638,16 @@ def _source_table_paths(data_dir: Path) -> tuple[Path, Path, Path]:
     )
 
 
-def _load_source_materials(data_dir: Path, *, details_dir: Path) -> tuple[MaterialRecord, ...]:
+def _load_source_materials(
+    data_dir: Path, *, details_dir: Path, legacy_structures: bool = True
+) -> tuple[MaterialRecord, ...]:
     screening_path, collinear_path, noncollinear_path = _source_table_paths(data_dir)
     return build_material_records(
         _load_csv_rows(screening_path, delimiter=";"),
         _load_csv_rows(collinear_path),
         _load_csv_rows(noncollinear_path),
         details_dir=details_dir,
+        load_details_structures=legacy_structures,
     )
 
 
@@ -762,6 +790,7 @@ def build_material_records(
     noncollinear_rows: list[dict[str, str]],
     *,
     details_dir: Path | None = None,
+    load_details_structures: bool = True,
 ) -> tuple[MaterialRecord, ...]:
     """Normalize the three current CSVs into the persistent object graph."""
     grouped_variants: dict[str, list[SymmetryVariant]] = {}
@@ -827,7 +856,11 @@ def build_material_records(
                 classification,
             )
         ).strip()
-        loaded_structure = None if details_dir is None else load_material_structure(details_dir, material_id)
+        loaded_structure = (
+            None
+            if details_dir is None or not load_details_structures
+            else load_material_structure(details_dir, material_id)
+        )
         materials.append(
             MaterialRecord(
                 id=material_id,
@@ -872,11 +905,209 @@ def build_material_records(
     return tuple(materials)
 
 
+@dataclass(frozen=True)
+class _RunObservation:
+    material: str
+    run_id: str
+    structure_id: str
+    structure: Any
+
+
+def _run_observations(items: Iterable[Any]) -> tuple[_RunObservation, ...]:
+    observations: list[_RunObservation] = []
+    from httk.workflow.compat.v1.reader import parse_v1_task_name
+
+    for item in items:
+        if getattr(item, "missing_collector", None) is not None:
+            continue
+        outputs = getattr(item, "outputs", {})
+        relaxed = outputs.get("relaxed_structure") if isinstance(outputs, Mapping) else None
+        run = getattr(item, "run", None)
+        if relaxed is None or run is None:
+            continue
+        parsed = parse_v1_task_name(item.record.payload_path.name)
+        task_id = item.record.payload_path.name if parsed is None else parsed["task_id"]
+        observations.append(_RunObservation(task_id.removesuffix("_SCF"), run.id, relaxed.id, relaxed))
+    return tuple(sorted(observations, key=lambda item: (item.material, item.run_id)))
+
+
+def _coupling_row(
+    amdb_id: str,
+    run_material: str,
+    *,
+    structure_id: str = "",
+    run_id: str = "",
+    status: str,
+) -> dict[str, str]:
+    return {
+        "AMDBId": amdb_id,
+        "run_material": run_material,
+        "structure_content_id": structure_id,
+        "run_content_id": run_id,
+        "status": status,
+    }
+
+
+def _write_coupling(path: Path, rows: Iterable[Mapping[str, str]]) -> None:
+    fields = ("AMDBId", "run_material", "structure_content_id", "run_content_id", "status")
+    rows = list(rows)
+    keys: set[tuple[str, str]] = set()
+    for row in rows:
+        if set(row) != set(fields):
+            raise ValueError(f"{path}: invalid coupling row columns")
+        key = (row["AMDBId"], row["run_material"])
+        if key in keys:
+            raise ValueError(f"{path}: duplicate coupling row {key[0]}/{key[1]}")
+        keys.add(key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields, delimiter=";", lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(cast(Any, rows))
+        os.replace(temporary_path, path)
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
+def _is_run_material(material: str, csv_material: str) -> bool:
+    return material == csv_material or re.fullmatch(rf"{re.escape(csv_material)}-\d+", material) is not None
+
+
+def _build_coupling(
+    data_dir: Path,
+    observations: tuple[_RunObservation, ...],
+) -> tuple[dict[str, _RunObservation], dict[str, int]]:
+    """Build and verify the deterministic AMDB-to-v1 coupling document."""
+    screening = _load_csv_rows(data_dir / SCREENING_RESULTS_FILENAME, delimiter=";")
+    source_materials: dict[str, str] = {}
+    materials_to_amdb: dict[str, list[str]] = {}
+    for source_row in screening:
+        amdb_id = (source_row.get(AMDB_ID_COLUMN) or "").strip()
+        material = (source_row.get("Material") or "").strip()
+        if not amdb_id or not material:
+            raise ValueError(f"{data_dir / SCREENING_RESULTS_FILENAME}: missing AMDBId or Material")
+        if amdb_id in source_materials:
+            raise ValueError(f"duplicate canonical material ID '{amdb_id}'")
+        source_materials[amdb_id] = material
+        materials_to_amdb.setdefault(material, []).append(amdb_id)
+    coupling_path = data_dir / COUPLING_FILENAME
+    previous = _load_csv_rows(coupling_path, delimiter=";") if coupling_path.is_file() else []
+    required = {"AMDBId", "run_material", "structure_content_id", "run_content_id", "status"}
+    for row in previous:
+        if set(row) != required:
+            raise ValueError(f"{coupling_path}: expected columns {sorted(required)!r}")
+
+    by_material: dict[str, list[_RunObservation]] = {}
+    for observation in observations:
+        by_material.setdefault(observation.material, []).append(observation)
+    rows: dict[tuple[str, str], dict[str, str]] = {}
+    coupled: dict[str, _RunObservation] = {}
+
+    statuses = {"auto", "ambiguous", "curated"}
+    row_keys: set[tuple[str, str]] = set()
+    active_ids: set[str] = set()
+    for row in previous:
+        amdb_id = row[AMDB_ID_COLUMN].strip()
+        material = row["run_material"].strip()
+        status = row["status"].strip()
+        key = (amdb_id, material)
+        if amdb_id not in source_materials:
+            raise ValueError(f"coupling row {amdb_id}/{material}: AMDBId is absent from the CSV")
+        if not _is_run_material(material, source_materials[amdb_id]):
+            raise ValueError(f"coupling row {amdb_id}/{material}: material does not match the CSV row")
+        if status not in statuses:
+            raise ValueError(f"coupling row {amdb_id}/{material}: invalid status {status!r}")
+        if key in row_keys:
+            raise ValueError(f"duplicate coupling row {amdb_id}/{material}")
+        row_keys.add(key)
+        has_structure_id = bool(row["structure_content_id"].strip())
+        has_run_id = bool(row["run_content_id"].strip())
+        if status == "ambiguous" and (has_structure_id or has_run_id):
+            raise ValueError(f"coupling row {amdb_id}/{material}: ambiguous rows must have empty content-ids")
+        if status in {"auto", "curated"} and not (has_structure_id and has_run_id):
+            raise ValueError(f"coupling row {amdb_id}/{material}: active rows require content-ids")
+        if status in {"auto", "curated"}:
+            if amdb_id in active_ids:
+                raise ValueError(f"coupling row {amdb_id}/{material}: multiple active rows for AMDBId")
+            active_ids.add(amdb_id)
+
+        # Keep the user's row values untouched. A transferred partial tree may
+        # not contain the run named by a curated row yet.
+        rows[key] = dict(row)
+        actuals = by_material.get(material, ())
+        if not actuals or status == "ambiguous":
+            continue
+        if len(actuals) != 1:
+            raise ValueError(f"coupling row {amdb_id}/{material}: run material is not unique in this build")
+        actual = actuals[0]
+        if (row["structure_content_id"].strip(), row["run_content_id"].strip()) != (
+            actual.structure_id,
+            actual.run_id,
+        ):
+            raise ValueError(f"Coupling row {amdb_id}/{material} does not match ingested content-ids")
+        if status in {"auto", "curated"}:
+            coupled[amdb_id] = actual
+
+    for amdb_id, material in sorted(source_materials.items()):
+        if any(key[0] == amdb_id for key in rows):
+            continue
+        exact = by_material.get(material, [])
+        variants = [
+            item for item in observations if _is_run_material(item.material, material) and item.material != material
+        ]
+        candidates = exact + variants
+        if len(exact) == 1 and not variants and len(materials_to_amdb[material]) == 1:
+            observation = exact[0]
+            row = _coupling_row(
+                amdb_id,
+                material,
+                structure_id=observation.structure_id,
+                run_id=observation.run_id,
+                status="auto",
+            )
+            rows[(amdb_id, material)] = row
+            coupled[amdb_id] = observation
+        elif candidates:
+            logger.warning("Ambiguous run match for %s (%s)", amdb_id, material)
+            run_material = material if exact else min(item.material for item in variants)
+            rows[(amdb_id, run_material)] = _coupling_row(amdb_id, run_material, status="ambiguous")
+        else:
+            logger.warning("No ingested run for CSV material %s (%s)", amdb_id, material)
+
+    for observation in observations:
+        if not any(_is_run_material(observation.material, material) for material in materials_to_amdb):
+            logger.warning("Ingested run %s has no CSV material row", observation.material)
+
+    ordered = sorted(rows.values(), key=lambda row: (row[AMDB_ID_COLUMN], row["run_material"]))
+    _write_coupling(coupling_path, ordered)
+    counts: dict[str, int] = {}
+    for row in ordered:
+        counts[row["status"]] = counts.get(row["status"], 0) + 1
+    logger.info("Wrote %s coupling rows: %s", coupling_path, counts)
+    return coupled, counts
+
+
+def _entry_records_layout() -> dict[type, type | tuple[type, ...]]:
+    """Mirror workflow ``--into`` with the altermagnets structure families."""
+    return {
+        StructureEntry: (UnitcellStructureRecord, FundamentalDomainStructureRecord, ASUStructureRecord),
+        RunEntry: Run,
+        DataRecordEntry: DataRecord,
+        FileEntry: FileRecord,
+    }
+
+
 def build_store(
     target: str | os.PathLike[str] | None = None,
     *,
     data_dir: str | os.PathLike[str] | None = None,
     details_dir: str | os.PathLike[str] | None = None,
+    runs_dir: str | os.PathLike[str] | None = None,
+    legacy: bool = False,
     timings: MutableMapping[str, float] | None = None,
 ) -> Path:
     """Build a fresh store next to ``target`` and atomically replace it.
@@ -892,9 +1123,47 @@ def build_store(
     resolved_target = resolve_store_path(target)
     source_dir = resolve_data_dir(data_dir)
     resolved_details_dir = resolve_details_dir(details_dir)
+    resolved_runs_dir = resolve_runs_dir(runs_dir)
     load_started = time.perf_counter()
-    materials = _load_source_materials(source_dir, details_dir=resolved_details_dir)
+    items: list[Any] = []
+    coupled: dict[str, _RunObservation] = {}
+    coupling_counts: dict[str, int] = {}
+    if not legacy:
+        from httk.workflow.compat.v1 import collect_finished_tree
+
+        if resolved_runs_dir.is_dir():
+            items = list(
+                collect_finished_tree(
+                    resolved_runs_dir,
+                    workflow_dir=Path(__file__).resolve().parents[2] / "workflows" / "relax_and_scf_httk_v1",
+                )
+            )
+        else:
+            logger.warning("No v1 runs directory at %s; building the partial tabular store", resolved_runs_dir)
+        observations = _run_observations(items)
+        coupled, coupling_counts = _build_coupling(source_dir, observations)
+    materials = _load_source_materials(
+        source_dir,
+        details_dir=resolved_details_dir,
+        legacy_structures=legacy,
+    )
+    if coupled:
+        materials = tuple(
+            replace(
+                material,
+                structure=_material_structure_record(coupled[material.id].structure.unwrap()),
+            )
+            if material.id in coupled
+            else material
+            for material in materials
+        )
     load_elapsed = time.perf_counter() - load_started
+    logger.info(
+        "Collected %d v1 tasks, %d with relaxed structures, coupling rows %s",
+        len(items),
+        len(coupled),
+        coupling_counts,
+    )
 
     resolved_target.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
@@ -909,14 +1178,24 @@ def build_store(
     try:
         created_database = Database.duckdb(temporary_path)
         database = created_database
-        # This is a private, custom-record store rather than an OPTIMADE entry
-        # store.  Declare that fact when creating its versioned layout.
-        store = SqlStore(created_database, entry_records={})
+        store = SqlStore(
+            created_database,
+            entry_records={} if legacy else _entry_records_layout(),
+        )
         # Bulk ingestion creates the tables index-less and builds the indexes
         # once the stream completes, so no separate ensure_tables/transaction.
         write_started = time.perf_counter()
-        with store.bulk_ingest() as bulk:
+        bulk_context = store.bulk_ingest() if legacy else store.bulk_ingest(finalize="parity")
+        with bulk_context as bulk:
             bulk.save(StoreLayout(STORE_LAYOUT_VERSION))
+            if not legacy:
+                for item in items:
+                    if getattr(item, "missing_collector", None) is None:
+                        for value in item.outputs.values():
+                            bulk.save(value)
+                        bulk.save(item.run)
+                        for product in item.products:
+                            bulk.save(product)
             for material in materials:
                 bulk.save(material)
         write_elapsed = time.perf_counter() - write_started

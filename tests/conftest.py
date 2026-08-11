@@ -228,4 +228,4 @@ def material_store_path(tmp_path: Path) -> Path:
     source = write_source_tables(tmp_path / "tables")
     details = write_detail_assets(tmp_path / "details")
     target = tmp_path / "altermagnets.duckdb"
-    return build_store(target, data_dir=source, details_dir=details)
+    return build_store(target, data_dir=source, details_dir=details, legacy=True)

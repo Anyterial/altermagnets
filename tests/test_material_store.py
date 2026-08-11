@@ -48,9 +48,7 @@ def test_load_material_structure_reads_vasp_z_axis_moments(tmp_path: Path) -> No
     structure = load_material_structure(details, "anyt:am-1-0001")
     assert structure is not None
     assert structure.site_moments is not None
-    assert structure.site_moments == CartesianSiteMoments(
-        [[0.0, 0.0, 0.6], [0.0, 0.0, 0.0], [0.0, 0.0, 1.25]]
-    )
+    assert structure.site_moments == CartesianSiteMoments([[0.0, 0.0, 0.6], [0.0, 0.0, 0.0], [0.0, 0.0, 1.25]])
 
 
 def test_load_material_structure_warns_and_omits_invalid_moments(tmp_path: Path, caplog) -> None:
@@ -67,7 +65,7 @@ def test_material_structure_round_trips_through_store(tmp_path: Path) -> None:
     details = write_detail_assets(tmp_path / "details")
     expected = load_material_structure(details, "anyt:am-1-0001")
     assert expected is not None
-    store_path = build_store(tmp_path / "store.duckdb", data_dir=source, details_dir=details)
+    store_path = build_store(tmp_path / "store.duckdb", data_dir=source, details_dir=details, legacy=True)
     opened = open_prebuilt_store(store_path)
     assert opened is not None
     try:
@@ -86,7 +84,7 @@ def test_material_structure_round_trips_through_store(tmp_path: Path) -> None:
 def test_stale_layout_store_is_rejected_and_falls_back(tmp_path: Path, monkeypatch, caplog) -> None:
     source = write_source_tables(tmp_path / "tables")
     details = write_detail_assets(tmp_path / "details")
-    store_path = build_store(tmp_path / "store.duckdb", data_dir=source, details_dir=details)
+    store_path = build_store(tmp_path / "store.duckdb", data_dir=source, details_dir=details, legacy=True)
 
     # A store from an older schema generation carries an older (or no) layout
     # stamp; it must be treated as stale rather than silently adopted.
@@ -107,5 +105,15 @@ def test_build_reports_structure_summary(tmp_path: Path, caplog) -> None:
     source = write_source_tables(tmp_path / "tables")
     details = write_detail_assets(tmp_path / "details")
     with caplog.at_level("INFO", logger="httk.altermagnets.material_store"):
-        build_store(tmp_path / "store.duckdb", data_dir=source, details_dir=details)
+        build_store(tmp_path / "store.duckdb", data_dir=source, details_dir=details, legacy=True)
     assert "material records" in caplog.text and "with structures" in caplog.text
+
+
+def test_two_successive_builds_replace_the_same_target(tmp_path: Path) -> None:
+    source = write_source_tables(tmp_path / "tables")
+    details = write_detail_assets(tmp_path / "details")
+    target = tmp_path / "store.duckdb"
+    runs = tmp_path / "runs"
+    build_store(target, data_dir=source, details_dir=details, runs_dir=runs)
+    build_store(target, data_dir=source, details_dir=details, runs_dir=runs)
+    assert target.is_file() and target.stat().st_size > 0

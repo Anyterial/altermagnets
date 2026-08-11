@@ -41,7 +41,7 @@ def test_builder_atomically_replaces_an_existing_target(tmp_path: Path) -> None:
     source = write_source_tables(tmp_path / "tables")
     target = tmp_path / "altermagnets.duckdb"
     target.write_text("previous incomplete store", encoding="utf-8")
-    assert build_store(target, data_dir=source) == target
+    assert build_store(target, data_dir=source, legacy=True) == target
     assert target.read_bytes() != b"previous incomplete store"
     opened = open_prebuilt_store(target)
     assert opened is not None
@@ -79,7 +79,7 @@ def test_builder_rejects_duplicates_and_nonfinite_values(tmp_path: Path) -> None
         duplicate + duplicate.splitlines()[1] + "\n", encoding="utf-8"
     )
     try:
-        build_store(tmp_path / "duplicate.duckdb", data_dir=source)
+        build_store(tmp_path / "duplicate.duckdb", data_dir=source, legacy=True)
     except ValueError as error:
         assert "duplicate canonical material ID 'anyt:am-1-0001'" in str(error)
     else:

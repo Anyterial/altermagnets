@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 
 import { DomDocument, element, installDom } from "./dom.mjs";
 
-const API = "https://api.example.test/optimade";
+const API = "https://api.example.test/optimade/amdb";
 const MATERIAL_ID = "anyt:am-1/0001";
 const siblingProtocol = new URL("../../httk-serve/src/httk/serve/web/assets/serve-optimade-table-protocol.mjs", import.meta.url);
 
@@ -65,20 +65,20 @@ function fetchFor(resource, included = []) {
   const fetch = async (request) => {
     const url = new URL(request);
     requests.push(url);
-    if (url.pathname === "/optimade/versions") return textResponse("version\n1\n", url.href);
-    if (url.pathname === "/optimade/v1/info") return jsonResponse({
+    if (url.pathname === "/optimade/amdb/versions") return textResponse("version\n1\n", url.href);
+    if (url.pathname === "/optimade/amdb/v1/info") return jsonResponse({
       data: { id: "/", type: "info", attributes: {
         api_version: "1.3.0", formats: ["json"], entry_types_by_format: { json: ["structures"] },
         available_endpoints: ["info", "structures"],
       } },
     }, url.href);
-    if (url.pathname === "/optimade/v1/info/structures") return jsonResponse({
+    if (url.pathname === "/optimade/amdb/v1/info/structures") return jsonResponse({
       data: {
         id: "structures", type: "info", properties: Object.fromEntries(fields.map((name) => [name, {}])),
         formats: ["json"], output_fields_by_format: { json: fields },
       },
     }, url.href);
-    if (url.pathname.startsWith("/optimade/v1/structures/")) {
+    if (url.pathname.startsWith("/optimade/amdb/v1/structures/")) {
       return jsonResponse(pageResponse(resource, included), url.href);
     }
     throw new Error(`unexpected URL ${url}`);
@@ -125,7 +125,7 @@ const realisticResource = {
     _httk_custom_figures: [
       { key: "band", available: true, url: `${API}/extensions/figures/band.svg`, dark_url: `${API}/extensions/figures/dark-band.svg` },
       { key: "structure", available: true, url: "https://evil.example/structure.svg" },
-      { key: "bz", available: true, url: "http://api.example.test/optimade/extensions/figures/bz.svg" },
+      { key: "bz", available: true, url: "http://api.example.test/optimade/amdb/extensions/figures/bz.svg" },
     ],
   },
   relationships: { references: { data: [{ type: "references", id: "ref/1" }] } },
@@ -148,7 +148,7 @@ test("material detail renders payload, safe figures, links, references, and aggr
   assert.equal(result.innerHTML.includes("<script>alert(1)</script>"), false);
   assert.equal(result.innerHTML.includes('<img src="x">'), false);
   assert.equal(network.requests.at(-1).searchParams.get("include"), "references");
-  assert.equal(network.requests.at(-1).pathname, `/optimade/v1/structures/${encodeURIComponent(MATERIAL_ID)}`);
+  assert.equal(network.requests.at(-1).pathname, `/optimade/amdb/v1/structures/${encodeURIComponent(MATERIAL_ID)}`);
   assert.equal(document.baseURI, "https://site.example.test/material");
 });
 

@@ -227,7 +227,9 @@ def test_service_figure_route_whitelist_headers_and_dark_cache(providers: list, 
     assert client.get(f"/extensions/figures/{material_id}/%2e%2e/CONTCAR").status_code == 404
 
 
-def test_service_dark_cache_respects_byte_budget(providers: list, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_service_dark_cache_respects_byte_budget(
+    providers: list, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     dataset, material_id, svg_path, _ = _figure_dataset(tmp_path)
     monkeypatch.setattr(optimade_service, "DARK_CACHE_MAX_BYTES", 1)
     app = build_service_app(
@@ -246,7 +248,10 @@ def test_service_dark_cache_respects_byte_budget(providers: list, tmp_path: Path
 def test_size_none_is_unavailable_in_projection_and_route(providers: list, tmp_path: Path) -> None:
     dataset, material_id, _svg_path, _ = _figure_dataset(tmp_path)
     record = dataset[material_id]
-    record.figures = (replace(record.figures[0], light=replace(record.figures[0].light, size=None)), *record.figures[1:])
+    record.figures = (
+        replace(record.figures[0], light=replace(record.figures[0].light, size=None)),
+        *record.figures[1:],
+    )
     projected = serve_optimade._figure_payload(record, "http://testserver")
     assert projected[0] == {
         "key": "band",
@@ -324,6 +329,27 @@ def test_service_info_exposes_license_configuration(providers: list, tmp_path: P
     assert attributes["license"] == "https://altermagnets.anyterial.se/about#legal"
     assert attributes["available_licenses"] == []
     assert attributes["available_licenses_for_entries"] == ["CC-BY-NC-4.0"]
+
+
+def test_standalone_service_links_advertise_one_root_self_link(providers: list, tmp_path: Path) -> None:
+    app = build_service_app(
+        public_base_url="https://amdb.example.test/optimade/amdb",
+        providers=providers,
+        dataset={},
+        details_root=tmp_path,
+    )
+    links = ApiClient(app).get("/v1/links").json()["data"]
+    configured = [item for item in links if item["id"] != "optimade"]
+
+    assert len(configured) == 1
+    assert configured[0]["id"] == "amdb"
+    assert configured[0]["attributes"]["name"] == "Anyterial Altermagnets Database"
+    assert configured[0]["attributes"]["description"] == (
+        "A database of materials computationally predicted to exhibit altermagnetism."
+    )
+    assert configured[0]["attributes"]["base_url"] == "https://amdb.example.test/optimade/amdb"
+    assert configured[0]["attributes"]["homepage"] == "https://altermagnets.anyterial.se"
+    assert configured[0]["attributes"]["link_type"] == "root"
 
 
 def test_standalone_service_api_figure_url_resolves_through_same_app() -> None:

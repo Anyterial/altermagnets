@@ -18,6 +18,7 @@ import publish_static
 import pytest
 import serve_optimade
 from conftest import write_detail_assets, write_source_tables
+from httk.serve import ASGIAppMount, compose_asgi_apps
 from optimade_service import build_service_app
 
 BROWSER_REQUIRED = os.environ.get("ALTERMAGNETS_BROWSER_REQUIRED") == "1"
@@ -182,17 +183,19 @@ def two_origins(tmp_path_factory: pytest.TempPathFactory) -> Origins:
         api_port = _free_port()
     except PermissionError as error:
         _unavailable(f"Localhost sockets are unavailable: {error}")
-    api_url = f"http://127.0.0.1:{api_port}"
+    api_origin = f"http://127.0.0.1:{api_port}"
+    api_url = f"{api_origin}/optimade/amdb"
     static_root = tmp_path_factory.mktemp("static-site")
     publish_static.publish_site(static_root, optimade_base_url=api_url)
     static_server, static_thread = _start_static_server(static_root)
     site_url = f"http://127.0.0.1:{static_server.server_port}"
     use_synthetic = os.environ.get(SYNTHETIC_DATA_ENVIRONMENT) == "1" or not _has_source_tables()
-    app = (
+    service_app = (
         _synthetic_app(tmp_path_factory, api_url, site_url)
         if use_synthetic
         else build_service_app(public_base_url=api_url, cors_origins=(site_url,))
     )
+    app = compose_asgi_apps([ASGIAppMount("/optimade/amdb", service_app)])
     api_server = uvicorn.Server(
         uvicorn.Config(app, host="127.0.0.1", port=api_port, log_level="warning", access_log=False)
     )

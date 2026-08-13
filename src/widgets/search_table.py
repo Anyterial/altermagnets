@@ -9,7 +9,7 @@ def render(context, **props):
     """Render the site's nine-column OPTIMADE search table."""
 
     del props
-    base_url = os.environ.get("ALTERMAGNETS_OPTIMADE_BASE_URL", "/optimade").rstrip("/") or "/"
+    base_url = os.environ.get("ALTERMAGNETS_OPTIMADE_BASE_URL", "/optimade/amdb").rstrip("/") or "/"
     return render_optimade_table(
         context,
         base_url=base_url,

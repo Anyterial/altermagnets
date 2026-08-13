@@ -29,6 +29,50 @@ MAX_FIGURE_BYTES = 8 * 1024 * 1024
 DARK_CACHE_MAX_ENTRIES = 32
 DARK_CACHE_MAX_BYTES = 64 * 1024 * 1024
 
+AMDB_PROVIDER = {
+    "name": "Anyterial",
+    "description": "The Anyterial collection of materials databases.",
+    "prefix": "anyt",
+}
+AMDB_NAME = "Anyterial Altermagnets Database"
+AMDB_DESCRIPTION = "A database of materials computationally predicted to exhibit altermagnetism."
+AMDB_HOMEPAGE = "https://altermagnets.anyterial.se"
+INDEX_NAME = "Anyterial OPTIMADE Index"
+INDEX_DESCRIPTION = "Index meta-database for the Anyterial collection of materials databases."
+
+
+def _service_config(
+    *,
+    public_base_url: str,
+    root_link_target: str | None,
+    root_link_id: str | None,
+    root_link_name: str,
+    root_link_description: str,
+    root_link_homepage: str,
+    cors_origins: Iterable[str],
+) -> OptimadeConfig:
+    """Build the AMDB metadata, including its one configured root link."""
+    public_base_url = public_base_url.rstrip("/")
+    target = (root_link_target or public_base_url).rstrip("/")
+    link_id = root_link_id or ("amdb" if root_link_target is None else "index")
+    return OptimadeConfig(
+        provider=dict(AMDB_PROVIDER),
+        links=[
+            {
+                "id": link_id,
+                "name": root_link_name,
+                "description": root_link_description,
+                "base_url": target,
+                "homepage": root_link_homepage.rstrip("/"),
+                "link_type": "root",
+            }
+        ],
+        license="https://altermagnets.anyterial.se/about#legal",
+        available_licenses=[],
+        available_licenses_for_entries=["CC-BY-NC-4.0"],
+        cors_origins=tuple(cors_origins),
+    )
+
 
 def figure_file_is_servable(size: int | None) -> bool:
     """Return whether recorded figure metadata permits serving the file."""
@@ -194,8 +238,18 @@ def build_service_app(
     providers: Sequence[Any] | None = None,
     dataset: Mapping[str, Any] | None = None,
     details_root: Path | None = None,
+    root_link_target: str | None = None,
+    root_link_id: str | None = None,
+    root_link_name: str = AMDB_NAME,
+    root_link_description: str = AMDB_DESCRIPTION,
+    root_link_homepage: str = AMDB_HOMEPAGE,
 ) -> Starlette:
-    """Build the shared OPTIMADE-plus-figures ASGI application."""
+    """Build the shared OPTIMADE-plus-figures ASGI application.
+
+    The service advertises one configured root link. In standalone use it points
+    to itself as ``amdb``; a composed deployment can point it to its parent
+    index by supplying the ``root_link_*`` parent metadata.
+    """
     if providers is None:
         from serve_optimade import build_providers
 
@@ -259,11 +313,14 @@ def build_service_app(
 
     optimade_app = create_optimade_asgi_app(
         adapter_from_providers(providers, sortable=SORTABLE_PROPERTIES),
-        OptimadeConfig(
-            license="https://altermagnets.anyterial.se/about#legal",
-            available_licenses=[],
-            available_licenses_for_entries=["CC-BY-NC-4.0"],
-            cors_origins=tuple(cors_origins),
+        _service_config(
+            public_base_url=public_base_url,
+            root_link_target=root_link_target,
+            root_link_id=root_link_id,
+            root_link_name=root_link_name,
+            root_link_description=root_link_description,
+            root_link_homepage=root_link_homepage,
+            cors_origins=cors_origins,
         ),
         baseurl=None,
     )

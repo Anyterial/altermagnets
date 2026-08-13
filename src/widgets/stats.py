@@ -11,7 +11,7 @@ from httk.serve.web.widgets import WidgetAsset, WidgetRenderResult
 def render(context, **props):
     """Render the inert count configuration and its browser asset."""
     del props
-    base_url = os.environ.get("ALTERMAGNETS_OPTIMADE_BASE_URL", "/optimade").rstrip("/") or "/"
+    base_url = os.environ.get("ALTERMAGNETS_OPTIMADE_BASE_URL", "/optimade/amdb").rstrip("/") or "/"
     config_id = escape(f"site-stats-{context.widget_id}-config", quote=True)
     relative_base = context.page.get("relbaseurl", ".")
     if not isinstance(relative_base, str) or not relative_base or relative_base.startswith("/"):

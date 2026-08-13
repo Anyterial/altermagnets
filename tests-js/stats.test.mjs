@@ -11,7 +11,7 @@ const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 function statsDocument() {
   const document = new DomDocument();
-  const config = element(document, "script", { id: "site-stats-test-config", type: "application/json" }, JSON.stringify({ base_url: "https://api.example.test/optimade" }));
+  const config = element(document, "script", { id: "site-stats-test-config", type: "application/json" }, JSON.stringify({ base_url: "https://api.example.test/optimade/amdb" }));
   document.append(config);
   const targets = Object.fromEntries(names.map((name) => {
     const target = element(document, "span", { "data-site-stat": name }, "—");
@@ -31,7 +31,9 @@ async function importStats(document, fetch, suffix) {
 test("stats fills all placeholders from meta.data_available", async () => {
   const { document, targets } = statsDocument();
   let call = 0;
-  await importStats(document, async () => {
+  const requests = [];
+  await importStats(document, async (request) => {
+    requests.push(new URL(request));
     const response = new Response(JSON.stringify({ meta: { data_available: 7, data_returned: 1 } }), {
       headers: { "content-type": "application/vnd.api+json" },
     });
@@ -39,6 +41,14 @@ test("stats fills all placeholders from meta.data_available", async () => {
     return response;
   }, "success");
   assert.equal(call, 4);
+  assert.equal(requests.every((request) => request.pathname === "/optimade/amdb/v1/structures"), true);
+  assert.equal(requests.every((request) => request.searchParams.get("page_limit") === "1"), true);
+  assert.deepEqual(requests.map((request) => request.searchParams.get("filter") || ""), [
+    "",
+    '_anyterial_classification = "collinear"',
+    '_anyterial_classification = "noncollinear-derived"',
+    '_anyterial_electronic_type = "semiconducting"',
+  ]);
   names.forEach((name) => assert.equal(targets[name].textContent, "7"));
 });
 

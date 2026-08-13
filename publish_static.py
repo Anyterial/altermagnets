@@ -14,7 +14,7 @@ OPTIMADE_ENVIRONMENT = "ALTERMAGNETS_OPTIMADE_BASE_URL"
 
 def publish_site(outdir: Path = ROOT / "public", *, optimade_base_url: str | None = None) -> None:
     """Render the site, selecting the browser API base URL from env or argument."""
-    selected = optimade_base_url or os.environ.get(OPTIMADE_ENVIRONMENT, "/optimade")
+    selected = optimade_base_url or os.environ.get(OPTIMADE_ENVIRONMENT, "/optimade/amdb")
     previous = os.environ.get(OPTIMADE_ENVIRONMENT)
     os.environ[OPTIMADE_ENVIRONMENT] = selected
     try:
@@ -32,7 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--optimade-base-url",
         metavar="URL",
-        help="browser OPTIMADE base URL; defaults to ALTERMAGNETS_OPTIMADE_BASE_URL or /optimade",
+        help="browser OPTIMADE base URL; defaults to ALTERMAGNETS_OPTIMADE_BASE_URL or /optimade/amdb",
     )
     args = parser.parse_args(argv)
     publish_site(optimade_base_url=args.optimade_base_url)

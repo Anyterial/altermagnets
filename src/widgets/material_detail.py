@@ -32,7 +32,7 @@ RESPONSE_FIELDS = (
 def render(context, **props):
     """Render an inert shell that the browser fills from OPTIMADE."""
     del props
-    base_url = os.environ.get("ALTERMAGNETS_OPTIMADE_BASE_URL", "/optimade").rstrip("/") or "/"
+    base_url = os.environ.get("ALTERMAGNETS_OPTIMADE_BASE_URL", "/optimade/amdb").rstrip("/") or "/"
     widget_id = escape(context.widget_id, quote=True)
     config_id = escape(f"site-material-detail-{context.widget_id}-config", quote=True)
     config = {

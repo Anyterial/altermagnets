@@ -30,7 +30,7 @@ def _context() -> WidgetContext:
 
 
 def test_material_widget_emits_shell_config_and_both_assets(monkeypatch) -> None:
-    monkeypatch.setenv("ALTERMAGNETS_OPTIMADE_BASE_URL", "https://api.example.test/optimade")
+    monkeypatch.setenv("ALTERMAGNETS_OPTIMADE_BASE_URL", "https://api.example.test/optimade/amdb")
     result = MODULE.render(_context())
 
     assert 'data-site-material-detail="1"' in result.html
@@ -38,7 +38,7 @@ def test_material_widget_emits_shell_config_and_both_assets(monkeypatch) -> None
     assert "site-material-detail.mjs" in result.html
     config_text = result.html.split('type="application/json">', 1)[1].split("</script>", 1)[0]
     config = json.loads(config_text)
-    assert config["base_url"] == "https://api.example.test/optimade"
+    assert config["base_url"] == "https://api.example.test/optimade/amdb"
     assert config["id_query"] == "id"
     assert config["widget_id"] == "material-detail"
     assert "_anyterial_magndata_variants" in config["response_fields"]
@@ -49,13 +49,13 @@ def test_material_widget_emits_shell_config_and_both_assets(monkeypatch) -> None
 
 
 def test_material_widget_json_escapes_script_terminators(monkeypatch) -> None:
-    monkeypatch.setenv("ALTERMAGNETS_OPTIMADE_BASE_URL", "https://api.example.test/</script>&")
+    monkeypatch.setenv("ALTERMAGNETS_OPTIMADE_BASE_URL", "https://api.example.test/optimade/amdb</script>&")
     result = MODULE.render(_context())
     config_text = result.html.split('type="application/json">', 1)[1].split("</script>", 1)[0]
 
     assert "</script>" not in config_text
     config = json.loads(config_text)
-    assert config["base_url"] == "https://api.example.test/</script>&"
+    assert config["base_url"] == "https://api.example.test/optimade/amdb</script>&"
 
 
 def test_material_widget_requests_every_attribute_used_by_detail_js() -> None:

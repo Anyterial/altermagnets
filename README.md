@@ -76,9 +76,9 @@ Static publishing emits the complete site, including browser-side OPTIMADE
 search, material details, home-page counts, and curated highlights:
 
 ```bash
-ALTERMAGNETS_OPTIMADE_BASE_URL=https://api.example.org/optimade make generate
+ALTERMAGNETS_OPTIMADE_BASE_URL=https://api.example.org/optimade/amdb make generate
 # equivalent:
-python publish_static.py --optimade-base-url https://api.example.org/optimade
+python publish_static.py --optimade-base-url https://api.example.org/optimade/amdb
 ```
 
 Host `public/` on any static web server. Run the API separately with an exact
@@ -86,7 +86,7 @@ site origin allowed for CORS; the API host also serves figure bytes:
 
 ```bash
 python serve_optimade.py --cors-origin https://www.example.org \
-  --public-base-url https://api.example.org/optimade
+  --public-base-url https://api.example.org/optimade/amdb
 ```
 
 Use HTTPS for both origins so browser figure requests do not downgrade to HTTP.
@@ -118,22 +118,26 @@ python -m pip install -e '.[optimade]'
 # Validate every assembled record against its property definition:
 make validate_optimade        # (python serve_optimade.py --validate)
 
-# Serve the OPTIMADE API (default http://127.0.0.1:8081/):
+# Serve the standalone OPTIMADE API (default http://127.0.0.1:8081/):
 make serve_optimade           # (python serve_optimade.py --port 8081)
 ```
 
 Local combined development
 ---------------------------
 
-For local exploration, `make serve` runs the static site and mounts the API at
-`/optimade` on the same origin:
+For local exploration, `make serve` runs the website at `/`, the OPTIMADE index
+at `/optimade/index`, and the AMDB API at `/optimade/amdb` on the same origin:
 
 ```bash
 make serve                    # site + API: http://127.0.0.1:8080/
-make serve_optimade           # OPTIMADE only: http://127.0.0.1:8081/v1/
+make serve_optimade           # standalone API only: http://127.0.0.1:8081/v1/
 make serve_combined           # same combined server explicitly
 ```
 
-The static output defaults to `/optimade` as its browser API base. Set
+When using `serve_combined.py --public-base-url`, provide the public HTTP(S)
+origin only, such as `https://site.example`; the combined app serves the
+website at `/` and derives the OPTIMADE mounts below that origin.
+
+The static output defaults to `/optimade/amdb` as its browser API base. Set
 `ALTERMAGNETS_OPTIMADE_BASE_URL` or use `--optimade-base-url` when the API is
 hosted elsewhere.

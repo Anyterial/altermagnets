@@ -102,11 +102,13 @@ def test_combined_figure_route_and_public_base() -> None:
         assert response.status_code == 200
         figures = response.json()["data"][0]["attributes"]["_anyterial_figures"]
         figure = next(item for item in figures if item["key"] == "structure")
-        assert figure["url"].startswith("http://127.0.0.1:8080/optimade/figures/")
+        assert figure["url"].startswith("http://127.0.0.1:8080/optimade/extensions/figures/")
         served = client.get(urlsplit(figure["url"]).path)
+        old_route = client.get("/optimade/figures/anyt:am-1-0001/structure.svg")
 
     assert served.status_code == 200
     assert served.headers["content-type"] == "image/svg+xml"
+    assert old_route.status_code == 404
 
 
 def test_combined_public_base_cli(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -269,7 +269,7 @@ def build_service_app(
     )
     return Starlette(
         routes=[
-            Route("/figures/{material_id}/{filename}", figure_response, methods=["GET", "HEAD"]),
+            Route("/extensions/figures/{material_id}/{filename}", figure_response, methods=["GET", "HEAD"]),
             Mount("", optimade_app),
         ]
     )

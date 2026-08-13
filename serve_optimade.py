@@ -192,7 +192,7 @@ def _figure_payload(record: Any, public_base_url: str) -> list[dict[str, Any]]:
         if figure is None:
             figures.append({"key": key, "url": None, "dark_url": None, "media_type": None, "available": False})
             continue
-        base = f"{public_base_url}/figures/{record.id}"
+        base = f"{public_base_url}/extensions/figures/{record.id}"
         light_name = figure.light.name
         light_servable = figure_file_is_servable(figure.light.size)
         dark_url = None

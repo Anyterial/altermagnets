@@ -123,9 +123,9 @@ const realisticResource = {
       warnings: ["<script>alert(1)</script>"], notes: ["note <img src=x>"], reference_dois: ["10.1234/über"],
     }],
     _anyterial_figures: [
-      { key: "band", available: true, url: `${API}/figures/band.svg`, dark_url: `${API}/figures/dark-band.svg` },
+      { key: "band", available: true, url: `${API}/extensions/figures/band.svg`, dark_url: `${API}/extensions/figures/dark-band.svg` },
       { key: "structure", available: true, url: "https://evil.example/structure.svg" },
-      { key: "bz", available: true, url: "http://api.example.test/optimade/figures/bz.svg" },
+      { key: "bz", available: true, url: "http://api.example.test/optimade/extensions/figures/bz.svg" },
     ],
   },
   relationships: { references: { data: [{ type: "references", id: "ref/1" }] } },

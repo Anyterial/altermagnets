@@ -206,11 +206,12 @@ def test_service_figure_route_whitelist_headers_and_dark_cache(providers: list, 
     )
     client = ApiClient(app)
 
-    light = client.get(f"/figures/{material_id}/plot.svg")
-    png = client.get(f"/figures/{material_id}/plot.png")
-    dark = client.get(f"/figures/{material_id}/dark--plot.svg")
+    light = client.get(f"/extensions/figures/{material_id}/plot.svg")
+    png = client.get(f"/extensions/figures/{material_id}/plot.png")
+    dark = client.get(f"/extensions/figures/{material_id}/dark--plot.svg")
+    assert client.get(f"/figures/{material_id}/plot.svg").status_code == 404
     svg_path.unlink()
-    cached_dark = client.get(f"/figures/{material_id}/dark--plot.svg")
+    cached_dark = client.get(f"/extensions/figures/{material_id}/dark--plot.svg")
 
     assert light.status_code == 200
     assert light.content.startswith(b"<svg")
@@ -221,10 +222,10 @@ def test_service_figure_route_whitelist_headers_and_dark_cache(providers: list, 
     assert png.status_code == 200 and png.content.startswith(b"\x89PNG")
     assert dark.status_code == 200 and b"#f2f5fb" in dark.content
     assert cached_dark.status_code == 200 and cached_dark.content == dark.content
-    assert client.get(f"/figures/{material_id}/CONTCAR").status_code == 404
-    assert client.get("/figures/not-a-material/plot.svg").status_code == 404
-    assert client.get(f"/figures/{material_id}/../CONTCAR").status_code == 404
-    assert client.get(f"/figures/{material_id}/%2e%2e/CONTCAR").status_code == 404
+    assert client.get(f"/extensions/figures/{material_id}/CONTCAR").status_code == 404
+    assert client.get("/extensions/figures/not-a-material/plot.svg").status_code == 404
+    assert client.get(f"/extensions/figures/{material_id}/../CONTCAR").status_code == 404
+    assert client.get(f"/extensions/figures/{material_id}/%2e%2e/CONTCAR").status_code == 404
 
 
 def test_service_dark_cache_respects_byte_budget(providers: list, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -238,9 +239,9 @@ def test_service_dark_cache_respects_byte_budget(providers: list, tmp_path: Path
     )
     client = ApiClient(app)
 
-    assert client.get(f"/figures/{material_id}/dark--plot.svg").status_code == 200
+    assert client.get(f"/extensions/figures/{material_id}/dark--plot.svg").status_code == 200
     svg_path.unlink()
-    assert client.get(f"/figures/{material_id}/dark--plot.svg").status_code == 404
+    assert client.get(f"/extensions/figures/{material_id}/dark--plot.svg").status_code == 404
 
 
 def test_size_none_is_unavailable_in_projection_and_route(providers: list, tmp_path: Path) -> None:
@@ -261,7 +262,7 @@ def test_size_none_is_unavailable_in_projection_and_route(providers: list, tmp_p
         dataset=dataset,
         details_root=tmp_path,
     )
-    assert ApiClient(app).get(f"/figures/{material_id}/plot.svg").status_code == 404
+    assert ApiClient(app).get(f"/extensions/figures/{material_id}/plot.svg").status_code == 404
 
 
 def test_service_figure_route_missing_file_and_recorded_size_cap(providers: list, tmp_path: Path) -> None:
@@ -276,9 +277,9 @@ def test_service_figure_route_missing_file_and_recorded_size_cap(providers: list
         details_root=tmp_path,
     )
     client = ApiClient(app)
-    assert client.get(f"/figures/{material_id}/plot.png").status_code == 404
+    assert client.get(f"/extensions/figures/{material_id}/plot.png").status_code == 404
     png_path.unlink()
-    assert client.get(f"/figures/{material_id}/plot.png").status_code == 404
+    assert client.get(f"/extensions/figures/{material_id}/plot.png").status_code == 404
 
 
 def test_service_cors_is_configured_only_for_optimade(providers: list, tmp_path: Path) -> None:
@@ -301,7 +302,9 @@ def test_service_cors_is_configured_only_for_optimade(providers: list, tmp_path:
     )
     allowed_get = client.request("GET", "/v1/info", headers={"Origin": "https://static.example"})
     denied_get = client.request("GET", "/v1/info", headers={"Origin": "https://other.example"})
-    figure = client.request("GET", f"/figures/{material_id}/plot.png", headers={"Origin": "https://other.example"})
+    figure = client.request(
+        "GET", f"/extensions/figures/{material_id}/plot.png", headers={"Origin": "https://other.example"}
+    )
 
     assert allowed.status_code == 200
     assert allowed.headers["access-control-allow-origin"] == "https://static.example"
@@ -458,6 +461,26 @@ def test_info_structures_lists_custom_and_standard_definitions(client: ApiClient
     assert "_httk_site_moments" in properties
 
 
+def test_info_structures_figure_examples_use_extension_route(client: ApiClient) -> None:
+    response = client.get("/info/structures")
+    assert response.status_code == 200
+    definition = response.json()["data"]["properties"]["_anyterial_figures"]
+    example_figures = definition["examples"][0]
+    urls = [
+        url
+        for figure in example_figures
+        for url in (figure.get("url"), figure.get("dark_url"))
+        if url is not None
+    ]
+
+    assert urls
+    assert any(figure.get("url") for figure in example_figures)
+    assert any(figure.get("dark_url") for figure in example_figures)
+    paths = [urlsplit(url).path for url in urls]
+    assert all(path.startswith("/extensions/figures/") for path in paths)
+    assert all(not path.startswith("/figures/") for path in paths)
+
+
 def test_filter_on_magnetic_phase_returns_rows(client: ApiClient) -> None:
     response = client.get(
         "/structures",
@@ -555,8 +578,8 @@ def test_detail_properties_and_absolute_figures(client: ApiClient) -> None:
     assert attributes["_anyterial_magndata_variants"][0]["source"] == "collinear"
     assert attributes["_anyterial_figures"][0] == {
         "key": "band",
-        "url": "https://plots.example.test/api/figures/anyt:am-1-0001/band.svg",
-        "dark_url": "https://plots.example.test/api/figures/anyt:am-1-0001/dark--band.svg",
+        "url": "https://plots.example.test/api/extensions/figures/anyt:am-1-0001/band.svg",
+        "dark_url": "https://plots.example.test/api/extensions/figures/anyt:am-1-0001/dark--band.svg",
         "media_type": "image/svg+xml",
         "available": True,
     }

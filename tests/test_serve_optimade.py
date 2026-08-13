@@ -310,6 +310,20 @@ def test_service_cors_is_configured_only_for_optimade(providers: list, tmp_path:
     assert figure.headers["access-control-allow-origin"] == "*"
 
 
+def test_service_info_exposes_license_configuration(providers: list, tmp_path: Path) -> None:
+    app = build_service_app(
+        public_base_url="http://testserver",
+        providers=providers,
+        dataset={},
+        details_root=tmp_path,
+    )
+    attributes = ApiClient(app).get("/v1/info").json()["data"]["attributes"]
+
+    assert attributes["license"] == "https://altermagnets.anyterial.se/about#legal"
+    assert attributes["available_licenses"] == []
+    assert attributes["available_licenses_for_entries"] == ["CC-BY-NC-4.0"]
+
+
 def test_standalone_service_api_figure_url_resolves_through_same_app() -> None:
     records: dict[str, Any] = {}
     standalone_providers = serve_optimade.build_providers(

@@ -259,7 +259,12 @@ def build_service_app(
 
     optimade_app = create_optimade_asgi_app(
         adapter_from_providers(providers, sortable=SORTABLE_PROPERTIES),
-        OptimadeConfig(cors_origins=tuple(cors_origins)),
+        OptimadeConfig(
+            license="https://altermagnets.anyterial.se/about#legal",
+            available_licenses=[],
+            available_licenses_for_entries=["CC-BY-NC-4.0"],
+            cors_origins=tuple(cors_origins),
+        ),
         baseurl=None,
     )
     return Starlette(

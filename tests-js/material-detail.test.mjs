@@ -38,7 +38,7 @@ const fields = [
   "_anyterial_electronic_type", "_anyterial_magnetic_phases", "_anyterial_wave_classes", "_anyterial_parent_spacegroups",
   "_anyterial_icsd_ids", "_httk_magndata_ids", "_httk_dft_band_gap",
   "_anyterial_max_spin_splitting", "_anyterial_avg_spin_splitting", "_anyterial_spin_splitting_fraction",
-  "_anyterial_min_crustal_abundance", "_anyterial_magndata_variants", "_anyterial_figures",
+  "_anyterial_min_crustal_abundance", "_anyterial_magndata_variants", "_httk_custom_figures",
 ];
 
 function jsonResponse(value, url, status = 200) {
@@ -122,7 +122,7 @@ const realisticResource = {
       symprec: 1e-5, bns_mcif_latex: ["P2_1/c"], g_laue_classes: ["m-3m"], h_laue_classes: ["4/mmm"],
       warnings: ["<script>alert(1)</script>"], notes: ["note <img src=x>"], reference_dois: ["10.1234/über"],
     }],
-    _anyterial_figures: [
+    _httk_custom_figures: [
       { key: "band", available: true, url: `${API}/extensions/figures/band.svg`, dark_url: `${API}/extensions/figures/dark-band.svg` },
       { key: "structure", available: true, url: "https://evil.example/structure.svg" },
       { key: "bz", available: true, url: "http://api.example.test/optimade/extensions/figures/bz.svg" },

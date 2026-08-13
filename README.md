@@ -55,7 +55,7 @@ directory. `ALTERMAGNETS_DETAILS_DIR` (or the builder's `--details-dir`)
 selects the generated detail-asset tree.
 
 Plot metadata is part of the material object graph and is exposed through the
-custom `_anyterial_figures` structures property. The database stores the
+custom `_httk_custom_figures` structures property. The database stores the
 root-relative locator, name, size, media type, and description; the potentially
 large plot bytes remain in `data/details/` (or the configured details directory)
 and are loaded on demand with containment and size checks. Generate or update
@@ -99,14 +99,17 @@ API by the thin `serve_optimade.py` entry point, built on the httk₂ modules
 (*httk-core*, *httk-io*, *httk-atomistic*, *httk-store*, *httk-serve*). It
 reads the three CSV tables under `data/tables/`, parses each material's
 `CONTCAR.bz2` into an exact crystal structure, and serves 180 `structures`
-(with auto-derived composition fields and 19 `_anyterial_` plus three `_httk_`
-custom properties, including the `_anyterial_figures` plot metadata) plus
+(with auto-derived composition fields and 18 `_anyterial_` plus four `_httk_`
+custom properties, including the `_httk_custom_figures` plot metadata) plus
 the deduplicated `references`, linked via OPTIMADE relationships.
 
-The custom property definitions are loaded verbatim from the live schema submodules:
-Anyterial-defined properties use the `_anyterial_*` prefix and HTTK-defined properties
-use `_httk_*`. Clone with `git clone --recurse-submodules`, or initialize/update the
-schemas with `make update_schemas`.
+The curated custom property definitions are loaded verbatim from the live schema
+submodules: Anyterial-defined properties use the `_anyterial_*` prefix and HTTK-defined
+properties use `_httk_*`. The deployment-specific `_httk_custom_figures` definition is
+generated locally with httk₂'s lightweight property builder and receives an unpublished
+`https://schemas.httk.org/ad-hoc/` identifier; it does not depend on a published schema
+file. Clone with `git clone --recurse-submodules`, or initialize/update the schemas with
+`make update_schemas`.
 
 ```bash
 # Install the optional OPTIMADE dependencies (in the workspace they resolve via PYTHONPATH):

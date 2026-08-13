@@ -12,7 +12,9 @@ reusable machinery lives in the httk modules:
 * the ``structures`` provider (with auto-derived composition fields, custom
   ``_anyterial_`` and ``_httk_`` properties, and null structure-less entries) and the ``references``
   provider come from *httk-atomistic* / *httk-store*;
-* the custom property definitions are loaded verbatim from the schema submodules.
+* curated custom property definitions are loaded verbatim from the schema
+  submodules, while the deployment-local figure property is generated in an
+  unpublished ad-hoc namespace.
 
 Run ``python serve_optimade.py`` to serve, or ``--validate`` to validate every
 assembled record against its definition and exit non-zero on any failure.
@@ -55,7 +57,6 @@ ANYTERIAL_DEFINITION_PATHS = {
     "_anyterial_icsd_ids": "icsd_ids.json",
     "_anyterial_search_text": "search_text.json",
     "_anyterial_magndata_variants": "magndata_variants.json",
-    "_anyterial_figures": "figures.json",
     "_anyterial_avg_spin_splitting": "avg_spin_splitting.json",
     "_anyterial_max_spin_splitting": "max_spin_splitting.json",
     "_anyterial_spin_splitting_fraction": "spin_splitting_fraction.json",
@@ -127,8 +128,32 @@ class AltermagnetStructureProvider(StructureEntryProvider):
         return self._material_relationships
 
 
+def _local_figure_definition() -> PropertyDefinition:
+    """Build the unpublished, deployment-local figure property definition."""
+    document = PropertyDefinition.from_simple(
+        "_httk_custom_figures",
+        description=(
+            "Data-only figure metadata for this deployment's fixed band-structure, "
+            "crystal-structure, and Brillouin-zone figures. Each list item is a dictionary "
+            "with the figure key, absolute extension URL, optional dark-mode URL, media type, "
+            "and availability flag."
+        ),
+        fulltype="list of dict",
+        unit="inapplicable",
+    ).as_optimade()
+    # Figure metadata is intentionally opt-in because it is only consumed by
+    # this site's detail view. This also keeps ordinary structure listings small.
+    document["x-optimade-requirements"] = {
+        "support": "may",
+        "query-support": "none",
+        "response-level": "should not",
+    }
+    return PropertyDefinition.from_optimade("_httk_custom_figures", document)
+
+
 def load_schema_definitions() -> dict[str, PropertyDefinition]:
-    """Load the published Anyterial and HTTK property definitions verbatim."""
+    """Load curated definitions and generate deployment-local definitions."""
+    register_definition_prefix("_anyterial_", ANYTERIAL_DEFS_BASE)
     definitions: dict[str, PropertyDefinition] = {}
     for base, paths in ((ANYTERIAL_DEFS_DIR, ANYTERIAL_DEFINITION_PATHS), (HTTK_DEFS_DIR, HTTK_DEFINITION_PATHS)):
         for served_name, relative_path in paths.items():
@@ -140,6 +165,7 @@ def load_schema_definitions() -> dict[str, PropertyDefinition]:
                 )
             document = json.loads(path.read_text(encoding="utf-8"))
             definitions[served_name] = PropertyDefinition.from_optimade(served_name, document)
+    definitions["_httk_custom_figures"] = _local_figure_definition()
     return definitions
 
 
@@ -230,7 +256,7 @@ def _material_properties(record: Any, public_base_url: str) -> dict[str, Any]:
         # An unresolved linked MAGNDATA id deliberately produces []: the detail
         # page renders its no-symmetry-record placeholder from that state.
         "_anyterial_magndata_variants": variants,
-        "_anyterial_figures": _figure_payload(record, public_base_url),
+        "_httk_custom_figures": _figure_payload(record, public_base_url),
         "_anyterial_max_spin_splitting": record.max_ss,
         "_anyterial_avg_spin_splitting": record.avg_ss,
         "_anyterial_spin_splitting_fraction": (None if record.fdelta_pct is None else record.fdelta_pct / 100.0),
@@ -328,7 +354,6 @@ def build_providers(
     material_records: MutableMapping[str, Any] | None = None,
 ) -> list[Any]:
     """Register the ``_anyterial_`` prefix and build the structures + references providers."""
-    register_definition_prefix("_anyterial_", ANYTERIAL_DEFS_BASE)
     structures, properties, relationships, references = build_dataset(
         public_base_url=public_base_url, records_out=material_records
     )

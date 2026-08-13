@@ -76,10 +76,6 @@ EXPECTED_DEFINITION_PROVENANCE = {
         "https://schemas.anyterial.se/defs/v0.1/properties/altermagnets/magndata_variants",
         "magndata_variants",
     ),
-    "_anyterial_figures": (
-        "https://schemas.anyterial.se/defs/v0.1/properties/altermagnets/figures",
-        "figures",
-    ),
     "_anyterial_avg_spin_splitting": (
         "https://schemas.anyterial.se/defs/v0.1/properties/altermagnets/avg_spin_splitting",
         "avg_spin_splitting",
@@ -121,6 +117,9 @@ EXPECTED_DEFINITION_PROVENANCE = {
         "magndata_ids",
     ),
 }
+
+LOCAL_DEFINITION_NAMES = {"_httk_custom_figures"}
+EXPECTED_PROPERTY_NAMES = set(EXPECTED_DEFINITION_PROVENANCE) | LOCAL_DEFINITION_NAMES
 
 
 @pytest.fixture(scope="module")
@@ -341,7 +340,7 @@ def test_standalone_service_api_figure_url_resolves_through_same_app() -> None:
     client = ApiClient(app)
     all_data: list[dict[str, Any]] = []
     next_url: str | None = "/structures"
-    params = {"response_fields": "_anyterial_figures", "page_limit": "200"}
+    params = {"response_fields": "_httk_custom_figures", "page_limit": "200"}
     while next_url is not None:
         response = client.get(next_url, params=params)
         assert response.status_code == 200
@@ -351,7 +350,7 @@ def test_standalone_service_api_figure_url_resolves_through_same_app() -> None:
 
     assert len(all_data) == 180
     for item in all_data:
-        for figure in item["attributes"]["_anyterial_figures"]:
+        for figure in item["attributes"]["_httk_custom_figures"]:
             if not figure["available"]:
                 assert figure["url"] is None and figure["dark_url"] is None
                 continue
@@ -366,7 +365,7 @@ def test_dataset_assembly_counts_and_exact_lattice() -> None:
     assert len(properties) == 180
     assert references  # DOIs were collected across the symmetry tables
     for property_values in properties.values():
-        assert set(property_values) == set(EXPECTED_DEFINITION_PROVENANCE)
+        assert set(property_values) == EXPECTED_PROPERTY_NAMES
 
     smfeo3 = structures["anyt:am-1-0039"]
     assert smfeo3 is not None
@@ -380,11 +379,19 @@ def test_dataset_assembly_counts_and_exact_lattice() -> None:
 
 def test_live_definition_contract() -> None:
     definitions = serve_optimade.load_schema_definitions()
-    assert set(definitions) == set(EXPECTED_DEFINITION_PROVENANCE)
+    assert set(definitions) == EXPECTED_PROPERTY_NAMES
     for served_name, (expected_id, expected_name) in EXPECTED_DEFINITION_PROVENANCE.items():
         document = definitions[served_name].as_optimade()
         assert document["$id"] == expected_id
         assert document["x-optimade-definition"]["name"] == expected_name
+
+    assert "_anyterial_figures" not in serve_optimade.ANYTERIAL_DEFINITION_PATHS
+    figures = definitions["_httk_custom_figures"].as_optimade()
+    assert figures["$id"] == "https://schemas.httk.org/ad-hoc/defs/properties/_httk_custom_figures"
+    assert figures["x-optimade-definition"]["name"] == "_httk_custom_figures"
+    assert figures["x-optimade-type"] == "list"
+    assert figures["items"]["x-optimade-type"] == "dictionary"
+    assert figures["x-optimade-requirements"]["response-level"] == "should not"
 
 
 def test_null_structure_material_serves_null_lattice(providers: list) -> None:
@@ -434,7 +441,6 @@ def test_info_structures_lists_custom_and_standard_definitions(client: ApiClient
     expected_custom_properties = {
         "_anyterial_classification",
         "_anyterial_elements",
-        "_anyterial_figures",
         "_anyterial_formula",
         "_anyterial_icsd_ids",
         "_anyterial_magndata_variants",
@@ -461,24 +467,13 @@ def test_info_structures_lists_custom_and_standard_definitions(client: ApiClient
     assert "_httk_site_moments" in properties
 
 
-def test_info_structures_figure_examples_use_extension_route(client: ApiClient) -> None:
+def test_info_structures_figure_definition_is_local_and_lightweight(client: ApiClient) -> None:
     response = client.get("/info/structures")
     assert response.status_code == 200
-    definition = response.json()["data"]["properties"]["_anyterial_figures"]
-    example_figures = definition["examples"][0]
-    urls = [
-        url
-        for figure in example_figures
-        for url in (figure.get("url"), figure.get("dark_url"))
-        if url is not None
-    ]
-
-    assert urls
-    assert any(figure.get("url") for figure in example_figures)
-    assert any(figure.get("dark_url") for figure in example_figures)
-    paths = [urlsplit(url).path for url in urls]
-    assert all(path.startswith("/extensions/figures/") for path in paths)
-    assert all(not path.startswith("/figures/") for path in paths)
+    definition = response.json()["data"]["properties"]["_httk_custom_figures"]
+    assert definition["$id"] == "https://schemas.httk.org/ad-hoc/defs/properties/_httk_custom_figures"
+    assert definition["x-optimade-definition"]["name"] == "_httk_custom_figures"
+    assert "examples" not in definition
 
 
 def test_filter_on_magnetic_phase_returns_rows(client: ApiClient) -> None:
@@ -559,7 +554,7 @@ def test_detail_properties_and_absolute_figures(client: ApiClient) -> None:
         "_anyterial_icsd_ids",
         "_anyterial_search_text",
         "_anyterial_magndata_variants",
-        "_anyterial_figures",
+        "_httk_custom_figures",
     ]
     response = client.get(
         "/structures",
@@ -576,7 +571,7 @@ def test_detail_properties_and_absolute_figures(client: ApiClient) -> None:
     assert attributes["_anyterial_classification"] == "collinear"
     assert attributes["_anyterial_magndata_variants"]
     assert attributes["_anyterial_magndata_variants"][0]["source"] == "collinear"
-    assert attributes["_anyterial_figures"][0] == {
+    assert attributes["_httk_custom_figures"][0] == {
         "key": "band",
         "url": "https://plots.example.test/api/extensions/figures/anyt:am-1-0001/band.svg",
         "dark_url": "https://plots.example.test/api/extensions/figures/anyt:am-1-0001/dark--band.svg",
@@ -593,7 +588,7 @@ def test_non_default_properties_are_omitted_unless_requested(client: ApiClient) 
         name not in attributes
         for name in (
             "_anyterial_magndata_variants",
-            "_anyterial_figures",
+            "_httk_custom_figures",
             "_anyterial_search_text",
             "_anyterial_space_group_search",
         )

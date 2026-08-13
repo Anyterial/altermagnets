@@ -25,7 +25,7 @@ RESPONSE_FIELDS = (
     "_anyterial_spin_splitting_fraction",
     "_anyterial_min_crustal_abundance",
     "_anyterial_magndata_variants",
-    "_anyterial_figures",
+    "_httk_custom_figures",
 )
 
 

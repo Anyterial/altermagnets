@@ -177,7 +177,7 @@ function sourceLabel(source) {
 }
 
 function buildFigures(attributes, apiBase) {
-  const records = new Map(arrayValue(attributes._anyterial_figures).map((item) => [item.key, item]));
+  const records = new Map(arrayValue(attributes._httk_custom_figures).map((item) => [item.key, item]));
   const grid = node("div", "figure-grid");
   let availableCount = 0;
   FIGURE_SPECS.forEach((spec) => {

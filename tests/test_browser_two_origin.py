@@ -116,12 +116,12 @@ def _detail_record(origins: Origins) -> dict[str, object]:
         "/v1/structures",
         {
             "page_limit": 1000,
-            "response_fields": "id,_anyterial_figures,_anyterial_magndata_variants",
+            "response_fields": "id,_httk_custom_figures,_anyterial_magndata_variants",
         },
     )
     for record in body["data"]:
         attributes = record["attributes"]
-        figures = attributes.get("_anyterial_figures") or []
+        figures = attributes.get("_httk_custom_figures") or []
         has_dark_figure = any(
             figure.get("available") and figure.get("url") and figure.get("dark_url") != figure.get("url")
             for figure in figures
@@ -284,7 +284,7 @@ def test_detail_loads_variants_references_and_figures(two_origins: Origins, page
         {
             "filter": f'id = "{material_id}"',
             "include": "references",
-            "response_fields": "_anyterial_figures,_anyterial_magndata_variants",
+            "response_fields": "_httk_custom_figures,_anyterial_magndata_variants",
         },
     )
     expected_dois = {

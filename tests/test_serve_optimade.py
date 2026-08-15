@@ -372,7 +372,7 @@ def test_service_info_exposes_license_configuration(providers: list, tmp_path: P
 
     assert attributes["license"] == "https://altermagnets.anyterial.se/about#legal"
     assert attributes["available_licenses"] == []
-    assert attributes["available_licenses_for_entries"] == ["CC-BY-NC-4.0"]
+    assert attributes["available_licenses_for_entries"] == ["CC-BY-4.0"]
 
 
 def test_standalone_service_links_advertise_one_root_self_link(providers: list, tmp_path: Path) -> None:

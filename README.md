@@ -163,6 +163,13 @@ When using `serve_combined.py --public-base-url`, provide the public HTTP(S)
 origin only, such as `https://site.example`; the combined app serves the
 website at `/` and derives the OPTIMADE mounts below that origin.
 
+A production (HTTPS) deployment additionally exposes a Data Space Protocol
+(DSP) 2025-1 minimal catalogue at `<base>/dsp`. The catalogue advertises the
+altermagnets database as one DCAT dataset, with the OPTIMADE API and the
+interactive website published as two `dcat:DataService`s that serve it. DSP
+mandates HTTPS, so the `/dsp` mount is only present when the public origin is
+`https://` and is absent in local `http://` development.
+
 The static output defaults to `/optimade/amdb` as its browser API base. Set
 `ALTERMAGNETS_OPTIMADE_BASE_URL` or use `--optimade-base-url` when the API is
 hosted elsewhere.

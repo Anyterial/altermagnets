@@ -1,14 +1,17 @@
 """Compose the dynamic altermagnet site and its OPTIMADE services together."""
 
+import logging
 from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from httk.core import report
 from httk.serve import ASGIAppMount, compose_asgi_apps
 from httk.serve.optimade import OptimadeIndexConfig, create_index_asgi_app
 from httk.serve.web import create_asgi_app as create_web_asgi_app
 from starlette.applications import Starlette
 
+from .dsp import DSP_MOUNT, build_dsp_app
 from .service import (
     AMDB_DESCRIPTION,
     AMDB_NAME,
@@ -17,6 +20,8 @@ from .service import (
     INDEX_NAME,
     build_service_app,
 )
+
+logger = report.context_logger(logging.getLogger("httk.altermagnets.combined"), "combined")
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -152,10 +157,12 @@ def create_combined_app(
             index_app = (index_factory or (lambda: _default_index_app(public_origin)))()
         if amdb_app is None:
             amdb_app = (amdb_factory or (lambda: _default_amdb_app(public_origin)))()
-        return compose_asgi_apps(
-            [ASGIAppMount(INDEX_PATH, index_app), ASGIAppMount(AMDB_PATH, amdb_app)],
-            root=ASGIAppMount("/", web_app),
-        )
+        mounts = [ASGIAppMount(INDEX_PATH, index_app), ASGIAppMount(AMDB_PATH, amdb_app)]
+        if public_origin.startswith("https://"):
+            mounts.append(ASGIAppMount(DSP_MOUNT, build_dsp_app(public_origin)))
+        else:
+            logger.info("DSP catalogue not mounted: a non-HTTPS public origin (%s) cannot host DSP", public_origin)
+        return compose_asgi_apps(mounts, root=ASGIAppMount("/", web_app))
     except BaseException as exc:
         if created_web_app:
             _close_created_web_app(web_app, exc)

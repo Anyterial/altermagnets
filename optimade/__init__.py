@@ -22,6 +22,7 @@ from .dataset import (
     build_providers,
     load_schema_definitions,
 )
+from .dsp import build_dsp_app
 from .figures import figure_file_is_servable
 from .service import (
     AMDB_DESCRIPTION,
@@ -46,6 +47,7 @@ __all__ = [
     "AltermagnetStoreAdapter",
     "AltermagnetStructureProvider",
     "build_dataset",
+    "build_dsp_app",
     "build_providers",
     "build_service_app",
     "create_combined_app",

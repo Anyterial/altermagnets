@@ -27,10 +27,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import material_store
-import optimade_service
-import serve_optimade
 from conftest import write_source_tables
-from optimade_service import build_service_app
+from optimade import adapter, build_providers, build_service_app, run_validation, service
+from optimade import dataset as dataset_module
 from starlette.testclient import TestClient
 
 EXPECTED_DEFINITION_PROVENANCE = {
@@ -126,13 +125,13 @@ EXPECTED_PROPERTY_NAMES = set(EXPECTED_DEFINITION_PROVENANCE) | LOCAL_DEFINITION
 
 @pytest.fixture(scope="module")
 def providers() -> list:
-    return serve_optimade.build_providers(public_base_url="https://plots.example.test/api/")
+    return build_providers(public_base_url="https://plots.example.test/api/")
 
 
 @pytest.fixture(scope="module")
 def client(providers: list) -> "ApiClient":
     app = create_asgi_app(
-        adapter_from_providers(providers, sortable=serve_optimade.SORTABLE_PROPERTIES),
+        adapter_from_providers(providers, sortable=adapter.SORTABLE_PROPERTIES),
         baseurl="http://testserver/",
     )
     return ApiClient(app)
@@ -276,7 +275,7 @@ def test_service_dark_cache_respects_byte_budget(
     providers: list, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     dataset, material_id, svg_path, _ = _figure_dataset(tmp_path)
-    monkeypatch.setattr(optimade_service, "DARK_CACHE_MAX_BYTES", 1)
+    monkeypatch.setattr(service, "DARK_CACHE_MAX_BYTES", 1)
     app = build_service_app(
         public_base_url="http://testserver",
         providers=providers,
@@ -297,7 +296,7 @@ def test_size_none_is_unavailable_in_projection_and_route(providers: list, tmp_p
         replace(record.figures[0], light=replace(record.figures[0].light, size=None)),
         *record.figures[1:],
     )
-    projected = serve_optimade._figure_payload(record, "http://testserver")
+    projected = dataset_module._figure_payload(record, "http://testserver")
     assert projected[0] == {
         "key": "band",
         "url": None,
@@ -399,7 +398,7 @@ def test_standalone_service_links_advertise_one_root_self_link(providers: list, 
 
 def test_standalone_service_api_figure_url_resolves_through_same_app() -> None:
     records: dict[str, Any] = {}
-    standalone_providers = serve_optimade.build_providers(
+    standalone_providers = build_providers(
         public_base_url="https://plots.example.test",
         material_records=records,
     )
@@ -431,7 +430,7 @@ def test_standalone_service_api_figure_url_resolves_through_same_app() -> None:
 
 
 def test_dataset_assembly_counts_and_exact_lattice() -> None:
-    structures, properties, _relationships, references = serve_optimade.build_dataset()
+    structures, properties, _relationships, references = dataset_module.build_dataset()
     assert len(structures) == 180
     assert len(properties) == 180
     assert references  # DOIs were collected across the symmetry tables
@@ -449,14 +448,14 @@ def test_dataset_assembly_counts_and_exact_lattice() -> None:
 
 
 def test_live_definition_contract() -> None:
-    definitions = serve_optimade.load_schema_definitions()
+    definitions = dataset_module.load_schema_definitions()
     assert set(definitions) == EXPECTED_PROPERTY_NAMES
     for served_name, (expected_id, expected_name) in EXPECTED_DEFINITION_PROVENANCE.items():
         document = definitions[served_name].as_optimade()
         assert document["$id"] == expected_id
         assert document["x-optimade-definition"]["name"] == expected_name
 
-    assert "_anyterial_figures" not in serve_optimade.ANYTERIAL_DEFINITION_PATHS
+    assert "_anyterial_figures" not in dataset_module.ANYTERIAL_DEFINITION_PATHS
     figures = definitions["_httk_custom_figures"].as_optimade()
     assert figures["$id"] == "https://schemas.httk.org/ad-hoc/defs/properties/_httk_custom_figures"
     assert figures["x-optimade-definition"]["name"] == "_httk_custom_figures"
@@ -572,7 +571,7 @@ def test_references_endpoint_and_include(client: ApiClient) -> None:
 
 
 def test_validate_all_records_passes(providers: list) -> None:
-    assert serve_optimade.run_validation(providers) == 0
+    assert run_validation(providers) == 0
 
 
 class _ValidationProvider:
@@ -603,12 +602,12 @@ def test_validation_retains_nulls_and_rejects_empty_entry_types(capsys: pytest.C
         definition,
         [{"__id": "m-1", "__type": "structures", "value": None}],
     )
-    assert serve_optimade.run_validation([valid]) == 0
+    assert run_validation([valid]) == 0
 
     empty = _ValidationProvider(definition, [])
-    assert serve_optimade.run_validation([empty]) == 1
+    assert run_validation([empty]) == 1
     assert "no records were served" in capsys.readouterr().err
-    assert serve_optimade.run_validation([]) == 1
+    assert run_validation([]) == 1
     assert "no records were served by any provider" in capsys.readouterr().err
 
 
@@ -722,7 +721,7 @@ def test_structureless_and_unresolved_variant_projection(providers: list) -> Non
     assert structureless["_anyterial_formula"]
     assert structureless["_anyterial_elements"]
 
-    structures, properties, _relationships, _references = serve_optimade.build_dataset()
+    structures, properties, _relationships, _references = dataset_module.build_dataset()
     assert structures[structureless["__id"]] is None
     assert properties[structureless["__id"]]["_anyterial_formula"]
     assert properties[structureless["__id"]]["_anyterial_elements"]
@@ -740,7 +739,7 @@ def test_structureless_and_unresolved_variant_projection(providers: list) -> Non
             links=tuple(replace(link, record=replace(link.record, variants=())) for link in material.links),
         )
         formula = material.formula
-        projected = serve_optimade._material_properties(unresolved, "https://plots.example.test/api")
+        projected = dataset_module._material_properties(unresolved, "https://plots.example.test/api")
     finally:
         material_store.cleanup_material_store({"materials_database": opened.database})
     assert projected["_anyterial_magndata_variants"] == []

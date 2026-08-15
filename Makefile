@@ -1,5 +1,5 @@
 PYTHON ?= python3
-PY_SOURCES := src/functions src/widgets workflows tools/build_store.py serve_combined.py serve_optimade.py optimade_service.py publish_static.py
+PY_SOURCES := src/functions src/widgets workflows tools/build_store.py optimade serve_combined.py serve_optimade.py publish_static.py
 
 .PHONY: docs docs-live docs-clean clean format format-check typecheck typecheck_pyright lint test test-browser test-js test_fastfail audit build_store build_store_legacy generate_details sync_detail_raw_paths serve_combined serve_optimade validate_optimade update_schemas
 

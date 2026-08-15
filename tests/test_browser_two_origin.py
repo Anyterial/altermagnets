@@ -16,10 +16,9 @@ from urllib.request import Request, urlopen
 import material_store
 import publish_static
 import pytest
-import serve_optimade
 from conftest import write_detail_assets, write_source_tables
 from httk.serve import ASGIAppMount, compose_asgi_apps
-from optimade_service import build_service_app
+from optimade import build_providers, build_service_app
 
 BROWSER_REQUIRED = os.environ.get("ALTERMAGNETS_BROWSER_REQUIRED") == "1"
 
@@ -157,7 +156,7 @@ def _synthetic_app(tmp_path_factory: pytest.TempPathFactory, api_url: str, site_
     os.environ.update(overrides)
     try:
         records: dict[str, object] = {}
-        providers = serve_optimade.build_providers(public_base_url=api_url, material_records=records)
+        providers = build_providers(public_base_url=api_url, material_records=records)
     finally:
         for name, value in previous.items():
             if value is None:

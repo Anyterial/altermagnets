@@ -24,6 +24,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import serve_combined
+from httk.serve.web import create_asgi_app as create_web_asgi_app
+from optimade import combined
 
 
 def _widget_configuration(document: str) -> dict[str, object]:
@@ -244,7 +246,7 @@ def test_combined_public_origin_cli(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_standalone_static_site_does_not_advertise_the_combined_pilot() -> None:
-    app = serve_combined.create_web_asgi_app(ROOT / "src", config_name="config")
+    app = create_web_asgi_app(ROOT / "src", config_name="config")
 
     with TestClient(app, base_url="http://testserver") as client:
         home = client.get("/")
@@ -314,7 +316,7 @@ def test_composition_failure_closes_only_factory_created_web_app(monkeypatch: py
     def fail_compose(*_: object, **__: object) -> Starlette:
         raise RuntimeError("composition failed")
 
-    monkeypatch.setattr(serve_combined, "compose_asgi_apps", fail_compose)
+    monkeypatch.setattr(combined, "compose_asgi_apps", fail_compose)
     with pytest.raises(RuntimeError, match="composition failed"):
         serve_combined.create_combined_app(
             web_factory=lambda: factory_web,

@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))
 
 import material_store
 from conftest import write_source_tables
-from optimade_service import build_service_app
+from optimade import build_service_app
 from starlette.testclient import TestClient
 
 

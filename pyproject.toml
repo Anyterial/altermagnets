@@ -71,14 +71,14 @@ quote-style = "preserve"
 
 [tool.pyright]
 pythonVersion = "3.12"
-include = ["src/functions", "src/widgets", "workflows", "tools/build_store.py", "serve_combined.py", "serve_optimade.py", "optimade_service.py", "publish_static.py"]
+include = ["src/functions", "src/widgets", "workflows", "tools/build_store.py", "optimade", "serve_combined.py", "serve_optimade.py", "publish_static.py"]
 exclude = ["src/data"]
 extraPaths = ["src", "src/functions", "src/widgets"]
 reportMissingImports = true
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src/functions", "src/widgets", "workflows", "tools/build_store.py", "serve_combined.py", "serve_optimade.py", "optimade_service.py", "publish_static.py"]
+files = ["src/functions", "src/widgets", "workflows", "tools/build_store.py", "optimade", "serve_combined.py", "serve_optimade.py", "publish_static.py"]
 mypy_path = ["src", "src/functions", "src/widgets"]
 namespace_packages = true
 explicit_package_bases = true

@@ -520,7 +520,7 @@ def _list_scalar_query(field: str, *, literals: Mapping[object, object] | None =
 def _provider_property(record: object, name: str) -> object:
     # This compatibility projector is pure and does not enumerate the store.
     # A root-relative base is made absolute by the thin service adapter.
-    from serve_optimade import _material_properties
+    from optimade.dataset import _material_properties
 
     return _material_properties(cast(MaterialRecord, record), "")[name]
 

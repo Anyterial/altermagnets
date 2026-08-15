@@ -19,8 +19,6 @@ from optimade_service import (
 )  # isort: skip
 from starlette.applications import Starlette
 
-from serve_optimade import build_providers  # isort: skip
-
 ROOT = Path(__file__).resolve().parent
 
 DEFAULT_COMBINED_PUBLIC_BASE_URL = "http://127.0.0.1:8080"
@@ -104,12 +102,8 @@ def _default_index_app(public_origin: str = DEFAULT_COMBINED_PUBLIC_BASE_URL) ->
 def _default_amdb_app(public_origin: str = DEFAULT_COMBINED_PUBLIC_BASE_URL) -> Starlette:
     amdb_url = _public_url(public_origin, AMDB_PATH)
     index_url = _public_url(public_origin, INDEX_PATH)
-    records: dict[str, object] = {}
-    providers = build_providers(public_base_url=amdb_url, material_records=records)
     return build_service_app(
         public_base_url=amdb_url,
-        providers=providers,
-        dataset=records,
         root_link_target=index_url,
         root_link_id="index",
         root_link_name=INDEX_NAME,

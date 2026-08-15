@@ -10,14 +10,16 @@ httk-core's storage markers and implemented by ``httk.store.db.SqlStore``.
 import bz2
 import csv
 import hashlib
+import json
 import logging
 import math
 import os
 import re
 import tempfile
 import time
-from collections.abc import Iterable, Mapping, MutableMapping
+from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass, replace
+from functools import cache
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, cast
 
@@ -28,20 +30,34 @@ from httk.atomistic import (
 )
 from httk.atomistic.entries.structures import StructureEntry
 from httk.atomistic.storage.records import (
-    ASUStructureRecord,
     CellRecord,
-    FundamentalDomainStructureRecord,
     NormalizedCompositionAmountRecord,
     NormalizedCompositionRecord,
     SitesRecord,
     SpeciesRecord,
     UnitcellStructureRecord,
 )
-from httk.core import DataRecord, File, FileRecord, Indexed, Skip, StorageInfo, Unique, load, report
+from httk.atomistic.storage.stored_properties import unitcell_structure_properties
+from httk.core import (
+    DataRecord,
+    EntryTypeDefinition,
+    File,
+    FileRecord,
+    Indexed,
+    PropertyDefinition,
+    Skip,
+    StorageInfo,
+    Unique,
+    load,
+    register_definition_prefix,
+    report,
+    standard_entry_type,
+)
 from httk.core.data_records import DataRecordEntry
 from httk.core.files import FileEntry
 from httk.core.provenance import Run, RunEntry
-from httk.core.storage import project_storage_record
+from httk.core.register import register_entry_family, register_entry_record
+from httk.core.storage import QueryLiteralError, StoredPropertyProjection, project_storage_record
 from httk.store.db import Database, SqlStore
 
 __all__ = [
@@ -52,6 +68,9 @@ __all__ = [
     "SCREENING_RESULTS_FILENAME",
     "STORE_LAYOUT_VERSION",
     "STORE_PATH_ENVIRONMENT",
+    "AltermagnetReferenceEntry",
+    "AltermagnetReferenceRecord",
+    "AltermagnetStructureEntry",
     "MagndataRecord",
     "MaterialFigure",
     "MaterialMagndataLink",
@@ -92,7 +111,7 @@ logger = report.context_logger(logging.getLogger("httk.altermagnets.material_sto
 #: change is treated as stale (falling back to in-memory seeding) instead of being
 #: silently adopted with missing child tables reading as ``None``. Bump on every
 #: stored-record schema change.
-STORE_LAYOUT_VERSION = 4
+STORE_LAYOUT_VERSION = 5
 
 ELEMENT_PATTERN = re.compile(r"[A-Z][a-z]?")
 SCREENING_RESULTS_FILENAME = "high_throughput_screening_results_fixed.csv"
@@ -255,6 +274,389 @@ class MaterialRecord:
     dois: tuple[str, ...]
     search_text: str
     structure: UnitcellStructureRecord | None = None
+
+
+@dataclass(frozen=True)
+class AltermagnetReferenceRecord:
+    """One DOI-backed OPTIMADE reference stored beside the material entries."""
+
+    __httk_storage__: ClassVar[StorageInfo] = StorageInfo(
+        storage_name="altermagnets_references",
+        indexes=(("public_id",), ("doi",)),
+    )
+
+    public_id: Annotated[str, Unique(), Indexed()]
+    doi: Annotated[str, Unique(), Indexed()]
+
+
+class AltermagnetStructureEntry:
+    """The store-native, Anyterial-extended OPTIMADE structures family."""
+
+    type = "structures"
+    definition_id = "https://schemas.optimade.org/defs/v1.3/entrytypes/optimade/structures"
+
+    @classmethod
+    def entry_type_definition(cls) -> EntryTypeDefinition:
+        """Return the atomistic structure definition plus Anyterial properties."""
+        return StructureEntry.entry_type_definition().extended(_optimade_definitions())
+
+
+class AltermagnetReferenceEntry:
+    """The store-native OPTIMADE references family used by AMDB."""
+
+    type = "references"
+    definition_id = "https://schemas.optimade.org/defs/v1.2/entrytypes/optimade/references"
+
+    @classmethod
+    def entry_type_definition(cls) -> EntryTypeDefinition:
+        """Return the standard reference definition plus its private public-ID field."""
+        return standard_entry_type("references").extended(
+            {"_httk_custom_public_id": _private_id_definition("references")}
+        )
+
+
+ANYTERIAL_DEFS_BASE = "https://schemas.anyterial.se/defs/v0.1/properties"
+ANYTERIAL_DEFINITION_PATHS = {
+    "_anyterial_formula": "formula.json",
+    "_anyterial_elements": "elements_present.json",
+    "_anyterial_space_group": "space_group.json",
+    "_anyterial_space_group_search": "space_group_search.json",
+    "_anyterial_classification": "classification.json",
+    "_anyterial_magnetic_phases": "magnetic_phases.json",
+    "_anyterial_wave_classes": "wave_classes.json",
+    "_anyterial_parent_spacegroups": "parent_spacegroups.json",
+    "_anyterial_icsd_ids": "icsd_ids.json",
+    "_anyterial_search_text": "search_text.json",
+    "_anyterial_magndata_variants": "magndata_variants.json",
+    "_anyterial_avg_spin_splitting": "avg_spin_splitting.json",
+    "_anyterial_max_spin_splitting": "max_spin_splitting.json",
+    "_anyterial_spin_splitting_fraction": "spin_splitting_fraction.json",
+    "_anyterial_magnetic_phase": "magnetic_phase.json",
+    "_anyterial_wave_class": "wave_class.json",
+    "_anyterial_electronic_type": "electronic_type.json",
+    "_anyterial_min_crustal_abundance": "min_crustal_abundance.json",
+}
+HTTK_DEFINITION_PATHS = {
+    "_httk_dft_band_gap": "electronic/dft_band_gap.json",
+    "_httk_magnetic_space_group_bns": "magnetism/magnetic_space_group_bns.json",
+    "_httk_magndata_ids": "magnetism/magndata_ids.json",
+}
+ANYTERIAL_DEFS_DIR = Path(__file__).resolve().parents[2] / (
+    "dependencies/submodules/anyterial-schemas/defs/v0.1/properties/altermagnets"
+)
+HTTK_DEFS_DIR = Path(__file__).resolve().parents[2] / "dependencies/submodules/httk-schemas/defs/v0.1/properties"
+
+
+def _private_id_definition(entry_type: str) -> PropertyDefinition:
+    document = PropertyDefinition.from_simple(
+        "_httk_custom_public_id",
+        description=f"The deployment-owned public identifier for one {entry_type} entry.",
+    ).as_optimade()
+    document["x-optimade-requirements"] = {
+        "support": "may",
+        "query-support": "none",
+        "response-level": "must not",
+    }
+    return PropertyDefinition.from_optimade("_httk_custom_public_id", document)
+
+
+def _local_figure_definition() -> PropertyDefinition:
+    document = PropertyDefinition.from_simple(
+        "_httk_custom_figures",
+        description=(
+            "Data-only figure metadata for this deployment's fixed band-structure, "
+            "crystal-structure, and Brillouin-zone figures."
+        ),
+        fulltype="list of dict",
+        unit="inapplicable",
+    ).as_optimade()
+    document["x-optimade-requirements"] = {
+        "support": "may",
+        "query-support": "none",
+        "response-level": "should not",
+    }
+    return PropertyDefinition.from_optimade("_httk_custom_figures", document)
+
+
+def _private_reference_ids_definition() -> PropertyDefinition:
+    document = PropertyDefinition.from_simple(
+        "_httk_custom_reference_ids",
+        description="Private reference identifiers used to construct the OPTIMADE relationships block.",
+        fulltype="list of string",
+    ).as_optimade()
+    document["x-optimade-requirements"] = {
+        "support": "may",
+        "query-support": "none",
+        "response-level": "must not",
+    }
+    return PropertyDefinition.from_optimade("_httk_custom_reference_ids", document)
+
+
+@cache
+def _optimade_definitions() -> dict[str, PropertyDefinition]:
+    """Load the curated AMDB definitions used by both stored schema and docs tests."""
+    register_definition_prefix("_anyterial_", ANYTERIAL_DEFS_BASE)
+    definitions: dict[str, PropertyDefinition] = {}
+    for base, paths in ((ANYTERIAL_DEFS_DIR, ANYTERIAL_DEFINITION_PATHS), (HTTK_DEFS_DIR, HTTK_DEFINITION_PATHS)):
+        for served_name, relative_path in paths.items():
+            path = base / relative_path
+            if not path.is_file():
+                raise RuntimeError(
+                    f"Property definition file {path} is missing; initialize the schema submodules "
+                    "via `git submodule update --init` or `make update_schemas`."
+                )
+            definitions[served_name] = PropertyDefinition.from_optimade(
+                served_name, json.loads(path.read_text(encoding="utf-8"))
+            )
+    definitions["_httk_custom_figures"] = _local_figure_definition()
+    definitions["_httk_custom_public_id"] = _private_id_definition("structure")
+    definitions["_httk_custom_reference_ids"] = _private_reference_ids_definition()
+    return definitions
+
+
+def _reference_id(doi: str) -> str:
+    """Return a stable public reference ID without depending on row order."""
+    return "anyt:ref-" + hashlib.sha256(doi.encode("utf-8")).hexdigest()[:16]
+
+
+class _NestedQueryContext:
+    """Re-root a neutral query context at one stored reference field."""
+
+    def __init__(self, root: Any, scope: Any) -> None:
+        self._root = root
+        self._scope = scope
+
+    def field(self, name: str) -> Any:
+        return self._scope.field(name)
+
+    def scope(self, name: str) -> Any:
+        return self._scope.scope(name)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._root, name)
+
+
+def _nested_structure_projection(projection: StoredPropertyProjection) -> StoredPropertyProjection:
+    def response(record: object) -> object:
+        material = cast(MaterialRecord, record)
+        return None if material.structure is None else projection.response(material.structure)
+
+    def query(context: Any, operator: str, literal: object) -> Any:
+        assert projection.query is not None
+        return projection.query(cast(Any, _NestedQueryContext(context, context.scope("structure"))), operator, literal)
+
+    def sort(context: Any) -> Any:
+        assert projection.sort is not None
+        return projection.sort(cast(Any, _NestedQueryContext(context, context.scope("structure"))))
+
+    return StoredPropertyProjection(
+        response=response,
+        query=query if projection.query is not None else None,
+        sort=sort if projection.sort is not None else None,
+    )
+
+
+def _scalar_query(field: str, *, literal_transform: Any = None):
+    def query(context: Any, operator: str, literal: object) -> Any:
+        value = context.field(field)
+        if operator == "IS_UNKNOWN":
+            return context.is_null(value)
+        if operator == "IS_KNOWN":
+            return context.not_(context.is_null(value))
+        mapped = literal_transform(literal) if literal_transform is not None else literal
+        return context.compare(value, operator, context.constant(mapped))
+
+    return query
+
+
+def _list_query(field: str):
+    def query(context: Any, operator: str, literal: object) -> Any:
+        values = context.scope(field)
+        if operator == "IS_UNKNOWN":
+            return context.equal(context.count(values), context.constant(0))
+        if operator == "IS_KNOWN":
+            return context.compare(context.count(values), ">", context.constant(0))
+        literals = literal if isinstance(literal, tuple) else (literal,)
+        predicates = []
+        for item in literals:
+            candidate = context.scope(field)
+            predicates.append(
+                context.exists(candidate, context.equal(candidate.field("value"), context.constant(item)))
+            )
+        if operator in {"HAS", "HAS_ALL"}:
+            return context.and_(*predicates)
+        if operator == "HAS_ANY":
+            return context.or_(*predicates)
+        if operator == "HAS_ONLY":
+            return context.and_(
+                context.equal(context.count(values), context.constant(len(set(literals)))),
+                context.and_(*predicates),
+            )
+        raise QueryLiteralError(f"unsupported list operator {operator!r}")
+
+    return query
+
+
+def _list_scalar_query(field: str, *, literals: Mapping[object, object] | None = None):
+    def query(context: Any, operator: str, literal: object) -> Any:
+        values = context.scope(field)
+        known = context.compare(context.count(values), ">", context.constant(0))
+        if operator == "IS_UNKNOWN":
+            return context.not_(known)
+        if operator == "IS_KNOWN":
+            return known
+        if operator not in {"=", "!="}:
+            raise QueryLiteralError("scalar list projections support equality only")
+        mapped = literals.get(literal, literal) if literals is not None else literal
+        candidate = context.scope(field)
+        matches = context.exists(candidate, context.equal(candidate.field("value"), context.constant(mapped)))
+        result = context.when_known(known, matches)
+        return result if operator == "=" else context.not_(result)
+
+    return query
+
+
+def _provider_property(record: object, name: str) -> object:
+    # This compatibility projector is pure and does not enumerate the store.
+    # A root-relative base is made absolute by the thin service adapter.
+    from serve_optimade import _material_properties
+
+    return _material_properties(cast(MaterialRecord, record), "")[name]
+
+
+def _provider_response(property_name: str) -> Callable[[object], object]:
+    def response(record: object) -> object:
+        return _provider_property(record, property_name)
+
+    return response
+
+
+def _field_sort(field_name: str) -> Callable[[Any], Any]:
+    def sort(context: Any) -> Any:
+        return context.field(field_name)
+
+    return sort
+
+
+def _fraction_literal_to_percent(value: object) -> object:
+    return cast(Any, value) * 100
+
+
+def _material_public_id(record: object) -> str:
+    return cast(MaterialRecord, record).id
+
+
+def _material_reference_ids(record: object) -> list[str]:
+    return [_reference_id(doi) for doi in cast(MaterialRecord, record).dois]
+
+
+def _reference_doi(record: object) -> str:
+    return cast(AltermagnetReferenceRecord, record).doi
+
+
+def _reference_public_id(record: object) -> str:
+    return cast(AltermagnetReferenceRecord, record).public_id
+
+
+def _material_projections() -> dict[str, StoredPropertyProjection]:
+    projections = {
+        name: _nested_structure_projection(projection) for name, projection in unitcell_structure_properties().items()
+    }
+    direct: dict[str, tuple[str, bool]] = {
+        "_anyterial_formula": ("formula", False),
+        "_anyterial_space_group": ("space_group", False),
+        "_anyterial_space_group_search": ("space_group_search", False),
+        "_anyterial_classification": ("classification", False),
+        "_anyterial_search_text": ("search_text", False),
+        "_anyterial_max_spin_splitting": ("max_ss", True),
+        "_anyterial_avg_spin_splitting": ("avg_ss", True),
+        "_httk_dft_band_gap": ("bandgap", True),
+        "_anyterial_electronic_type": ("electronic_type", False),
+        "_anyterial_min_crustal_abundance": ("min_abund_ppm", True),
+    }
+    for name, (field, sortable) in direct.items():
+        projections[name] = StoredPropertyProjection(
+            response=_provider_response(name),
+            query=_scalar_query(field),
+            sort=_field_sort(field) if sortable else None,
+        )
+    for name, field in {
+        "_anyterial_elements": "elements",
+        "_anyterial_magnetic_phases": "magnetic_phases",
+        "_anyterial_wave_classes": "wave_classes",
+        "_anyterial_parent_spacegroups": "parent_spacegroups",
+        "_anyterial_icsd_ids": "icsd_ids",
+    }.items():
+        projections[name] = StoredPropertyProjection(
+            response=_provider_response(name),
+            query=_list_query(field),
+        )
+    projections["_anyterial_spin_splitting_fraction"] = StoredPropertyProjection(
+        response=_provider_response("_anyterial_spin_splitting_fraction"),
+        query=_scalar_query("fdelta_pct", literal_transform=_fraction_literal_to_percent),
+        sort=_field_sort("fdelta_pct"),
+    )
+    projections["_anyterial_magnetic_phase"] = StoredPropertyProjection(
+        response=_provider_response("_anyterial_magnetic_phase"),
+        query=_list_scalar_query(
+            "magnetic_phases",
+            literals={"altermagnet": "AM", "compensated ferrimagnet": "FiM"},
+        ),
+    )
+    projections["_anyterial_wave_class"] = StoredPropertyProjection(
+        response=_provider_response("_anyterial_wave_class"),
+        query=_list_scalar_query("wave_classes"),
+    )
+    for name in (
+        "_anyterial_magndata_variants",
+        "_httk_custom_figures",
+        "_httk_magnetic_space_group_bns",
+        "_httk_magndata_ids",
+    ):
+        projections[name] = StoredPropertyProjection(response=_provider_response(name))
+    projections["_httk_custom_public_id"] = StoredPropertyProjection(
+        response=_material_public_id,
+        query=_scalar_query("id"),
+        sort=_field_sort("id"),
+    )
+    projections["_httk_custom_reference_ids"] = StoredPropertyProjection(response=_material_reference_ids)
+    return projections
+
+
+cast(Any, MaterialRecord).__httk_stored_properties__ = _material_projections()
+cast(Any, AltermagnetReferenceRecord).__httk_stored_properties__ = {
+    "doi": StoredPropertyProjection(
+        response=_reference_doi,
+        query=_scalar_query("doi"),
+        sort=_field_sort("doi"),
+    ),
+    "_httk_custom_public_id": StoredPropertyProjection(
+        response=_reference_public_id,
+        query=_scalar_query("public_id"),
+        sort=_field_sort("public_id"),
+    ),
+}
+
+register_entry_family(
+    name="altermagnets-structures",
+    family=f"{__name__}:AltermagnetStructureEntry",
+    definition_id=AltermagnetStructureEntry.definition_id,
+)
+register_entry_record(
+    name="altermagnets-structure",
+    family="altermagnets-structures",
+    record=f"{__name__}:MaterialRecord",
+)
+register_entry_family(
+    name="altermagnets-references",
+    family=f"{__name__}:AltermagnetReferenceEntry",
+    definition_id=AltermagnetReferenceEntry.definition_id,
+)
+register_entry_record(
+    name="altermagnets-reference",
+    family="altermagnets-references",
+    record=f"{__name__}:AltermagnetReferenceRecord",
+)
 
 
 @dataclass(frozen=True)
@@ -1094,7 +1496,8 @@ def _build_coupling(
 def _entry_records_layout() -> dict[type, type | tuple[type, ...]]:
     """Mirror workflow ``--into`` with the altermagnets structure families."""
     return {
-        StructureEntry: (UnitcellStructureRecord, FundamentalDomainStructureRecord, ASUStructureRecord),
+        AltermagnetStructureEntry: MaterialRecord,
+        AltermagnetReferenceEntry: AltermagnetReferenceRecord,
         RunEntry: Run,
         DataRecordEntry: DataRecord,
         FileEntry: FileRecord,
@@ -1198,6 +1601,8 @@ def build_store(
                             bulk.save(product)
             for material in materials:
                 bulk.save(material)
+            for doi in dict.fromkeys(doi for material in materials for doi in material.dois):
+                bulk.save(AltermagnetReferenceRecord(_reference_id(doi), doi))
         write_elapsed = time.perf_counter() - write_started
         finalize_started = time.perf_counter()
         created_database.dispose()
@@ -1230,8 +1635,11 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
     store_path = resolve_store_path(path)
     database: Database | None = None
     try:
-        if not store_path.is_file() or store_path.stat().st_size == 0:
+        if not store_path.is_file():
             logger.info("No prebuilt store at %s", store_path)
+            return None
+        if store_path.stat().st_size == 0:
+            logger.warning("Prebuilt store %s is empty; rebuild with `make build_store`", store_path)
             return None
         opened_database = Database.duckdb(store_path)
         database = opened_database
@@ -1245,7 +1653,7 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
         layout_row = layout_searcher.results(layout=layout).first()
         stamped = None if layout_row is None else layout_row["layout"].version
         if stamped != STORE_LAYOUT_VERSION:
-            logger.info(
+            logger.warning(
                 "Prebuilt store %s is stale (layout %s, need %d); rebuild with `make build_store`",
                 store_path,
                 stamped,
@@ -1257,7 +1665,7 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
         material = searcher.variable(MaterialRecord)
         material_count = searcher.count()
         if material_count <= 0:
-            logger.info("Prebuilt store %s holds no materials", store_path)
+            logger.warning("Prebuilt store %s holds no materials; rebuild with `make build_store`", store_path)
             opened_database.dispose()
             return None
         sample = searcher.results(material=material).first()
@@ -1306,12 +1714,13 @@ def open_in_memory_store(
             return None
         opened_database = Database.sqlite()
         database = opened_database
-        # The in-memory fallback is another fresh private/custom store.
-        store = SqlStore(opened_database, entry_records={})
+        store = SqlStore(opened_database, entry_records=_entry_records_layout())
         # Bulk ingestion creates the tables and their indexes itself.
         with store.bulk_ingest() as bulk:
             for material in materials:
                 bulk.save(material)
+            for doi in dict.fromkeys(doi for material in materials for doi in material.dois):
+                bulk.save(AltermagnetReferenceRecord(_reference_id(doi), doi))
         return OpenedMaterialStore(
             opened_database,
             store,

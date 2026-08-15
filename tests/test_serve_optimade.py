@@ -29,7 +29,9 @@ sys.path.insert(0, str(ROOT))
 import material_store
 import optimade_service
 import serve_optimade
+from conftest import write_source_tables
 from optimade_service import build_service_app
+from starlette.testclient import TestClient
 
 EXPECTED_DEFINITION_PROVENANCE = {
     "_anyterial_formula": (
@@ -159,6 +161,49 @@ class ApiClient:
 
     def get(self, path: str, *, params: dict[str, str] | None = None) -> httpx.Response:
         return self.request("GET", path, params=params)
+
+
+def test_store_native_service_is_live_and_does_not_own_caller_store(tmp_path: Path) -> None:
+    source = write_source_tables(tmp_path / "tables")
+    opened = material_store.open_in_memory_store(source, details_dir=tmp_path / "details")
+    assert opened is not None
+    app = build_service_app(
+        public_base_url="https://api.example.test/optimade/amdb",
+        store=opened.store,
+        details_root=tmp_path / "details",
+    )
+    assert app.state.entry_store is opened.store
+    assert app.state.owns_entry_store is False
+
+    with TestClient(app, base_url="http://testserver") as live:
+        info = live.get("/v1/info/structures")
+        assert info.status_code == 200
+        assert "_httk_custom_public_id" not in info.json()["data"]["properties"]
+        assert "_httk_custom_reference_ids" not in info.json()["data"]["properties"]
+        first = live.get("/v1/structures", params={"sort": "id", "response_fields": "id"})
+        assert first.status_code == 200
+        assert [item["id"] for item in first.json()["data"]] == [
+            "anyt:am-1-0001",
+            "anyt:am-1-0002",
+            "anyt:am-1-0003",
+        ]
+
+        searcher = opened.store.searcher()
+        material = searcher.variable(material_store.MaterialRecord)
+        record = searcher.results(material=material).first()["material"]
+        opened.store.save(replace(record, id="anyt:am-1-9999", screening_rank=9999))
+
+        later = live.get("/v1/structures", params={"sort": "id", "response_fields": "id"})
+        assert later.status_code == 200
+        assert later.json()["meta"]["data_available"] == 4
+        assert later.json()["data"][-1]["id"] == "anyt:am-1-9999"
+        included = live.get("/v1/structures/anyt:am-1-0001", params={"include": "references"})
+        assert included.status_code == 200
+        assert included.json()["included"]
+
+    # The service did not close a store supplied by its caller.
+    assert opened.store.searcher().variable(material_store.MaterialRecord) is not None
+    opened.database.dispose()
 
 
 def _figure_dataset(details_root: Path) -> tuple[dict[str, Any], str, Path, Path]:

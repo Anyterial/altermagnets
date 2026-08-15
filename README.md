@@ -45,6 +45,10 @@ make serve
 
 `make build_store` atomically writes `data/altermagnets.duckdb`; the OPTIMADE
 service always prefers a current, matching-layout store and never modifies it.
+The ASGI service passes this `SqlStore` directly to httk-serve's lazy stored
+adapter: filters, sorting, counts, and pagination execute in the database, and
+only the bounded response page is hydrated. No provider snapshot or duplicate
+in-memory OPTIMADE dataset is built at startup.
 Older or unversioned stores are treated as unavailable and fall back to the
 source tables; rebuild them with `make build_store` after a store layout-version
 change. Set `ALTERMAGNETS_STORE_PATH` to
@@ -96,12 +100,13 @@ OPTIMADE service
 
 The same dataset is also served over the [OPTIMADE](https://www.optimade.org/)
 API by the thin `serve_optimade.py` entry point, built on the httk₂ modules
-(*httk-core*, *httk-io*, *httk-atomistic*, *httk-store*, *httk-serve*). It
-reads the three CSV tables under `data/tables/`, parses each material's
-`CONTCAR.bz2` into an exact crystal structure, and serves 180 `structures`
-(with auto-derived composition fields and 18 `_anyterial_` plus four `_httk_`
-custom properties, including the `_httk_custom_figures` plot metadata) plus
-the deduplicated `references`, linked via OPTIMADE relationships.
+(*httk-core*, *httk-io*, *httk-atomistic*, *httk-store*, *httk-serve*).
+`MaterialRecord` and the DOI reference record are registered store-native
+backings. Their durable property projections serve 180 `structures` (with
+auto-derived composition fields and the `_anyterial_`/`_httk_` properties) and
+deduplicated `references`. A thin bounded-page adapter preserves AMDB's public
+human-readable IDs, reference relationship blocks, and deployment-specific
+absolute figure URLs without copying the underlying catalogue.
 
 The curated custom property definitions are loaded verbatim from the live schema
 submodules: Anyterial-defined properties use the `_anyterial_*` prefix and HTTK-defined

@@ -31,7 +31,7 @@
   const sanitize = (raw) => {
     const value = {};
     fields.forEach((name) => {
-      const cleaned = textToken(raw[name], maxLengths[name], name === "q" || name === "space_group" ? "'\"" : "");
+      const cleaned = textToken(raw[name], maxLengths[name], name === "q" || name === "space_group" || name === "elements" ? "'\"" : "");
       value[name] = enums[name] ? (enums[name].has(cleaned) ? cleaned : "") : cleaned;
     });
     for (const name of ["min_max_ss", "min_avg_ss", "min_fdelta_pct", "min_bandgap", "max_bandgap", "min_abundance_ppm"]) {

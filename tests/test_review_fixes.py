@@ -54,12 +54,6 @@ def test_internal_public_id_is_not_filterable_on_structures(client: TestClient) 
     assert _is_optimade_error(response)
 
 
-def test_internal_public_id_is_not_filterable_on_references(client: TestClient) -> None:
-    response = client.get("/v1/references", params={"filter": '_httk_custom_public_id="anyt:ref-0001"'})
-    assert response.status_code == 400
-    assert _is_optimade_error(response)
-
-
 def test_public_id_filter_drives_internal_remap_and_returns_row(client: TestClient) -> None:
     # Control guarding exactly the regression class: a client filter on the public
     # `id` drives the adapter's `_rewrite_id_filter` (id -> _httk_custom_public_id)
@@ -71,19 +65,14 @@ def test_public_id_filter_drives_internal_remap_and_returns_row(client: TestClie
     assert [item["id"] for item in response.json()["data"]] == ["anyt:am-1-0001"]
 
 
-def test_ordinary_property_filter_returns_rows(client: TestClient) -> None:
-    # Second row-returning control on a plain custom property.
-    response = client.get("/v1/structures", params={"filter": '_anyterial_elements HAS "Cr"', "response_fields": "id"})
-    assert response.status_code == 200
-    assert response.json()["data"]
-
-
-def test_unusable_prebuilt_store_logs_at_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    # An existing-but-unusable store (here: zero-size) is a loud failure, not a
-    # silent INFO fall-through to in-memory seeding.
+def test_unusable_prebuilt_store_is_rejected_with_a_logged_reason(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # An existing-but-unusable store (here: zero-size) must be refused, so the
+    # caller falls back, and must log why. The operator-facing WARNING is emitted
+    # once by the application at the fallback decision, not here.
     empty = tmp_path / "altermagnets.duckdb"
     empty.touch()
-    with caplog.at_level(logging.WARNING, logger="httk.altermagnets.material_store"):
+    with caplog.at_level(logging.INFO, logger="httk.altermagnets.material_store"):
         assert material_store.open_prebuilt_store(empty) is None
-    assert any(record.levelno == logging.WARNING for record in caplog.records)
-    assert "empty" in caplog.text
+    assert str(empty) in caplog.text

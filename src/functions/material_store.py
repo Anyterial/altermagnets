@@ -1639,7 +1639,7 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
             logger.info("No prebuilt store at %s", store_path)
             return None
         if store_path.stat().st_size == 0:
-            logger.warning("Prebuilt store %s is empty; rebuild with `make build_store`", store_path)
+            logger.info("Prebuilt store %s is empty; rebuild with `make build_store`", store_path)
             return None
         opened_database = Database.duckdb(store_path)
         database = opened_database
@@ -1653,7 +1653,7 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
         layout_row = layout_searcher.results(layout=layout).first()
         stamped = None if layout_row is None else layout_row["layout"].version
         if stamped != STORE_LAYOUT_VERSION:
-            logger.warning(
+            logger.info(
                 "Prebuilt store %s is stale (layout %s, need %d); rebuild with `make build_store`",
                 store_path,
                 stamped,
@@ -1665,7 +1665,7 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
         material = searcher.variable(MaterialRecord)
         material_count = searcher.count()
         if material_count <= 0:
-            logger.warning("Prebuilt store %s holds no materials; rebuild with `make build_store`", store_path)
+            logger.info("Prebuilt store %s holds no materials; rebuild with `make build_store`", store_path)
             opened_database.dispose()
             return None
         sample = searcher.results(material=material).first()

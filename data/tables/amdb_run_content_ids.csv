@@ -4,7 +4,7 @@ anyt:am-1-0002;MnTe;7/Runs/ht.task.tetralith--default.MnTe_SCF.cleanup.0.unclaim
 anyt:am-1-0003;RuO2;8/Runs/ht.task.tetralith--default.RuO2_SCF.cleanup.0.unclaimed.3.finished;139a57c73a35d89002a67a68bdf3b3493d3b9614fa9650a8965e29f4b7a2a6f1;09a2365c3a5708b05d0397b244a3beea62aa5223aec5394144ce5ab0e5f5fd22;auto
 anyt:am-1-0004;CrSe;2/Runs/ht.task.tetralith--default.CrSe_SCF.cleanup.0.unclaimed.3.finished;5dc95aa7cdb2187c54d7f9a190fb5d60300aa4c1ae1a1bcf88e4e01df95125b5;0f3967d792a0bcc3e99fe34efdfe797fb769b424a6b1dc80268652b6213c254d;auto
 anyt:am-1-0005;UCr2Si2C;10/Runs/ht.task.tetralith--default.UCr2Si2C_SCF.cleanup.0.unclaimed.3.finished;3adc4dd11d475f9512005962c936d9816f07bcdaa92ab0f4096591769adf32a3;9dabd730231eef14da298f31efdb5b91a48b2bef0c70af9880d2547f516f6553;auto
-anyt:am-1-0007;Cu2O3Cl-2;;;;ambiguous
+anyt:am-1-0007;Cu2O3Cl-2;3/Runs/ht.task.tetralith--default.Cu2O3Cl-2_SCF.cleanup.0.unclaimed.3.finished;d3edef41447d42774b939d383e427da0cdf738a18933f39377a9259b3f687eb2;a5702fea18526576c9c5b7ed4b60dba22fbd812a02252b3ab650bb45fc0c3094;curated
 anyt:am-1-0008;CoF2;2/Runs/ht.task.tetralith--default.CoF2_SCF.cleanup.0.unclaimed.3.finished;30d6d97b239d37763d9faa2cc59fae8482b11c0a486f119e13a32bde6d5c9517;7e41def56b5db59c6e8bd3ab7daad5a1f615109c14037860c570ca2ce95fb875;auto
 anyt:am-1-0010;NiF2;7/Runs/ht.task.tetralith--default.NiF2_SCF.cleanup.0.unclaimed.3.finished;1f9874342b887fde25471e2f413dc30684ae2210ec3088bd5983399bf116a0e2;f7ac04d449248a29ddc9bec178db2ab4feac4fc3681b6cbab64ea11207ee0eb6;auto
 anyt:am-1-0012;LiFe2F6;6/Runs/ht.task.tetralith--default.LiFe2F6_SCF.cleanup.0.unclaimed.3.finished;59b1a74117e77e5a72196ade59ebcbffe6524231866be35202367239213aab71;fd8e4b725e1441f3fd43139ce206d82aef6666a7782477ae5f4281592082f9d5;auto

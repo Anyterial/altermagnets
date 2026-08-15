@@ -117,3 +117,70 @@ def test_two_successive_builds_replace_the_same_target(tmp_path: Path) -> None:
     build_store(target, data_dir=source, details_dir=details, runs_dir=runs)
     build_store(target, data_dir=source, details_dir=details, runs_dir=runs)
     assert target.is_file() and target.stat().st_size > 0
+
+
+_RUN_POSCAR = """Fixture POSCAR
+1.0
+1 0 0
+0 1 0
+0 0 1
+H He Li
+1 1 1
+Direct
+0 0 0
+0.5 0.5 0.5
+0.25 0.25 0.25
+"""
+# Energy but no magnetization block: a coupled run that yields a moment-free structure.
+_RUN_OUTCAR_ENERGY_ONLY = """ vasp.5.2.12 synthetic
+   FREE ENERGIE OF THE ION-ELECTRON SYSTEM (eV)
+   free  energy   TOTEN  =       -1.00000000 eV
+   energy  without entropy=      -1.00000000  energy(sigma->0) =      -1.00000000
+ General timing and accounting informations
+"""
+
+
+def _scf_run(runs: Path, material: str) -> None:
+    task = runs / "1" / "Runs" / f"ht.task.tetralith--default.{material}_SCF.cleanup.0.unclaimed.3.finished"
+    step = task / "ht.run.2025-01-01_00.00.00" / "ht.task.any.0.cleanup.0.unclaimed.3.finished"
+    inner = step / "ht.run.2025-01-01_00.00.01"
+    inner.mkdir(parents=True)
+    (step / "POSCAR").write_text(_RUN_POSCAR, encoding="utf-8")
+    (inner / "CONTCAR").write_text(_RUN_POSCAR, encoding="utf-8")
+    (inner / "OUTCAR").write_text(_RUN_OUTCAR_ENERGY_ONLY, encoding="utf-8")
+
+
+def _materials_by_id(store_path: Path) -> dict[str, MaterialRecord]:
+    opened = open_prebuilt_store(store_path)
+    assert opened is not None
+    try:
+        searcher = opened.store.searcher()
+        variable = searcher.variable(MaterialRecord)
+        return {row["material"].id: row["material"] for row in searcher.results(material=variable)}
+    finally:
+        opened.database.dispose()
+
+
+def test_build_saves_only_coupled_runs_and_recovers_moments(tmp_path: Path) -> None:
+    import duckdb
+
+    source = write_source_tables(tmp_path / "tables")
+    details = write_detail_assets(tmp_path / "details")
+    runs = tmp_path / "runs"
+    _scf_run(runs, "CrSb")  # couples anyt:am-1-0001 by name; OUTCAR has no moments
+    _scf_run(runs, "Zzz")  # collected but no CSV material: never coupled or saved
+    target = build_store(tmp_path / "store.duckdb", data_dir=source, details_dir=details, runs_dir=runs)
+
+    # Only the one coupled run is saved, not every collected task.
+    connection = duckdb.connect(str(target), read_only=True)
+    try:
+        assert connection.execute('select count(*) from "core_run_v1"').fetchone()[0] == 1
+    finally:
+        connection.close()
+
+    materials = _materials_by_id(target)
+    # 2a lost-moments fallback: the coupled run is moment-free, details supplies moments.
+    recovered = material_structure(materials["anyt:am-1-0001"])
+    assert recovered is not None and recovered.site_moments is not None
+    # 2a no-structure fallback: MnTe has no run at all, details supplies the structure.
+    assert material_structure(materials["anyt:am-1-0002"]) is not None

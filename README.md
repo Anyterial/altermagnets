@@ -58,6 +58,26 @@ use a different runtime store path; the same variable (or
 directory. `ALTERMAGNETS_DETAILS_DIR` (or the builder's `--details-dir`)
 selects the generated detail-asset tree.
 
+The default (non-legacy) build ingests the finished httk v1 run tree under
+`data/raw_httk_v1/` (all ten project directories) and attaches each material's
+relaxed structure from its own run. The mapping is authoritative, not guessed:
+`data/tables/amdb_run_content_ids.csv` (semicolon-delimited) records one row per
+coupling with columns
+`AMDBId;run_material;raw_path;structure_content_id;run_content_id;status`.
+`raw_path` is the run task directory as a POSIX path relative to the runs root
+(the same value recorded in each material's detail JSON); a row carrying a
+`raw_path` is matched to that exact run even when the run's derived name differs
+from the screening formula. `structure_content_id`/`run_content_id` are derived
+content-address pins verified against the freshly collected runs, `status` is
+`auto` (builder-derived), `curated` (hand-pinned), or `ambiguous` (a plausible
+run that needs manual curation). The builder rewrites this file every build.
+Because the content-id pins are derived data, pass `--refresh-coupling` (to
+`tools/build_store.py`) to rewrite them from the current build — for example
+after an ingest change alters every structure's content id — preserving each
+row's `AMDBId`, `raw_path`, and `status`. Any material left without a coupled
+structure falls back to its `data/details/` CONTCAR, so the default build is
+always at least as complete as `make build_store_legacy`.
+
 Plot metadata is part of the material object graph and is exposed through the
 custom `_httk_custom_figures` structures property. The database stores the
 root-relative locator, name, size, media type, and description; the potentially

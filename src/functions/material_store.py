@@ -87,6 +87,7 @@ __all__ = [
     "default_runs_dir",
     "default_store_path",
     "details_dir_for_material",
+    "details_raw_path",
     "load_material_structure",
     "material_id_aliases",
     "material_structure",
@@ -682,8 +683,13 @@ def default_details_dir() -> Path:
 
 
 def default_runs_dir() -> Path:
-    """The conventional imported httk v1 result tree."""
-    return Path(__file__).resolve().parents[2] / "data" / "raw_httk_v1" / "1" / "Runs"
+    """The conventional imported httk v1 result tree.
+
+    The whole ten-project tree is the boundary: ``collect_finished_tree`` walks
+    every ``ht.task.*`` directory beneath it, so the authoritative AMDB-id ↔
+    run-path mapping can resolve runs in any project, not just project ``1``.
+    """
+    return Path(__file__).resolve().parents[2] / "data" / "raw_httk_v1"
 
 
 def default_store_path() -> Path:
@@ -779,6 +785,37 @@ def details_dir_for_material(details_root: Path, material_id: str) -> Path | Non
         if candidate.is_dir():
             return candidate
     return candidates[0] if candidates else None
+
+
+def details_raw_path(details_root: Path, material_id: str) -> str:
+    """Return the curated v1 run path recorded in a material's detail shard.
+
+    :param details_root: root of the generated detail-asset tree.
+    :param material_id: canonical or legacy AMDB identifier.
+    :returns: the ``raw_path`` string (runs-root-relative POSIX path) written in
+        the shard's ``<name>.json``, or ``""`` when the shard, its JSON file, the
+        ``raw_path`` key, or a readable string value is absent. Never raises on a
+        malformed details tree.
+    """
+    details_dir = details_dir_for_material(details_root, material_id)
+    if details_dir is None or not details_dir.is_dir():
+        # No shard is the normal "no details for this material" case, not a defect.
+        logger.debug("No details shard for %s under %s", material_id, details_root)
+        return ""
+    document = details_dir / f"{details_dir.name}.json"
+    # A present-but-unusable shard silently reverting to formula guessing is a
+    # defect worth surfacing, so it warns while still honouring the never-raises
+    # contract (the caller falls back to name matching either way).
+    try:
+        payload = json.loads(document.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        logger.warning("Details raw_path for %s unreadable (%s): %s", material_id, document, error)
+        return ""
+    raw_path = payload.get("raw_path") if isinstance(payload, dict) else None
+    if not isinstance(raw_path, str):
+        logger.warning("Details raw_path for %s malformed or missing in %s", material_id, document)
+        return ""
+    return raw_path.strip()
 
 
 def parse_magnetization_moments(text: str) -> list[float]:
@@ -1298,7 +1335,7 @@ def build_material_records(
         with_structures,
         details_dir,
     )
-    if details_dir is not None and materials and with_structures == 0:
+    if load_details_structures and details_dir is not None and materials and with_structures == 0:
         logger.warning(
             "No material got a structure: check that %s holds the detail shard tree "
             "and that the CONTCAR reader is importable (httk-io)",
@@ -1313,6 +1350,8 @@ class _RunObservation:
     run_id: str
     structure_id: str
     structure: Any
+    raw_path: str
+    item: Any
 
 
 def _run_observations(items: Iterable[Any]) -> tuple[_RunObservation, ...]:
@@ -1329,7 +1368,16 @@ def _run_observations(items: Iterable[Any]) -> tuple[_RunObservation, ...]:
             continue
         parsed = parse_v1_task_name(item.record.payload_path.name)
         task_id = item.record.payload_path.name if parsed is None else parsed["task_id"]
-        observations.append(_RunObservation(task_id.removesuffix("_SCF"), run.id, relaxed.id, relaxed))
+        observations.append(
+            _RunObservation(
+                task_id.removesuffix("_SCF"),
+                run.id,
+                relaxed.id,
+                relaxed,
+                str(item.record.payload_path),
+                item,
+            )
+        )
     return tuple(sorted(observations, key=lambda item: (item.material, item.run_id)))
 
 
@@ -1337,6 +1385,7 @@ def _coupling_row(
     amdb_id: str,
     run_material: str,
     *,
+    raw_path: str = "",
     structure_id: str = "",
     run_id: str = "",
     status: str,
@@ -1344,6 +1393,7 @@ def _coupling_row(
     return {
         "AMDBId": amdb_id,
         "run_material": run_material,
+        "raw_path": raw_path,
         "structure_content_id": structure_id,
         "run_content_id": run_id,
         "status": status,
@@ -1351,7 +1401,7 @@ def _coupling_row(
 
 
 def _write_coupling(path: Path, rows: Iterable[Mapping[str, str]]) -> None:
-    fields = ("AMDBId", "run_material", "structure_content_id", "run_content_id", "status")
+    fields = ("AMDBId", "run_material", "raw_path", "structure_content_id", "run_content_id", "status")
     rows = list(rows)
     keys: set[tuple[str, str]] = set()
     for row in rows:
@@ -1382,8 +1432,26 @@ def _is_run_material(material: str, csv_material: str) -> bool:
 def _build_coupling(
     data_dir: Path,
     observations: tuple[_RunObservation, ...],
+    *,
+    details_dir: Path,
+    runs_root: Path | None = None,
+    collected: int = 0,
+    refresh_coupling: bool = False,
 ) -> tuple[dict[str, _RunObservation], dict[str, int]]:
-    """Build and verify the deterministic AMDB-to-v1 coupling document."""
+    """Build and verify the deterministic AMDB-to-v1 coupling document.
+
+    :param data_dir: directory holding the screening CSV and the coupling document.
+    :param observations: relaxed-structure observations collected from the v1 tree.
+    :param details_dir: root of the detail-asset tree, whose per-material JSONs
+        carry the authoritative ``raw_path`` mapping.
+    :param runs_root: the runs root the observations were collected from, named in
+        the diagnostic raised when a document's ``raw_path`` values all miss.
+    :param collected: total tasks collected from the tree (before 3a filtering), so a
+        wrong runs root (many collected, none usable) is told apart from an empty tree.
+    :param refresh_coupling: rewrite derived content-ids (and fill/promote from the
+        details ``raw_path``) instead of raising on a stale pin.
+    :returns: the ``AMDBId``-keyed coupled observations and the status counts.
+    """
     screening = _load_csv_rows(data_dir / SCREENING_RESULTS_FILENAME, delimiter=";")
     source_materials: dict[str, str] = {}
     materials_to_amdb: dict[str, list[str]] = {}
@@ -1398,81 +1466,229 @@ def _build_coupling(
         materials_to_amdb.setdefault(material, []).append(amdb_id)
     coupling_path = data_dir / COUPLING_FILENAME
     previous = _load_csv_rows(coupling_path, delimiter=";") if coupling_path.is_file() else []
+    # raw_path is optional in older documents; every other column is fixed. Tolerate
+    # a missing raw_path column, but reject unexpected extra columns so a curator's
+    # hand-added column is not silently discarded on the next rewrite.
     required = {"AMDBId", "run_material", "structure_content_id", "run_content_id", "status"}
+    allowed = required | {"raw_path"}
     for row in previous:
-        if set(row) != required:
-            raise ValueError(f"{coupling_path}: expected columns {sorted(required)!r}")
+        missing = required - set(row)
+        if missing:
+            raise ValueError(f"{coupling_path}: missing columns {sorted(missing)!r}")
+        extra = set(row) - allowed - {None}
+        if extra:
+            raise ValueError(f"{coupling_path}: unexpected columns {sorted(extra)!r}")
+
+    # The authoritative AMDB-id -> run path mapping from the details tree, read once.
+    details_paths = {amdb_id: details_raw_path(details_dir, amdb_id) for amdb_id in source_materials}
+    # Runs authoritatively owned by some material's details JSON. A name match must
+    # never steal one of these, including on the refresh path before pass 1 runs.
+    claimed = {path for path in details_paths.values() if path}
 
     by_material: dict[str, list[_RunObservation]] = {}
-    for observation in observations:
-        by_material.setdefault(observation.material, []).append(observation)
+    by_raw_path: dict[str, _RunObservation] = {}
+    for obs in observations:
+        by_material.setdefault(obs.material, []).append(obs)
+        by_raw_path[obs.raw_path] = obs
     rows: dict[tuple[str, str], dict[str, str]] = {}
     coupled: dict[str, _RunObservation] = {}
 
     statuses = {"auto", "ambiguous", "curated"}
     row_keys: set[tuple[str, str]] = set()
-    active_ids: set[str] = set()
+    raw_path_rows = 0
+    resolved_raw_path_rows = 0
     for row in previous:
         amdb_id = row[AMDB_ID_COLUMN].strip()
         material = row["run_material"].strip()
         status = row["status"].strip()
+        raw_path_field = (row.get("raw_path") or "").strip()
+        structure_id = row["structure_content_id"].strip()
+        run_id = row["run_content_id"].strip()
         key = (amdb_id, material)
         if amdb_id not in source_materials:
             raise ValueError(f"coupling row {amdb_id}/{material}: AMDBId is absent from the CSV")
         if not _is_run_material(material, source_materials[amdb_id]):
-            raise ValueError(f"coupling row {amdb_id}/{material}: material does not match the CSV row")
+            # A raw_path row is authoritative and one legitimately disagrees with
+            # the CSV formula (e.g. Cu2H3ClO3 vs the Cu2O3Cl run); only name-only
+            # rows treat a mismatch as a hard error.
+            message = f"coupling row {amdb_id}/{material}: material does not match the CSV row"
+            if raw_path_field:
+                logger.warning("%s (authoritative raw_path)", message)
+            else:
+                raise ValueError(message)
         if status not in statuses:
             raise ValueError(f"coupling row {amdb_id}/{material}: invalid status {status!r}")
         if key in row_keys:
             raise ValueError(f"duplicate coupling row {amdb_id}/{material}")
         row_keys.add(key)
-        has_structure_id = bool(row["structure_content_id"].strip())
-        has_run_id = bool(row["run_content_id"].strip())
-        if status == "ambiguous" and (has_structure_id or has_run_id):
+        if not refresh_coupling and status == "ambiguous" and (structure_id or run_id):
             raise ValueError(f"coupling row {amdb_id}/{material}: ambiguous rows must have empty content-ids")
-        if status in {"auto", "curated"} and not (has_structure_id and has_run_id):
+        # A name-only active row has nothing to resolve against, so it must carry ids
+        # in both modes. A row with a raw_path may omit them: when the run is present
+        # the resolve logic fills (refresh) or verifies (plain) the ids, and when it
+        # is absent the row is a legal pending curation whose status is kept intact.
+        if status in {"auto", "curated"} and not (structure_id and run_id) and not raw_path_field:
             raise ValueError(f"coupling row {amdb_id}/{material}: active rows require content-ids")
-        if status in {"auto", "curated"}:
-            if amdb_id in active_ids:
-                raise ValueError(f"coupling row {amdb_id}/{material}: multiple active rows for AMDBId")
-            active_ids.add(amdb_id)
 
-        # Keep the user's row values untouched. A transferred partial tree may
-        # not contain the run named by a curated row yet.
-        rows[key] = dict(row)
-        actuals = by_material.get(material, ())
-        if not actuals or status == "ambiguous":
-            continue
-        if len(actuals) != 1:
-            raise ValueError(f"coupling row {amdb_id}/{material}: run material is not unique in this build")
-        actual = actuals[0]
-        if (row["structure_content_id"].strip(), row["run_content_id"].strip()) != (
-            actual.structure_id,
-            actual.run_id,
-        ):
-            raise ValueError(f"Coupling row {amdb_id}/{material} does not match ingested content-ids")
-        if status in {"auto", "curated"}:
-            coupled[amdb_id] = actual
+        if raw_path_field:
+            raw_path_rows += 1
+            # Rule 1/3: a raw_path row is matched only to that exact run path.
+            observation = by_raw_path.get(raw_path_field)
+            if observation is None:
+                # A transferred partial tree may not contain this run yet.
+                logger.warning("Coupled run for %s not collected in this build: %s", amdb_id, raw_path_field)
+                rows[key] = _coupling_row(
+                    amdb_id, material, raw_path=raw_path_field, structure_id=structure_id, run_id=run_id, status=status
+                )
+            else:
+                resolved_raw_path_rows += 1
+                if refresh_coupling:
+                    new_status = "auto" if status == "ambiguous" else status
+                    rows[key] = _coupling_row(
+                        amdb_id,
+                        material,
+                        raw_path=raw_path_field,
+                        structure_id=observation.structure_id,
+                        run_id=observation.run_id,
+                        status=new_status,
+                    )
+                    if new_status in {"auto", "curated"}:
+                        coupled[amdb_id] = observation
+                elif status == "ambiguous":
+                    rows[key] = _coupling_row(amdb_id, material, raw_path=raw_path_field, status="ambiguous")
+                else:
+                    if (structure_id, run_id) != (observation.structure_id, observation.run_id):
+                        raise ValueError(f"Coupling row {amdb_id}/{material} does not match ingested content-ids")
+                    rows[key] = _coupling_row(
+                        amdb_id,
+                        material,
+                        raw_path=raw_path_field,
+                        structure_id=observation.structure_id,
+                        run_id=observation.run_id,
+                        status=status,
+                    )
+                    coupled[amdb_id] = observation
+        elif refresh_coupling:
+            # Rule E: fill an empty raw_path from the details tree, else name match
+            # over runs no other material's details JSON authoritatively owns.
+            eff = details_paths.get(amdb_id, "")
+            observation = by_raw_path.get(eff) if eff else None
+            if observation is None:
+                actuals = by_material.get(material, ())
+                candidate = actuals[0] if len(actuals) == 1 else None
+                if (
+                    candidate is not None
+                    and len(materials_to_amdb.get(material, ())) == 1
+                    and (candidate.raw_path not in claimed or candidate.raw_path == eff)
+                ):
+                    observation = candidate
+                    eff = candidate.raw_path
+            if observation is None:
+                rows[key] = _coupling_row(amdb_id, material, structure_id=structure_id, run_id=run_id, status=status)
+            else:
+                new_status = "auto" if status == "ambiguous" else status
+                rows[key] = _coupling_row(
+                    amdb_id,
+                    material,
+                    raw_path=eff,
+                    structure_id=observation.structure_id,
+                    run_id=observation.run_id,
+                    status=new_status,
+                )
+                if new_status in {"auto", "curated"}:
+                    coupled[amdb_id] = observation
+        else:
+            # Rule 2: name-only rows keep the historic matching behavior exactly.
+            rows[key] = _coupling_row(amdb_id, material, structure_id=structure_id, run_id=run_id, status=status)
+            actuals = by_material.get(material, ())
+            if not actuals or status == "ambiguous":
+                continue
+            if len(actuals) != 1:
+                raise ValueError(f"coupling row {amdb_id}/{material}: run material is not unique in this build")
+            actual = actuals[0]
+            if (structure_id, run_id) != (actual.structure_id, actual.run_id):
+                raise ValueError(f"Coupling row {amdb_id}/{material} does not match ingested content-ids")
+            if status in {"auto", "curated"}:
+                coupled[amdb_id] = actual
 
+    # A run backs exactly one material. Two previous rows resolving to one run would
+    # each publish that run's content ids as their own provenance; catch it here,
+    # since _write_coupling dedups on (AMDBId, run_material) and active_ids per id.
+    path_to_ids: dict[str, list[str]] = {}
+    for aid, obs in coupled.items():
+        path_to_ids.setdefault(obs.raw_path, []).append(aid)
+    shared = {path: ids for path, ids in path_to_ids.items() if len(ids) > 1}
+    if shared:
+        path, ids = min(shared.items())
+        raise ValueError(
+            f"coupling document couples one run to multiple materials: raw_path {path} shared by {', '.join(sorted(ids))}"
+        )
+
+    # A misconfigured runs root makes every raw_path miss. Discriminate on tasks
+    # COLLECTED (before 3a filtering), not usable observations: a wrong root such as
+    # <root>/1/Runs collects tasks whose one-part payloads are all rejected by 3a,
+    # leaving observations empty but collected > 0. An absent or empty tree collects
+    # nothing and stays silent; a wrong root collects yet resolves none, and raises.
+    if collected and raw_path_rows and resolved_raw_path_rows == 0:
+        raise ValueError(
+            f"no coupling raw_path resolved against the runs collected from {runs_root}; "
+            "check --runs-dir / ALTERMAGNETS_RUNS_DIR points at the raw_httk_v1 root"
+        )
+
+    # Authoritative claims (previous rows) are already in coupled; passes 1 and 2
+    # extend this set so name matching never reuses an already-coupled run.
+    coupled_paths = set(path_to_ids)
+
+    # Rule 4, pass 1: authoritative details raw_paths for AMDB ids with no prior row.
     for amdb_id, material in sorted(source_materials.items()):
-        if any(key[0] == amdb_id for key in rows):
+        if any(existing[0] == amdb_id for existing in rows):
             continue
-        exact = by_material.get(material, [])
+        details_path = details_paths.get(amdb_id, "")
+        if not details_path:
+            continue
+        observation = by_raw_path.get(details_path)
+        if observation is None:
+            logger.warning("Details run for %s not collected in this build: %s", amdb_id, details_path)
+            continue
+        if observation.raw_path in coupled_paths:
+            logger.warning("Details run for %s already coupled elsewhere: %s", amdb_id, details_path)
+            continue
+        rows[(amdb_id, observation.material)] = _coupling_row(
+            amdb_id,
+            observation.material,
+            raw_path=details_path,
+            structure_id=observation.structure_id,
+            run_id=observation.run_id,
+            status="auto",
+        )
+        coupled[amdb_id] = observation
+        coupled_paths.add(observation.raw_path)
+
+    # Rule 4, pass 2: name matching for materials without a details raw_path, over
+    # only the runs not already claimed by an authoritative coupling.
+    for amdb_id, material in sorted(source_materials.items()):
+        if any(existing[0] == amdb_id for existing in rows):
+            continue
+        exact = [item for item in by_material.get(material, []) if item.raw_path not in coupled_paths]
         variants = [
-            item for item in observations if _is_run_material(item.material, material) and item.material != material
+            item
+            for item in observations
+            if _is_run_material(item.material, material)
+            and item.material != material
+            and item.raw_path not in coupled_paths
         ]
         candidates = exact + variants
         if len(exact) == 1 and not variants and len(materials_to_amdb[material]) == 1:
             observation = exact[0]
-            row = _coupling_row(
+            rows[(amdb_id, material)] = _coupling_row(
                 amdb_id,
                 material,
                 structure_id=observation.structure_id,
                 run_id=observation.run_id,
                 status="auto",
             )
-            rows[(amdb_id, material)] = row
             coupled[amdb_id] = observation
+            coupled_paths.add(observation.raw_path)
         elif candidates:
             logger.warning("Ambiguous run match for %s (%s)", amdb_id, material)
             run_material = material if exact else min(item.material for item in variants)
@@ -1480,9 +1696,28 @@ def _build_coupling(
         else:
             logger.warning("No ingested run for CSV material %s (%s)", amdb_id, material)
 
-    for observation in observations:
-        if not any(_is_run_material(observation.material, material) for material in materials_to_amdb):
-            logger.warning("Ingested run %s has no CSV material row", observation.material)
+    # Enforce one active row per AMDB id. A pending curated row (raw_path, empty ids,
+    # run not yet present) is left exactly as the curator wrote it: its status is
+    # never rewritten, so a human's decision cannot be silently erased by a refresh.
+    active_ids: set[str] = set()
+    for row in rows.values():
+        if row["status"] not in {"auto", "curated"}:
+            continue
+        if row[AMDB_ID_COLUMN] in active_ids:
+            raise ValueError(
+                f"coupling row {row[AMDB_ID_COLUMN]}/{row['run_material']}: multiple active rows for AMDBId"
+            )
+        active_ids.add(row[AMDB_ID_COLUMN])
+
+    # Runs collected that belong to no CSV material (suffix variants included).
+    csv_materials = set(materials_to_amdb)
+    orphans = sum(
+        1
+        for obs in observations
+        if obs.material not in csv_materials and re.sub(r"-\d+$", "", obs.material) not in csv_materials
+    )
+    if orphans:
+        logger.info("%d ingested runs have no CSV material row", orphans)
 
     ordered = sorted(rows.values(), key=lambda row: (row[AMDB_ID_COLUMN], row["run_material"]))
     _write_coupling(coupling_path, ordered)
@@ -1511,6 +1746,7 @@ def build_store(
     details_dir: str | os.PathLike[str] | None = None,
     runs_dir: str | os.PathLike[str] | None = None,
     legacy: bool = False,
+    refresh_coupling: bool = False,
     timings: MutableMapping[str, float] | None = None,
 ) -> Path:
     """Build a fresh store next to ``target`` and atomically replace it.
@@ -1529,6 +1765,7 @@ def build_store(
     resolved_runs_dir = resolve_runs_dir(runs_dir)
     load_started = time.perf_counter()
     items: list[Any] = []
+    observations: tuple[_RunObservation, ...] = ()
     coupled: dict[str, _RunObservation] = {}
     coupling_counts: dict[str, int] = {}
     if not legacy:
@@ -1544,7 +1781,14 @@ def build_store(
         else:
             logger.warning("No v1 runs directory at %s; building the partial tabular store", resolved_runs_dir)
         observations = _run_observations(items)
-        coupled, coupling_counts = _build_coupling(source_dir, observations)
+        coupled, coupling_counts = _build_coupling(
+            source_dir,
+            observations,
+            details_dir=resolved_details_dir,
+            runs_root=resolved_runs_dir,
+            collected=len(items),
+            refresh_coupling=refresh_coupling,
+        )
     materials = _load_source_materials(
         source_dir,
         details_dir=resolved_details_dir,
@@ -1560,10 +1804,52 @@ def build_store(
             else material
             for material in materials
         )
+    if not legacy:
+        # Safety net: the non-legacy build must be at least as complete as the
+        # legacy build for BOTH structure presence and site moments. A coupled run
+        # whose OUTCAR magnetization is degraded yields a moment-free structure;
+        # fall back to the details CONTCAR+MAGN, which the legacy build trusts.
+        no_structure = 0
+        lost_moments = 0
+
+        def _with_details_fallback(material: MaterialRecord) -> MaterialRecord:
+            nonlocal no_structure, lost_moments
+            current = material.structure
+            if current is not None and current.site_moments is not None:
+                return material
+            details_structure = load_material_structure(resolved_details_dir, material.id)
+            if details_structure is None:
+                return material
+            if current is None:
+                no_structure += 1
+                logger.debug("Details CONTCAR fallback (no structure) for %s", material.id)
+                return replace(material, structure=_material_structure_record(details_structure))
+            if details_structure.site_moments is None:
+                # The details build lacks moments too; nothing to recover.
+                return material
+            lost_moments += 1
+            logger.debug("Details CONTCAR fallback (missing moments) for %s", material.id)
+            return replace(material, structure=_material_structure_record(details_structure))
+
+        materials = tuple(_with_details_fallback(material) for material in materials)
+        if no_structure:
+            logger.info("Applied details CONTCAR fallback for %d materials without a structure", no_structure)
+        if lost_moments:
+            logger.warning(
+                "Recovered site moments from details for %d coupled runs with degraded OUTCAR magnetization",
+                lost_moments,
+            )
+        with_structures = sum(1 for material in materials if material.structure is not None)
+        logger.info(
+            "Store contains %d material records, %d with structures (after coupling and fallback)",
+            len(materials),
+            with_structures,
+        )
     load_elapsed = time.perf_counter() - load_started
     logger.info(
-        "Collected %d v1 tasks, %d with relaxed structures, coupling rows %s",
+        "Collected %d v1 tasks, %d yielded a relaxed structure, %d coupled to materials, coupling rows %s",
         len(items),
+        len(observations),
         len(coupled),
         coupling_counts,
     )
@@ -1592,7 +1878,11 @@ def build_store(
         with bulk_context as bulk:
             bulk.save(StoreLayout(STORE_LAYOUT_VERSION))
             if not legacy:
-                for item in items:
+                # Only coupled runs back the 180 served materials; saving the whole
+                # 645-task tree would flood the OPTIMADE run/record/file families.
+                # One run backs one material (enforced in _build_coupling), so the
+                # coupled items are already distinct.
+                for item in [observation.item for observation in coupled.values()]:
                     if getattr(item, "missing_collector", None) is None:
                         for value in item.outputs.values():
                             bulk.save(value)

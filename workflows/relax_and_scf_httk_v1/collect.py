@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from httk.atomistic import UnitcellStructureView
+from httk.atomistic import CartesianSiteMoments, UnitcellStructure, UnitcellStructureView
 from httk.core import DataRecord, FileRecord, load
 from httk.core.digests import sha256_file
 from httk.io.vasp import VASPOutputs
@@ -77,8 +77,41 @@ def _splitting_figure(root: Path, directory: Path) -> FileRecord | None:
     return None
 
 
+def _with_site_moments(structure: UnitcellStructure, moments: tuple[float, ...]) -> UnitcellStructure:
+    """Rebuild a structure with collinear VASP moments as Cartesian ``(0, 0, m)`` vectors.
+
+    This mirrors ``material_store.load_material_structure`` so a run-ingested
+    structure and its legacy details counterpart share one content id.
+    """
+    return UnitcellStructure(
+        structure.cell,
+        structure.sites,
+        structure.species,
+        structure.species_at_sites,
+        site_moments=CartesianSiteMoments([[0.0, 0.0, moment] for moment in moments]),
+        molecular=structure.molecular,
+        assemblies=structure.assemblies,
+        symmetry=structure.symmetry,
+        chemical_composition=structure.chemical_composition,
+        chemical_formula_descriptive=structure.chemical_formula_descriptive,
+        chemical_formula_hill=structure.chemical_formula_hill,
+        optimization_type=structure.optimization_type,
+        immutable_id=structure.immutable_id,
+        last_modified=structure.last_modified,
+    )
+
+
 def collect(record: JobRecord) -> Mapping[str, object]:
     """Extract structures, energy, and selected file metadata from one task."""
+    # This package collects the dataset's top-level SCF runs, whose path relative to
+    # the raw_httk_v1 collection root is exactly <project>/Runs/<task-dir>. Band,
+    # template, scratch (e.g. test-percentage), failed-job and the inner per-step
+    # subtrees are all deeper and are other work; reject them before any file I/O so
+    # the sweep does not parse (or name-match a failed job into) runs it will
+    # discard. collect_finished_tree catches this and degrades the task silently.
+    parts = record.payload_path.parts
+    if len(parts) != 3 or parts[1] != "Runs":
+        raise ValueError(f"not a dataset SCF run: {record.payload_path}")
     root = record.workspace_root.resolve()
     outer = run_directory(record)
     step = _finished_step(outer)
@@ -93,26 +126,64 @@ def collect(record: JobRecord) -> Mapping[str, object]:
         logger.warning("%s: cannot read input_structure: %s", outer, error)
 
     try:
-        relaxed = UnitcellStructureView(load(str(task_file(inner, "CONTCAR"))))
+        relaxed_structure = load(str(task_file(inner, "CONTCAR")))
     except Exception as error:
         logger.warning("%s: relaxed_structure unavailable: %s", outer, error)
         raise
 
-    outputs: dict[str, object] = {"relaxed_structure": relaxed}
+    outputs: dict[str, object] = {}
+    # One OUTCAR handle feeds both the energy and the moments; a failure in either
+    # must not silently skip the other, so the read is separated from each use.
     try:
-        vasp_outputs = VASPOutputs(inner)
-        if vasp_outputs.outcar is None:
+        outcar: Any = VASPOutputs(inner).outcar
+        if outcar is None:
             raise FileNotFoundError(f"no OUTCAR under {inner}")
-        final_energies: Any = vasp_outputs.outcar.final_energies
-        # total_energy.json describes the computed total energy in eV. VASP's
-        # energy_sigma0 is the T->0 extrapolated member, not free_energy.
-        outputs["total_energy"] = DataRecord.from_value(
-            _TOTAL_ENERGY_DEFINITION,
-            "_httk_total_energy",
-            float(final_energies.energy_sigma0),
-        )
     except Exception as error:
-        logger.warning("%s: total_energy unavailable: %s", outer, error)
+        logger.warning("%s: OUTCAR unavailable: %s", outer, error)
+        outcar = None
+
+    if outcar is not None:
+        try:
+            final_energies = outcar.final_energies
+            # total_energy.json describes the computed total energy in eV. VASP's
+            # energy_sigma0 is the T->0 extrapolated member, not free_energy.
+            outputs["total_energy"] = DataRecord.from_value(
+                _TOTAL_ENERGY_DEFINITION,
+                "_httk_total_energy",
+                float(final_energies.energy_sigma0),
+            )
+        except Exception as error:
+            logger.warning("%s: total_energy unavailable: %s", outer, error)
+
+        # Collinear VASP moments (per-ion total column) become site moments so the
+        # run-ingested structure matches the legacy details build's content id.
+        try:
+            noncollinear = outcar.noncollinear_magnetization
+            moments = outcar.magnetization
+        except Exception as error:
+            # magnetization triggers _ensure_full(), which caches only on success:
+            # if the earlier energy access already failed inside _ensure_full (a
+            # corrupt/undecodable OUTCAR), this re-reads the file and re-raises.
+            logger.warning("%s: magnetization unavailable: %s", outer, error)
+            noncollinear = False
+            moments = None
+        if moments is None:
+            logger.debug("%s: no magnetization; emitting relaxed_structure without moments", outer)
+        elif noncollinear:
+            # site_moments as (0, 0, m) would misrepresent the x-projection as a
+            # z-component; a noncollinear run needs the full vectors we do not have.
+            logger.warning("%s: noncollinear magnetization; emitting relaxed_structure without moments", outer)
+        elif len(moments) != len(relaxed_structure.sites):
+            logger.warning(
+                "%s: %d moments for %d sites; emitting relaxed_structure without moments",
+                outer,
+                len(moments),
+                len(relaxed_structure.sites),
+            )
+        else:
+            relaxed_structure = _with_site_moments(relaxed_structure, moments)
+
+    outputs["relaxed_structure"] = UnitcellStructureView(relaxed_structure)
 
     for role, names in {
         "vasprun": ("vasprun.xml", "vasprun.xml.bz2"),

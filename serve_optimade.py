@@ -8,8 +8,10 @@ the SQLite fallback seeded from ``data/tables/``) and serves its registered
 copy records into an in-memory serving dataset.
 
 * crystal structures (with their VASP z-axis site moments) come from the shared
-  material store built by ``material_store`` from the per-material
-  ``CONTCAR.bz2`` + ``MAGN.bz2`` files;
+  material store built by ``material_store``, which ingests the finished httk v1
+  run tree and takes each material's relaxed structure and OUTCAR moments from
+  the run named by its ``raw_path`` coupling row, falling back to the
+  per-material ``CONTCAR.bz2`` + ``MAGN.bz2`` detail assets;
 * stored-property projections provide auto-derived composition fields, custom
   ``_anyterial_`` and ``_httk_`` properties, and null structure-less entries;
 * curated custom property definitions are loaded verbatim from the schema

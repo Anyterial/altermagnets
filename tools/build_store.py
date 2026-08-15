@@ -50,6 +50,14 @@ def _arguments() -> argparse.Namespace:
         help="preserve the old details-based structure build and skip v1 ingestion",
     )
     parser.add_argument(
+        "--refresh-coupling",
+        action="store_true",
+        help=(
+            "rewrite the derived content-ids in the coupling document from this build "
+            "instead of raising on a stale pin, preserving AMDBId, raw_path and status"
+        ),
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="count",
@@ -72,6 +80,7 @@ def main() -> int:
         details_dir=arguments.details_dir,
         runs_dir=arguments.runs_dir,
         legacy=arguments.legacy,
+        refresh_coupling=arguments.refresh_coupling,
         timings=timings,
     )
     print(

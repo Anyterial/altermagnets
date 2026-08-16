@@ -78,7 +78,7 @@ test("numeric fields reject non-finite values and trailing garbage", async () =>
   assert.equal(result.filter, '_httk_dft_band_gap >= 2.5 AND _httk_dft_band_gap <= -0.5');
 });
 
-test("literal escapes quotes and backslashes, and URL state round-trips", async () => {
+test("literal escapes quotes and backslashes, and the form is restored from the URL", async () => {
   const document = new DomDocument();
   const form = element(document, "form", { class: "search-form" });
   form.elements = {};
@@ -89,9 +89,9 @@ test("literal escapes quotes and backslashes, and URL state round-trips", async 
     form.append(input);
   }
   document.append(form);
-  const assigned = [];
   // The initial URL already carries the filter matching its fields, so the on-load normalizer
-  // leaves it untouched and the submit round-trip below is what is exercised.
+  // leaves it untouched and restore() below is what is exercised. (The form submits with a plain
+  // GET now; the browser carries the fields and normalizeFilterFromFields derives the filter.)
   const initialFilter = '_anyterial_search_text CONTAINS "iron" AND _anyterial_search_text CONTAINS "oxide" AND _anyterial_classification = "collinear"';
   const query = `?classification=collinear&q=iron+oxide&filter=${encodeURIComponent(initialFilter)}`;
   const window = {
@@ -99,19 +99,12 @@ test("literal escapes quotes and backslashes, and URL state round-trips", async 
       href: `https://site.example.test/search${query}`,
       search: query,
       replace() { throw new Error("normalizer must not redirect when the filter already matches"); },
-      assign(value) { assigned.push(value); },
+      assign() { throw new Error("the form uses a native GET; the script must not assign"); },
     },
   };
   installDom(document);
   const api = await runSearch(document, window);
   assert.equal(api.literal('a"\\b'), '"a\\"\\\\b"');
   assert.equal(form.elements.q.value, "iron oxide");
-  form.elements.q.value = 'A"\\B';
-  form.dispatchEvent({ type: "submit", preventDefault() {} });
-  const submitted = new URL(assigned[0]);
-  assert.equal(submitted.searchParams.get("q"), "AB");
-  assert.equal(submitted.searchParams.get("classification"), "collinear");
-  // The URL carries the display alias in `sort`; the widget resolves it to an OPTIMADE sort.
-  assert.equal(submitted.searchParams.get("sort"), "screening_rank");
-  assert.equal(submitted.searchParams.get("osort"), null);
+  assert.equal(form.elements.classification.value, "collinear");
 });

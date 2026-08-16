@@ -27,7 +27,6 @@
     if (!token || !Number.isFinite(Number(token))) return null;
     return numericPattern.test(token) ? token : null;
   };
-  const readFields = (form) => Object.fromEntries(fields.map((name) => [name, form.elements[name]?.value || ""]));
   const sanitize = (raw) => {
     const value = {};
     fields.forEach((name) => {
@@ -95,14 +94,6 @@
     });
   };
   restore();
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const query = buildQuery(readFields(form));
-    const url = new URL(window.location.href);
-    const params = url.searchParams;
-    fields.forEach((name) => params.set(name, query.value[name]));
-    params.set("filter", query.filter);
-    url.search = params.toString();
-    window.location.assign(url.href);
-  });
+  // The form submits with a plain GET so the browser carries the field values (reliable across
+  // browsers); normalizeFilterFromFields() then derives the OPTIMADE filter on the reloaded page.
 })();

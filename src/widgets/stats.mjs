@@ -8,13 +8,16 @@ const FILTERS = {
 const validCount = (value) => Number.isSafeInteger(value) && value >= 0;
 
 async function count(baseUrl, filter) {
-  const endpoint = new URL("v1/structures", `${baseUrl.replace(/\/$/, "")}/`);
+  // base_url may be root-relative (e.g. "/optimade/amdb"), which is not a valid URL base on its
+  // own; resolve it against the page first so the endpoint follows the current origin.
+  const base = new URL(`${baseUrl.replace(/\/$/, "")}/`, document.baseURI);
+  const endpoint = new URL("v1/structures", base);
   endpoint.searchParams.set("page_limit", "1");
   if (filter) endpoint.searchParams.set("filter", filter);
   const response = await fetch(endpoint, { headers: { Accept: "application/vnd.api+json, application/json" } });
   if (!response.ok) throw new Error(`OPTIMADE count request failed: ${response.status}`);
-  const document = await response.json();
-  const available = document?.meta?.data_available;
+  const payload = await response.json();
+  const available = payload?.meta?.data_available;
   if (!validCount(available)) throw new Error("Invalid OPTIMADE count response");
   return available;
 }

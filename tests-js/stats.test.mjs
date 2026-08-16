@@ -9,9 +9,9 @@ const names = ["total", "collinear", "noncollinear-derived", "semiconducting"];
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
-function statsDocument() {
+function statsDocument(baseUrl = "https://api.example.test/optimade/amdb") {
   const document = new DomDocument();
-  const config = element(document, "script", { id: "site-stats-test-config", type: "application/json" }, JSON.stringify({ base_url: "https://api.example.test/optimade/amdb" }));
+  const config = element(document, "script", { id: "site-stats-test-config", type: "application/json" }, JSON.stringify({ base_url: baseUrl }));
   document.append(config);
   const targets = Object.fromEntries(names.map((name) => {
     const target = element(document, "span", { "data-site-stat": name }, "—");
@@ -50,6 +50,22 @@ test("stats fills all placeholders from meta.data_available", async () => {
     '_anyterial_electronic_type = "semiconducting"',
   ]);
   names.forEach((name) => assert.equal(targets[name].textContent, "7"));
+});
+
+test("stats resolves a root-relative base_url against the page origin", async () => {
+  // The combined server serves base_url "/optimade/amdb"; it must not be used as a bare URL base.
+  const { document, targets } = statsDocument("/optimade/amdb");
+  const requests = [];
+  await importStats(document, async (request) => {
+    requests.push(new URL(request));
+    return new Response(JSON.stringify({ meta: { data_available: 42, data_returned: 1 } }), {
+      headers: { "content-type": "application/vnd.api+json" },
+    });
+  }, "relative-base");
+  assert.equal(requests.length, 4);
+  assert.equal(requests.every((request) => request.origin === "https://site.example.test"), true);
+  assert.equal(requests.every((request) => request.pathname === "/optimade/amdb/v1/structures"), true);
+  names.forEach((name) => assert.equal(targets[name].textContent, "42"));
 });
 
 test("stats leaves placeholders intact when the count request fails", async () => {

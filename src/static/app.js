@@ -255,8 +255,11 @@
     rows.forEach((row) => {
       const cells = row.querySelectorAll("td");
       if (cells.length !== 9) return;
-      const formula = cells[0].textContent || "";
-      if (formula && formula !== "—") cells[0].textContent = formulaSource(formula);
+      // The widget makes the material cell a detail link; write into the anchor when present so
+      // formula beautification (and the KaTeX pass) does not overwrite and drop the navigation link.
+      const formulaTarget = cells[0].querySelector("a") ?? cells[0];
+      const formula = formulaTarget.textContent || "";
+      if (formula && formula !== "—") formulaTarget.textContent = formulaSource(formula);
       const labels = { collinear: "Collinear", "noncollinear-derived": "Based on noncollinear", mixed: "Both", unclassified: "Not classified yet" };
       const classification = cells[2].textContent || "";
       if (labels[classification]) cells[2].textContent = labels[classification];

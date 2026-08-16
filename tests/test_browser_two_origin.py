@@ -298,12 +298,15 @@ def _column_floats(rows, index: int) -> list[float]:
 
 def test_header_sort_link_roundtrip(two_origins: Origins, page: Page) -> None:
     # Column 4 (_anyterial_max_spin_splitting) is advertised sortable server-side
-    # (optimade/adapter.py SORTABLE_PROPERTIES); column 0 (_anyterial_formula, "Material") is not.
+    # (optimade/adapter.py SORTABLE_PROPERTIES). Column 0 (_anyterial_formula,
+    # "Material") is now sortable too, so it has a sort link. Every one of the
+    # nine displayed columns (src/widgets/search_table.py) is now server-side
+    # sortable, so there is no remaining non-sortable column to assert the negative on.
     page.goto(f"{two_origins.site_url}/search.html", wait_until="domcontentloaded")
     rows = _rows(page)
     rows.first.wait_for(state="visible", timeout=TIMEOUT_MS)
     headers = page.locator("[data-httk-serve-optimade-table] thead th")
-    assert headers.nth(0).locator("a.httk-serve-optimade-table__sort-link").count() == 0
+    assert headers.nth(0).locator("a.httk-serve-optimade-table__sort-link").count() == 1
 
     sort_link = headers.nth(4).locator("a.httk-serve-optimade-table__sort-link")
     sort_link.wait_for(state="attached", timeout=TIMEOUT_MS)
@@ -323,9 +326,13 @@ def test_header_sort_link_roundtrip(two_origins: Origins, page: Page) -> None:
     ascending = _column_floats(rows, 4)
     assert len(ascending) >= 2
     assert all(ascending[i] <= ascending[i + 1] for i in range(len(ascending) - 1)), ascending
-    href = page.locator("[data-httk-serve-optimade-table] thead th").nth(4).locator(
-        "a.httk-serve-optimade-table__sort-link"
-    ).get_attribute("href") or ""
+    href = (
+        page.locator("[data-httk-serve-optimade-table] thead th")
+        .nth(4)
+        .locator("a.httk-serve-optimade-table__sort-link")
+        .get_attribute("href")
+        or ""
+    )
     assert "sort=-_anyterial_max_spin_splitting" in href
 
     page.locator("[data-httk-serve-optimade-table] thead th").nth(4).locator(
@@ -333,7 +340,9 @@ def test_header_sort_link_roundtrip(two_origins: Origins, page: Page) -> None:
     ).click()
     rows = _rows(page)
     rows.first.wait_for(state="visible", timeout=TIMEOUT_MS)
-    assert page.evaluate("() => new URLSearchParams(location.search).get('sort')") == "-_anyterial_max_spin_splitting,id"
+    assert (
+        page.evaluate("() => new URLSearchParams(location.search).get('sort')") == "-_anyterial_max_spin_splitting,id"
+    )
     page.wait_for_function(
         "() => document.querySelectorAll('[data-httk-serve-optimade-table] thead th')[4]?.getAttribute('aria-sort') === 'descending'",
         timeout=TIMEOUT_MS,
@@ -391,7 +400,11 @@ def test_search_summary_reflects_filter_and_count(two_origins: Origins, page: Pa
     filtered = _api(
         two_origins,
         "/v1/structures",
-        {"page_limit": 3, "response_fields": "_anyterial_max_spin_splitting", "sort": "-_anyterial_max_spin_splitting,id"},
+        {
+            "page_limit": 3,
+            "response_fields": "_anyterial_max_spin_splitting",
+            "sort": "-_anyterial_max_spin_splitting,id",
+        },
     )[0]
     threshold = filtered["data"][2]["attributes"]["_anyterial_max_spin_splitting"]
     filter_query = f"_anyterial_max_spin_splitting >= {threshold}"

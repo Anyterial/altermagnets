@@ -12,6 +12,10 @@ from httk.store.db import StoredEntrySource
 SORTABLE_PROPERTIES = {
     "structures": (
         "id",
+        "_anyterial_formula",
+        "_anyterial_classification",
+        "_anyterial_space_group",
+        "_httk_magndata_ids",
         "_anyterial_max_spin_splitting",
         "_anyterial_avg_spin_splitting",
         "_anyterial_spin_splitting_fraction",

@@ -57,7 +57,12 @@ from httk.core.data_records import DataRecordEntry
 from httk.core.files import FileEntry
 from httk.core.provenance import Run, RunEntry
 from httk.core.register import register_entry_family, register_entry_record
-from httk.core.storage import QueryLiteralError, StoredPropertyProjection, project_storage_record
+from httk.core.storage import (
+    QueryLiteralError,
+    StoredPropertyProjection,
+    project_storage_record,
+    stored_property,
+)
 from httk.store.db import Database, SqlStore
 
 __all__ = [
@@ -112,7 +117,7 @@ logger = report.context_logger(logging.getLogger("httk.altermagnets.material_sto
 #: change is treated as stale (falling back to in-memory seeding) instead of being
 #: silently adopted with missing child tables reading as ``None``. Bump on every
 #: stored-record schema change.
-STORE_LAYOUT_VERSION = 5
+STORE_LAYOUT_VERSION = 6  # bump: magndata_sort_key stored column for sortable _httk_magndata_ids
 
 ELEMENT_PATTERN = re.compile(r"[A-Z][a-z]?")
 SCREENING_RESULTS_FILENAME = "high_throughput_screening_results_fixed.csv"
@@ -275,6 +280,31 @@ class MaterialRecord:
     dois: tuple[str, ...]
     search_text: str
     structure: UnitcellStructureRecord | None = None
+
+    @stored_property
+    def magndata_sort_key(self) -> str | None:
+        """Scalar mirror of the served ``_httk_magndata_ids`` list for sorting.
+
+        The served value is a list, which the store cannot sort on directly.
+        This stored column holds exactly the string the search-table cell
+        displays (the linked MAGNDATA ids joined with ``", "`` in stored order),
+        or ``None`` when the material has no links, so lexicographic sorting on
+        it matches what the reader sees. Join-string order equals Python list
+        order only while every id character sorts above the ``","`` separator,
+        so ids violating that (or empty ids) are rejected at build time rather
+        than silently diverging the store path from the provider path. A
+        linkless material serves ``None`` here while the provider path would
+        serve ``[]``; unreachable today (every material has at least one link).
+
+        :return: The joined id string, or ``None`` when there are no links.
+        :raises ValueError: If an id is empty or contains a character that
+            sorts at or below the ``","`` separator.
+        """
+        ids = [link.record.id for link in self.links]
+        for one in ids:
+            if not one or any(ch <= "," for ch in one):
+                raise ValueError(f"MAGNDATA id {one!r} breaks join-key sort parity with list ordering")
+        return ", ".join(ids) or None
 
 
 @dataclass(frozen=True)
@@ -564,10 +594,10 @@ def _material_projections() -> dict[str, StoredPropertyProjection]:
         name: _nested_structure_projection(projection) for name, projection in unitcell_structure_properties().items()
     }
     direct: dict[str, tuple[str, bool]] = {
-        "_anyterial_formula": ("formula", False),
-        "_anyterial_space_group": ("space_group", False),
+        "_anyterial_formula": ("formula", True),
+        "_anyterial_space_group": ("space_group", True),
         "_anyterial_space_group_search": ("space_group_search", False),
-        "_anyterial_classification": ("classification", False),
+        "_anyterial_classification": ("classification", True),
         "_anyterial_search_text": ("search_text", False),
         "_anyterial_max_spin_splitting": ("max_ss", True),
         "_anyterial_avg_spin_splitting": ("avg_ss", True),
@@ -612,9 +642,14 @@ def _material_projections() -> dict[str, StoredPropertyProjection]:
         "_anyterial_magndata_variants",
         "_httk_custom_figures",
         "_httk_magnetic_space_group_bns",
-        "_httk_magndata_ids",
     ):
         projections[name] = StoredPropertyProjection(response=_provider_response(name))
+    # The served list is sorted via its scalar mirror stored column (see
+    # MaterialRecord.magndata_sort_key); there is no queryable list column here.
+    projections["_httk_magndata_ids"] = StoredPropertyProjection(
+        response=_provider_response("_httk_magndata_ids"),
+        sort=_field_sort("magndata_sort_key"),
+    )
     projections["_httk_custom_public_id"] = StoredPropertyProjection(
         response=_material_public_id,
         query=_scalar_query("id"),

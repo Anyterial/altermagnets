@@ -46,6 +46,25 @@ test("search fields map to exact OPTIMADE filter and sort strings", async () => 
   assert.equal(api.buildQuery({ sort: "not-a-sort" }).value.sort, "screening_rank");
 });
 
+test("field criteria are reflected into the OPTIMADE filter on load for any navigation", async () => {
+  const load = async (search) => {
+    const replaced = [];
+    const window = { location: { href: `https://site.example.test/search${search}`, search, replace: (u) => replaced.push(u), assign() {} } };
+    const document = new DomDocument();
+    installDom(document);
+    await runSearch(document, window);
+    return replaced.length ? new URL(replaced[0]).searchParams.get("filter") : null;
+  };
+  // A home shortcut / bookmark with only field criteria is redirected to carry the derived filter.
+  assert.equal(await load("?classification=collinear"), '_anyterial_classification = "collinear"');
+  assert.equal(await load("?min_bandgap=0.5"), "_httk_dft_band_gap >= 0.5");
+  // A URL whose filter already matches the fields (a submitted search) is left as-is: no redirect loop.
+  assert.equal(await load(`?classification=collinear&filter=${encodeURIComponent('_anyterial_classification = "collinear"')}`), null);
+  // An explicit ?filter= with no field criteria (a shared filtered link) is preserved untouched.
+  assert.equal(await load(`?filter=${encodeURIComponent("_httk_dft_band_gap >= 1")}`), null);
+  assert.equal(await load(""), null);
+});
+
 test("numeric fields reject non-finite values and trailing garbage", async () => {
   const document = new DomDocument();
   installDom(document);
@@ -71,10 +90,15 @@ test("literal escapes quotes and backslashes, and URL state round-trips", async 
   }
   document.append(form);
   const assigned = [];
+  // The initial URL already carries the filter matching its fields, so the on-load normalizer
+  // leaves it untouched and the submit round-trip below is what is exercised.
+  const initialFilter = '_anyterial_search_text CONTAINS "iron" AND _anyterial_search_text CONTAINS "oxide" AND _anyterial_classification = "collinear"';
+  const query = `?classification=collinear&q=iron+oxide&filter=${encodeURIComponent(initialFilter)}`;
   const window = {
     location: {
-      href: "https://site.example.test/search?classification=collinear&q=iron+oxide",
-      search: "?classification=collinear&q=iron+oxide",
+      href: `https://site.example.test/search${query}`,
+      search: query,
+      replace() { throw new Error("normalizer must not redirect when the filter already matches"); },
       assign(value) { assigned.push(value); },
     },
   };

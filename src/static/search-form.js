@@ -68,6 +68,23 @@
     return { value, filter: predicates.join(" AND ") };
   };
   globalThis.altermagnetsSearch = { buildQuery, literal, sanitize };
+  // Reflect the form-field criteria into the OPTIMADE `filter` param that the table reads, so the
+  // table filters on ANY navigation (home shortcuts, bookmarks, submits), not only after a submit.
+  // Returns true if it redirected (via replace, so the back button is not trapped).
+  const normalizeFilterFromFields = () => {
+    const params = new URLSearchParams(window.location.search);
+    const active = fields.some((name) => name !== "sort" && (params.get(name) || "").trim());
+    if (!active) return false; // no field criteria: leave any explicit ?filter= URL untouched
+    const desired = buildQuery(Object.fromEntries(fields.map((name) => [name, params.get(name) || ""]))).filter;
+    if ((params.get("filter") || "") === desired) return false;
+    if (desired) params.set("filter", desired);
+    else params.delete("filter");
+    const url = new URL(window.location.href);
+    url.search = params.toString();
+    window.location.replace(url.href);
+    return true;
+  };
+  if (normalizeFilterFromFields()) return;
   const form = document.querySelector("form.search-form")?.querySelector('[name="q"]')?.form;
   if (!form) return;
   const restore = () => {

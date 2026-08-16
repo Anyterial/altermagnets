@@ -5,6 +5,7 @@
       Search is executed in the browser against the screened materials OPTIMADE service.
     </p>
   </header>
-  {{ content }}
+  <!-- Loaded before the table widget so the on-load filter normalizer runs first (no unfiltered flash). -->
   <script src="{{ page.relbaseurl }}/search-form.js" defer></script>
+  {{ content }}
 </article>

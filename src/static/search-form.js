@@ -63,14 +63,9 @@
       if (!value[name] || predicates.length >= 40) continue;
       add(`${property} ${operator} ${Number(value[name]) / scale}`);
     }
-    const sorts = {
-      screening_rank: "id",
-      max_ss_desc: "-_anyterial_max_spin_splitting,id",
-      avg_ss_desc: "-_anyterial_avg_spin_splitting,id",
-      bandgap_desc: "-_httk_dft_band_gap,id",
-      abundance_desc: "-_anyterial_min_crustal_abundance,-_anyterial_max_spin_splitting,id",
-    };
-    return { value, filter: predicates.join(" AND "), sort: sorts[value.sort] };
+    // `value.sort` carries the display alias; the OPTIMADE table widget resolves it to a real
+    // OPTIMADE sort via its sort_aliases config, so the site does not map it here.
+    return { value, filter: predicates.join(" AND ") };
   };
   globalThis.altermagnetsSearch = { buildQuery, literal, sanitize };
   const form = document.querySelector("form.search-form")?.querySelector('[name="q"]')?.form;
@@ -90,9 +85,6 @@
     const params = url.searchParams;
     fields.forEach((name) => params.set(name, query.value[name]));
     params.set("filter", query.filter);
-    // Keep the human-facing alias in `sort` (for form pre-fill) and put the resolved OPTIMADE
-    // sort under `osort`, which the table reads — so a stray `sort=screening_rank` never reaches OPTIMADE.
-    params.set("osort", query.sort);
     url.search = params.toString();
     window.location.assign(url.href);
   });

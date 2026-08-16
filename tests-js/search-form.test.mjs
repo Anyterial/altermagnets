@@ -40,11 +40,10 @@ test("search fields map to exact OPTIMADE filter and sort strings", async () => 
     min_fdelta_pct: "20", min_bandgap: "0.25", max_bandgap: "3", min_abundance_ppm: "12.5", sort: "abundance_desc",
   });
   assert.equal(result.filter, '_anyterial_search_text CONTAINS "crsb" AND _anyterial_elements HAS ALL "Cr","Sb" AND _anyterial_classification = "collinear" AND _anyterial_electronic_type = "unknown" AND _anyterial_magnetic_phases HAS "AM" AND _anyterial_wave_classes HAS "d" AND _anyterial_space_group_search CONTAINS "p6_3" AND _anyterial_max_spin_splitting >= 1.5 AND _anyterial_avg_spin_splitting >= 2 AND _anyterial_spin_splitting_fraction >= 0.2 AND _httk_dft_band_gap >= 0.25 AND _httk_dft_band_gap <= 3 AND _anyterial_min_crustal_abundance >= 12.5');
-  assert.equal(result.sort, "-_anyterial_min_crustal_abundance,-_anyterial_max_spin_splitting,id");
-  assert.equal(api.buildQuery({ sort: "screening_rank" }).sort, "id");
-  assert.equal(api.buildQuery({ sort: "max_ss_desc" }).sort, "-_anyterial_max_spin_splitting,id");
-  assert.equal(api.buildQuery({ sort: "avg_ss_desc" }).sort, "-_anyterial_avg_spin_splitting,id");
-  assert.equal(api.buildQuery({ sort: "bandgap_desc" }).sort, "-_httk_dft_band_gap,id");
+  // Sort is not mapped here anymore; the validated display alias rides through as value.sort and
+  // the OPTIMADE table widget resolves it via sort_aliases.
+  assert.equal(result.value.sort, "abundance_desc");
+  assert.equal(api.buildQuery({ sort: "not-a-sort" }).value.sort, "screening_rank");
 });
 
 test("numeric fields reject non-finite values and trailing garbage", async () => {
@@ -88,8 +87,7 @@ test("literal escapes quotes and backslashes, and URL state round-trips", async 
   const submitted = new URL(assigned[0]);
   assert.equal(submitted.searchParams.get("q"), "AB");
   assert.equal(submitted.searchParams.get("classification"), "collinear");
-  // The human-facing alias stays in `sort` (for form pre-fill); the resolved OPTIMADE sort — the
-  // value the table forwards — is under `osort`, so `sort=screening_rank` never reaches OPTIMADE.
+  // The URL carries the display alias in `sort`; the widget resolves it to an OPTIMADE sort.
   assert.equal(submitted.searchParams.get("sort"), "screening_rank");
-  assert.equal(submitted.searchParams.get("osort"), "id");
+  assert.equal(submitted.searchParams.get("osort"), null);
 });

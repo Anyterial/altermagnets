@@ -42,9 +42,16 @@ def render(context, **props):
         ),
         page_size=50,
         filter_query="filter",
-        # The OPTIMADE sort is read from a dedicated key so the human-facing `sort` alias
-        # (e.g. "screening_rank") in the URL is never forwarded verbatim to OPTIMADE.
-        sort_query="osort",
+        sort_query="sort",
+        # The widget resolves these human-facing sort aliases to OPTIMADE sorts, so a stray
+        # `sort=screening_rank` from a non-JS navigation is translated, never sent verbatim.
+        sort_aliases={
+            "screening_rank": "id",
+            "max_ss_desc": "-_anyterial_max_spin_splitting,id",
+            "avg_ss_desc": "-_anyterial_avg_spin_splitting,id",
+            "bandgap_desc": "-_httk_dft_band_gap,id",
+            "abundance_desc": "-_anyterial_min_crustal_abundance,-_anyterial_max_spin_splitting,id",
+        },
         caption="Screened altermagnet search results",
         detail_route="material",
         detail_column="_anyterial_formula",

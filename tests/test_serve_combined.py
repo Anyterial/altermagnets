@@ -59,7 +59,7 @@ def test_combined_discovery_mounts_index_and_amdb_and_paginates() -> None:
     assert configuration["base_url"] == "/optimade/amdb"
     assert configuration["entry_type"] == "structures"
     assert configuration["filter_query"] == "filter"
-    assert configuration["sort_query"] == "sort"
+    assert configuration["sort_query"] == "osort"
     assert configuration["detail_route"] == "material"
     assert configuration["detail_column"] == "_anyterial_formula"
     assert configuration["detail_query"] == "id"

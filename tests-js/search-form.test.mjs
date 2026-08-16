@@ -88,5 +88,8 @@ test("literal escapes quotes and backslashes, and URL state round-trips", async 
   const submitted = new URL(assigned[0]);
   assert.equal(submitted.searchParams.get("q"), "AB");
   assert.equal(submitted.searchParams.get("classification"), "collinear");
-  assert.equal(submitted.searchParams.get("sort"), "id");
+  // The human-facing alias stays in `sort` (for form pre-fill); the resolved OPTIMADE sort — the
+  // value the table forwards — is under `osort`, so `sort=screening_rank` never reaches OPTIMADE.
+  assert.equal(submitted.searchParams.get("sort"), "screening_rank");
+  assert.equal(submitted.searchParams.get("osort"), "id");
 });

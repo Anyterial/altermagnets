@@ -90,7 +90,9 @@
     const params = url.searchParams;
     fields.forEach((name) => params.set(name, query.value[name]));
     params.set("filter", query.filter);
-    params.set("sort", query.sort);
+    // Keep the human-facing alias in `sort` (for form pre-fill) and put the resolved OPTIMADE
+    // sort under `osort`, which the table reads — so a stray `sort=screening_rank` never reaches OPTIMADE.
+    params.set("osort", query.sort);
     url.search = params.toString();
     window.location.assign(url.href);
   });

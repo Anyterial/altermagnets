@@ -42,7 +42,9 @@ def render(context, **props):
         ),
         page_size=50,
         filter_query="filter",
-        sort_query="sort",
+        # The OPTIMADE sort is read from a dedicated key so the human-facing `sort` alias
+        # (e.g. "screening_rank") in the URL is never forwarded verbatim to OPTIMADE.
+        sort_query="osort",
         caption="Screened altermagnet search results",
         detail_route="material",
         detail_column="_anyterial_formula",

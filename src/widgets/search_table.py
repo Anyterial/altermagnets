@@ -56,4 +56,37 @@ def render(context, **props):
         detail_route="material",
         detail_column="_anyterial_formula",
         detail_query="id",
+        summary={
+            "noun": "screened entries",
+            "fields": {
+                "_anyterial_search_text": {"label": "Text"},
+                "_anyterial_elements": {"label": "Elements"},
+                "_anyterial_space_group_search": {"label": "Space group"},
+                "_anyterial_magnetic_phases": {"label": "Phase"},
+                "_anyterial_wave_classes": {"label": "Wave class"},
+                # Plain-text labels for the pill/sort summary; the LaTeX column labels are never
+                # KaTeX-typeset in the summary block, so they must not be inherited there.
+                "_anyterial_max_spin_splitting": {"label": "Max spin splitting"},
+                "_anyterial_avg_spin_splitting": {"label": "Avg spin splitting"},
+                # Option labels duplicated from src/functions/init.py search_options
+                # (source of truth); that list is a local literal with no importable handle.
+                "_anyterial_classification": {
+                    "values": {
+                        "collinear": "Collinear",
+                        "noncollinear-derived": "Based on noncollinear",
+                        "mixed": "Both",
+                        "unclassified": "Not classified yet",
+                    }
+                },
+                "_anyterial_electronic_type": {
+                    "label": "KS Gap Type",
+                    "values": {
+                        "metallic": "Metallic",
+                        "semiconducting": "Semiconducting",
+                        "unknown": "KS gap unavailable",
+                    },
+                },
+                "_anyterial_min_crustal_abundance": {"format": {"name": "number", "digits": 1, "suffix": " ppm"}},
+            },
+        },
     )

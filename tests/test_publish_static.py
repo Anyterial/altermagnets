@@ -19,7 +19,9 @@ def test_publish_uses_absolute_optimade_base_and_no_legacy_live_tables(tmp_path,
 
     search = (tmp_path / "search.html").read_text(encoding="utf-8")
     material = (tmp_path / "material.html").read_text(encoding="utf-8")
-    assert _widget_config(search, "httk-serve-optimade-table")["base_url"] == "https://api.example.org/optimade/amdb"
+    search_config = _widget_config(search, "httk-serve-optimade-table")
+    assert search_config["base_url"] == "https://api.example.org/optimade/amdb"
+    assert search_config["summary"]["noun"] == "screened entries"
     assert _widget_config(material, "site-material-detail")["base_url"] == "https://api.example.org/optimade/amdb"
     for page in tmp_path.rglob("*.html"):
         text = page.read_text(encoding="utf-8")

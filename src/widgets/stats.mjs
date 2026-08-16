@@ -17,9 +17,11 @@ async function count(baseUrl, filter) {
   const response = await fetch(endpoint, { headers: { Accept: "application/vnd.api+json, application/json" } });
   if (!response.ok) throw new Error(`OPTIMADE count request failed: ${response.status}`);
   const payload = await response.json();
-  const available = payload?.meta?.data_available;
-  if (!validCount(available)) throw new Error("Invalid OPTIMADE count response");
-  return available;
+  // data_returned is the filtered total for this query, independent of page_limit; data_available
+  // is the unfiltered endpoint total (same for every filter) and must not be used here.
+  const returned = payload?.meta?.data_returned;
+  if (!validCount(returned)) throw new Error("Invalid OPTIMADE count response");
+  return returned;
 }
 
 async function load() {

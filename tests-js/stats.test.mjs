@@ -28,13 +28,14 @@ async function importStats(document, fetch, suffix) {
   await tick();
 }
 
-test("stats fills all placeholders from meta.data_available", async () => {
+test("stats fills all placeholders from meta.data_returned", async () => {
   const { document, targets } = statsDocument();
   let call = 0;
   const requests = [];
   await importStats(document, async (request) => {
     requests.push(new URL(request));
-    const response = new Response(JSON.stringify({ meta: { data_available: 7, data_returned: 1 } }), {
+    // data_available is the unfiltered endpoint total (ignored); data_returned is the filtered count.
+    const response = new Response(JSON.stringify({ meta: { data_available: 180, data_returned: 7 } }), {
       headers: { "content-type": "application/vnd.api+json" },
     });
     call += 1;
@@ -58,7 +59,7 @@ test("stats resolves a root-relative base_url against the page origin", async ()
   const requests = [];
   await importStats(document, async (request) => {
     requests.push(new URL(request));
-    return new Response(JSON.stringify({ meta: { data_available: 42, data_returned: 1 } }), {
+    return new Response(JSON.stringify({ meta: { data_available: 180, data_returned: 42 } }), {
       headers: { "content-type": "application/vnd.api+json" },
     });
   }, "relative-base");
@@ -74,10 +75,10 @@ test("stats leaves placeholders intact when the count request fails", async () =
   names.forEach((name) => assert.equal(targets[name].textContent, "—"));
 });
 
-test("stats leaves placeholders intact when data_available is absent", async () => {
+test("stats leaves placeholders intact when data_returned is absent", async () => {
   const { document, targets } = statsDocument();
-  await importStats(document, async () => new Response(JSON.stringify({ meta: { data_returned: 1 } }), {
+  await importStats(document, async () => new Response(JSON.stringify({ meta: { data_available: 180 } }), {
     headers: { "content-type": "application/vnd.api+json" },
-  }), "missing-available");
+  }), "missing-returned");
   names.forEach((name) => assert.equal(targets[name].textContent, "—"));
 });

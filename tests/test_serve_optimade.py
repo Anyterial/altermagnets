@@ -194,7 +194,7 @@ def test_store_native_service_is_live_and_does_not_own_caller_store(tmp_path: Pa
 
         later = live.get("/v1/structures", params={"sort": "id", "response_fields": "id"})
         assert later.status_code == 200
-        assert later.json()["meta"]["data_available"] == 4
+        assert later.json()["meta"]["data_returned"] == 4
         assert later.json()["data"][-1]["id"] == "anyt:am-1-9999"
         included = live.get("/v1/structures/anyt:am-1-0001", params={"include": "references"})
         assert included.status_code == 200

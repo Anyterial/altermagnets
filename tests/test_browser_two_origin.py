@@ -277,6 +277,43 @@ def test_filter_and_sort_roundtrip(two_origins: Origins, page: Page) -> None:
     assert values[0] >= values[1]
 
 
+def test_search_summary_reflects_filter_and_count(two_origins: Origins, page: Page) -> None:
+    # The real dataset has 180 available entries; derive the total from the API so the test also
+    # holds under the synthetic fallback dataset. On production data this is exactly 180, matching
+    # the old site's "Showing X of 180 screened entries." line.
+    body, _ = _api(two_origins, "/v1/structures", {"page_limit": 1})
+    total = str(body["meta"]["data_available"])
+
+    filtered = _api(
+        two_origins,
+        "/v1/structures",
+        {"page_limit": 3, "response_fields": "_anyterial_max_spin_splitting", "sort": "-_anyterial_max_spin_splitting,id"},
+    )[0]
+    threshold = filtered["data"][2]["attributes"]["_anyterial_max_spin_splitting"]
+    filter_query = f"_anyterial_max_spin_splitting >= {threshold}"
+    page.goto(
+        f"{two_origins.site_url}/search.html?{urlencode({'filter': filter_query, 'sort': '-_anyterial_max_spin_splitting,id'})}",
+        wait_until="domcontentloaded",
+    )
+    summary = page.locator("[data-httk-serve-optimade-summary]")
+    summary.wait_for(state="visible", timeout=TIMEOUT_MS)
+    summary_text = summary.inner_text()
+    assert summary_text.startswith("Showing ")
+    assert f"of {total} screened entries." in summary_text
+    pills = summary.locator(".httk-serve-optimade-table__pill")
+    pill_texts = pills.evaluate_all("nodes => nodes.map(node => node.innerText)")
+    assert any("Sorted by" in text for text in pill_texts), pill_texts
+    # The filter pill must show the plain-text label and threshold, not raw LaTeX (see the
+    # spin-splitting label overrides in src/widgets/search_table.py).
+    assert any("Max spin splitting" in text and "≥" in text for text in pill_texts), pill_texts
+
+    page.goto(f"{two_origins.site_url}/search.html", wait_until="domcontentloaded")
+    plain_summary = page.locator("[data-httk-serve-optimade-summary]")
+    plain_summary.wait_for(state="visible", timeout=TIMEOUT_MS)
+    assert f"Showing all {total} screened entries." in plain_summary.inner_text()
+    assert plain_summary.locator(".httk-serve-optimade-table__pill").count() == 0
+
+
 def test_detail_loads_variants_references_and_figures(two_origins: Origins, page: Page) -> None:
     record = _detail_record(two_origins)
     material_id = record["id"]
@@ -324,13 +361,26 @@ def test_detail_loads_variants_references_and_figures(two_origins: Origins, page
 
 def test_home_stats_match_api_count(two_origins: Origins, page: Page) -> None:
     body, _ = _api(two_origins, "/v1/structures", {"page_limit": 1000})
-    expected = str(body["meta"]["data_available"])
+    # The home "total" stat is an unfiltered count; the widget reads data_returned (the filtered
+    # total for the query), so derive the expected value from that same field.
+    expected = str(body["meta"]["data_returned"])
     page.goto(f"{two_origins.site_url}/index.html", wait_until="domcontentloaded")
     total = page.locator('[data-site-stat="total"]')
     total.wait_for(state="visible", timeout=TIMEOUT_MS)
     page.wait_for_function(
         "expected => document.querySelector('[data-site-stat=\"total\"]')?.textContent === expected",
         expected,
+        timeout=TIMEOUT_MS,
+    )
+    # A per-classification stat is a FILTERED count, so it distinguishes a real per-filter query from
+    # one that has collapsed back to the total (where data_returned == data_available).
+    collinear_body, _ = _api(
+        two_origins, "/v1/structures", {"page_limit": 1, "filter": '_anyterial_classification = "collinear"'}
+    )
+    collinear_expected = str(collinear_body["meta"]["data_returned"])
+    page.wait_for_function(
+        "expected => document.querySelector('[data-site-stat=\"collinear\"]')?.textContent === expected",
+        collinear_expected,
         timeout=TIMEOUT_MS,
     )
 

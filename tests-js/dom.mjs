@@ -32,10 +32,22 @@ class DomNode {
   }
 
   querySelectorAll(selector) {
+    const parts = selector.trim().split(/\s+/);
+    const last = parts[parts.length - 1];
+    const ancestors = parts.slice(0, -1);
+    const ancestorsMatch = (element) => {
+      let index = ancestors.length - 1;
+      let node = element.parentNode;
+      while (index >= 0 && node) {
+        if (node.matches?.(ancestors[index])) index -= 1;
+        node = node.parentNode;
+      }
+      return index < 0;
+    };
     const matches = [];
     const visit = (node) => {
       node.childNodes?.forEach((child) => {
-        if (child.matches?.(selector)) matches.push(child);
+        if (child.matches?.(last) && ancestorsMatch(child)) matches.push(child);
         visit(child);
       });
     };

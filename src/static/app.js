@@ -248,6 +248,24 @@
     return `$\\mathrm{${latex.replace(/(?<=[A-Za-z)\]])(\d+(?:\.\d+)?)/g, "_{$1}")}}$`;
   };
 
+  // Follow the row's material detail link on a plain primary click anywhere in the row, while
+  // leaving real links, modifier/middle clicks (open-in-new-tab), and text selection to the browser.
+  const makeRowClickable = (row, link) => {
+    row.className = `${row.className} optimade-row--clickable`.trim();
+    row.addEventListener("click", (event) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+        return;
+      }
+      for (let node = event.target; node && node !== row; node = node.parentNode) {
+        if (node.tagName && node.tagName.toLowerCase() === "a") return;
+      }
+      const selection = typeof window.getSelection === "function" ? window.getSelection() : null;
+      if (selection && !selection.isCollapsed) return;
+      event.preventDefault();
+      window.location.assign(link.getAttribute("href"));
+    });
+  };
+
   document.addEventListener("httk-serve:optimade-table-updated", (event) => {
     const table = event.target;
     if (!(table instanceof Element)) return;
@@ -257,7 +275,8 @@
       if (cells.length !== 9) return;
       // The widget makes the material cell a detail link; write into the anchor when present so
       // formula beautification (and the KaTeX pass) does not overwrite and drop the navigation link.
-      const formulaTarget = cells[0].querySelector("a") ?? cells[0];
+      const link = cells[0].querySelector("a");
+      const formulaTarget = link ?? cells[0];
       const formula = formulaTarget.textContent || "";
       if (formula && formula !== "—") formulaTarget.textContent = formulaSource(formula);
       const labels = { collinear: "Collinear", "noncollinear-derived": "Based on noncollinear", mixed: "Both", unclassified: "Not classified yet" };
@@ -269,6 +288,7 @@
           : abundance >= 1 ? `${abundance.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} ppm`
           : `${abundance.toFixed(3)} ppm`;
       }
+      if (link) makeRowClickable(row, link);
     });
     const tbody = table.querySelector("tbody");
     if (tbody) {

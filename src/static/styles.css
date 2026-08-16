@@ -568,6 +568,14 @@ html[data-theme="dark"] .theme-icon {
   white-space: nowrap;
 }
 
+.results-table tbody tr.optimade-row--clickable {
+  cursor: pointer;
+}
+
+.results-table tbody tr.optimade-row--clickable:hover {
+  background: rgba(var(--accent-rgb), 0.08);
+}
+
 .material-header {
   display: grid;
   gap: 10px;

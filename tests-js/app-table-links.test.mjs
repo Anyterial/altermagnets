@@ -38,7 +38,17 @@ function makeWindow() {
     addEventListener() {},
     innerWidth: 1024, innerHeight: 768, scrollY: 0, pageYOffset: 0,
     renderMathInElement: undefined, // KaTeX absent -> renderMath is a guarded no-op
+    getSelection: () => ({ isCollapsed: true }),
+    location: { assigned: [], assign(href) { this.assigned.push(href); } },
   };
+}
+
+function clickRow(row, target, overrides = {}) {
+  const event = {
+    button: 0, target, currentTarget: row, defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; }, ...overrides,
+  };
+  row.listeners.get("click")(event);
 }
 
 async function loadApp() {
@@ -50,15 +60,15 @@ async function loadApp() {
   return { document, window };
 }
 
-test("the material-cell detail link survives the optimade-table formula/KaTeX pass", async () => {
-  const { document } = await loadApp();
+const HREF = "/material?id=anyt%3Aam-1-0001";
 
-  // Build the row shape the httk-serve widget emits: nine cells, the first a detail anchor.
+// Build the row shape the httk-serve widget emits: nine cells, the first a detail anchor.
+function buildTable(document) {
   const table = document._make("table");
   const tbody = document._make("tbody");
   const row = document._make("tr");
   const anchor = document._make("a");
-  anchor.setAttribute("href", "/material?id=anyt%3Aam-1-0001");
+  anchor.setAttribute("href", HREF);
   anchor.textContent = "Ca(Al2Fe)4";
   const first = document._make("td");
   first.append(anchor);
@@ -70,12 +80,42 @@ test("the material-cell detail link survives the optimade-table formula/KaTeX pa
   }
   tbody.append(row);
   table.append(tbody);
+  return { table, row, anchor };
+}
+
+test("the material-cell detail link survives the optimade-table formula/KaTeX pass", async () => {
+  const { document } = await loadApp();
+  const { table, row } = buildTable(document);
 
   document.dispatchEvent({ type: "httk-serve:optimade-table-updated", target: table });
 
   const survivingLink = row.querySelectorAll("td")[0].querySelector("a");
   assert.ok(survivingLink, "the material cell must still contain the navigation <a> after decoration");
-  assert.equal(survivingLink.getAttribute("href"), "/material?id=anyt%3Aam-1-0001");
+  assert.equal(survivingLink.getAttribute("href"), HREF);
   // The formula text is beautified into the anchor (LaTeX for the later KaTeX pass), not dropped.
   assert.match(survivingLink.textContent, /\\mathrm\{/);
+});
+
+test("a plain click anywhere in the row follows the material link; modifiers/anchor/selection do not", async () => {
+  const { document, window } = await loadApp();
+  const { table, row, anchor } = buildTable(document);
+  document.dispatchEvent({ type: "httk-serve:optimade-table-updated", target: table });
+
+  assert.match(row.getAttribute("class") || "", /optimade-row--clickable/);
+  const otherCell = row.querySelectorAll("td")[3];
+
+  // Plain primary click on a non-link cell navigates to the material.
+  clickRow(row, otherCell);
+  assert.deepEqual(window.location.assigned, [HREF]);
+
+  // Clicking the anchor itself is left to the browser (native navigation), not double-driven.
+  clickRow(row, anchor);
+  // A modifier click (open in new tab) is left to the browser.
+  clickRow(row, otherCell, { metaKey: true });
+  assert.deepEqual(window.location.assigned, [HREF], "anchor and modifier clicks must not be hijacked");
+
+  // An active text selection suppresses navigation.
+  window.getSelection = () => ({ isCollapsed: false });
+  clickRow(row, otherCell);
+  assert.deepEqual(window.location.assigned, [HREF], "a text selection must not trigger navigation");
 });

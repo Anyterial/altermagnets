@@ -41,6 +41,7 @@ def render(context, **props):
             {"key": "_anyterial_min_crustal_abundance", "label": "Min abundance"},
         ),
         page_size=50,
+        page_size_query="page_size",
         filter_query="filter",
         sort_query="sort",
         # The widget resolves these human-facing sort aliases to OPTIMADE sorts, so a stray

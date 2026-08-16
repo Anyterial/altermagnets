@@ -502,6 +502,57 @@ def test_home_stats_match_api_count(two_origins: Origins, page: Page) -> None:
     )
 
 
+def test_page_size_dropdown_navigates_preserving_filter_and_sort(two_origins: Origins, page: Page) -> None:
+    # The page-size dropdown (page_size_query="page_size" in src/widgets/search_table.py) offers
+    # 50/100/500 and defaults to the authored 50. Selecting 100 must navigate preserving every other
+    # URL parameter and load a first page of min(100, matching) rows. Start from a filtered+sorted URL
+    # so the round-trip also proves those parameters survive the page-size navigation.
+    #
+    # EMPIRICAL COVERAGE REQUIREMENT: this filter MUST match every row on BOTH the real (180) and the
+    # synthetic (51) datasets, else the row-count assertions become vacuous or wrong. `nsites`/
+    # `nelements` are only populated on the 3 synthetic fixture rows (and 135/180 real rows), so they
+    # do NOT qualify. `_anyterial_formula IS KNOWN` returns the full total on both — re-verify with a
+    # data_returned == data_available probe before changing this filter.
+    sort = "-_anyterial_max_spin_splitting,id"
+    filter_query = "_anyterial_formula IS KNOWN"
+    body, _ = _api(two_origins, "/v1/structures", {"page_limit": 1, "filter": filter_query})
+    matching = int(body["meta"]["data_returned"])
+    assert matching == int(body["meta"]["data_available"]), matching  # full coverage, per the note above
+
+    page.goto(
+        f"{two_origins.site_url}/search.html?{urlencode({'filter': filter_query, 'sort': sort})}",
+        wait_until="domcontentloaded",
+    )
+    rows = _rows(page)
+    rows.first.wait_for(state="visible", timeout=TIMEOUT_MS)
+
+    select = page.locator("[data-httk-serve-optimade-page-size]")
+    select.wait_for(state="attached", timeout=TIMEOUT_MS)
+    options = select.locator("option").evaluate_all("nodes => nodes.map(node => node.value)")
+    assert options == ["50", "100", "500"], options
+    assert select.input_value() == "50"
+    # Default page size still applies on a filtered load: 50 rows (matching is >= 51 on both datasets).
+    page.wait_for_function(
+        "() => document.querySelectorAll("
+        "'[data-httk-serve-optimade-table] tbody tr:not(.httk-serve-optimade-table__error)').length === 50",
+        timeout=TIMEOUT_MS,
+    )
+
+    select.select_option("100")
+    rows = _rows(page)
+    rows.first.wait_for(state="visible", timeout=TIMEOUT_MS)
+    assert page.evaluate("() => new URLSearchParams(location.search).get('page_size')") == "100"
+    assert page.evaluate("() => new URLSearchParams(location.search).get('filter')") == filter_query
+    assert page.evaluate("() => new URLSearchParams(location.search).get('sort')") == sort
+    expected = min(100, matching)  # synthetic 51 (> 50, so it discriminates), real 100
+    page.wait_for_function(
+        "expected => document.querySelectorAll("
+        "'[data-httk-serve-optimade-table] tbody tr:not(.httk-serve-optimade-table__error)').length === expected",
+        expected,
+        timeout=TIMEOUT_MS,
+    )
+
+
 def test_missing_material_renders_not_found(two_origins: Origins, page: Page) -> None:
     page.goto(f"{two_origins.site_url}/material.html?id=anyt%3Aam-1-9999", wait_until="domcontentloaded")
     page.get_by_text("The requested material entry could not be found.").wait_for(state="visible", timeout=TIMEOUT_MS)

@@ -71,6 +71,9 @@ def _service_config(
         license="https://altermagnets.anyterial.se/about#legal",
         available_licenses=[],
         available_licenses_for_entries=["CC-BY-4.0"],
+        # 180-entry dataset fits on one page, so 500 makes the search widget's 100/500 page-size
+        # options genuinely functional (httk-serve default is 50).
+        page_limit_max=500,
         cors_origins=tuple(cors_origins),
     )
 

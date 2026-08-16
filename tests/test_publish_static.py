@@ -23,6 +23,8 @@ def test_publish_uses_absolute_optimade_base_and_no_legacy_live_tables(tmp_path,
     assert search_config["base_url"] == "https://api.example.org/optimade/amdb"
     assert search_config["summary"]["noun"] == "screened entries"
     assert search_config["advanced_filter"]["help_url"] == "https://schemas.anyterial.se/defs/"
+    assert search_config["page_size_query"] == "page_size"
+    assert search_config["page_size_options"] == [50, 100, 500]
     assert _widget_config(material, "site-material-detail")["base_url"] == "https://api.example.org/optimade/amdb"
     for page in tmp_path.rglob("*.html"):
         text = page.read_text(encoding="utf-8")

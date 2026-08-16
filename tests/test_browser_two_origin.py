@@ -110,6 +110,12 @@ def _numeric_cell(row, index: int) -> float:
     return float(text.split()[0])
 
 
+def _display_floor(threshold: float) -> float:
+    # Column 4 renders at 3 digits; floor a full-precision API threshold to its display value less
+    # a half-ULP so a rounded cell (e.g. 0.634 for 0.63419) never spuriously fails a `>=` check.
+    return round(threshold, 3) - 5e-4
+
+
 def _detail_record(origins: Origins) -> dict[str, object]:
     body, _ = _api(
         origins,
@@ -273,8 +279,106 @@ def test_filter_and_sort_roundtrip(two_origins: Origins, page: Page) -> None:
     rows.nth(1).wait_for(state="visible", timeout=TIMEOUT_MS)
     assert 2 <= rows.count() <= 50
     values = [_numeric_cell(rows.nth(index), 4) for index in range(rows.count())]
-    assert all(value >= threshold for value in values)
+    assert all(value >= _display_floor(threshold) for value in values)
     assert values[0] >= values[1]
+
+
+def _column_floats(rows, index: int) -> list[float]:
+    values: list[float] = []
+    for i in range(rows.count()):
+        text = rows.nth(i).locator("td").nth(index).inner_text().strip()
+        head = text.split()[0] if text else ""
+        try:
+            values.append(float(head))
+        except ValueError:
+            # A missing value renders as an accessible dash; skip it and check the numeric run.
+            pass
+    return values
+
+
+def test_header_sort_link_roundtrip(two_origins: Origins, page: Page) -> None:
+    # Column 4 (_anyterial_max_spin_splitting) is advertised sortable server-side
+    # (optimade/adapter.py SORTABLE_PROPERTIES); column 0 (_anyterial_formula, "Material") is not.
+    page.goto(f"{two_origins.site_url}/search.html", wait_until="domcontentloaded")
+    rows = _rows(page)
+    rows.first.wait_for(state="visible", timeout=TIMEOUT_MS)
+    headers = page.locator("[data-httk-serve-optimade-table] thead th")
+    assert headers.nth(0).locator("a.httk-serve-optimade-table__sort-link").count() == 0
+
+    sort_link = headers.nth(4).locator("a.httk-serve-optimade-table__sort-link")
+    sort_link.wait_for(state="attached", timeout=TIMEOUT_MS)
+    href = sort_link.get_attribute("href") or ""
+    # URLSearchParams.toString() percent-encodes the comma; accept either encoding tolerantly.
+    assert "sort=_anyterial_max_spin_splitting" in href
+    assert "%2Cid" in href or ",id" in href
+
+    sort_link.click()
+    rows = _rows(page)
+    rows.first.wait_for(state="visible", timeout=TIMEOUT_MS)
+    assert page.evaluate("() => new URLSearchParams(location.search).get('sort')") == "_anyterial_max_spin_splitting,id"
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-httk-serve-optimade-table] thead th')[4]?.getAttribute('aria-sort') === 'ascending'",
+        timeout=TIMEOUT_MS,
+    )
+    ascending = _column_floats(rows, 4)
+    assert len(ascending) >= 2
+    assert all(ascending[i] <= ascending[i + 1] for i in range(len(ascending) - 1)), ascending
+    href = page.locator("[data-httk-serve-optimade-table] thead th").nth(4).locator(
+        "a.httk-serve-optimade-table__sort-link"
+    ).get_attribute("href") or ""
+    assert "sort=-_anyterial_max_spin_splitting" in href
+
+    page.locator("[data-httk-serve-optimade-table] thead th").nth(4).locator(
+        "a.httk-serve-optimade-table__sort-link"
+    ).click()
+    rows = _rows(page)
+    rows.first.wait_for(state="visible", timeout=TIMEOUT_MS)
+    assert page.evaluate("() => new URLSearchParams(location.search).get('sort')") == "-_anyterial_max_spin_splitting,id"
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-httk-serve-optimade-table] thead th')[4]?.getAttribute('aria-sort') === 'descending'",
+        timeout=TIMEOUT_MS,
+    )
+    descending = _column_floats(rows, 4)
+    assert len(descending) >= 2
+    assert all(descending[i] >= descending[i + 1] for i in range(len(descending) - 1)), descending
+
+
+def test_advanced_filter_disclosure_roundtrip(two_origins: Origins, page: Page) -> None:
+    body, _ = _api(
+        two_origins,
+        "/v1/structures",
+        {
+            "page_limit": 3,
+            "response_fields": "_anyterial_max_spin_splitting",
+            "sort": "-_anyterial_max_spin_splitting,id",
+        },
+    )
+    threshold = body["data"][2]["attributes"]["_anyterial_max_spin_splitting"]
+    filter_query = f"_anyterial_max_spin_splitting >= {threshold}"
+
+    page.goto(f"{two_origins.site_url}/search.html", wait_until="domcontentloaded")
+    advanced = page.locator("[data-httk-serve-optimade-advanced]")
+    advanced.wait_for(state="attached", timeout=TIMEOUT_MS)
+    help_link = advanced.locator("a.httk-serve-optimade-table__advanced-help")
+    assert help_link.get_attribute("href") == "https://schemas.anyterial.se/defs/"
+
+    advanced.locator("summary").click()
+    filter_input = advanced.locator("[data-httk-serve-optimade-advanced-filter]")
+    filter_input.fill(filter_query)
+    advanced.locator("button[type=submit]").click()
+
+    rows = _rows(page)
+    rows.first.wait_for(state="visible", timeout=TIMEOUT_MS)
+    assert page.evaluate("() => new URLSearchParams(location.search).get('filter')") == filter_query
+    values = _column_floats(rows, 4)
+    assert len(values) >= 1
+    assert all(value >= _display_floor(threshold) for value in values), values
+
+    summary = page.locator("[data-httk-serve-optimade-summary]")
+    summary.wait_for(state="visible", timeout=TIMEOUT_MS)
+    pills = summary.locator(".httk-serve-optimade-table__pill")
+    pill_texts = pills.evaluate_all("nodes => nodes.map(node => node.innerText)")
+    assert any("Max spin splitting" in text and "≥" in text for text in pill_texts), pill_texts
 
 
 def test_search_summary_reflects_filter_and_count(two_origins: Origins, page: Page) -> None:

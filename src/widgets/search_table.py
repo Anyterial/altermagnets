@@ -53,6 +53,7 @@ def render(context, **props):
             "abundance_desc": "-_anyterial_min_crustal_abundance,-_anyterial_max_spin_splitting,id",
         },
         caption="Screened altermagnet search results",
+        advanced_filter={"help_url": "https://schemas.anyterial.se/defs/"},
         detail_route="material",
         detail_column="_anyterial_formula",
         detail_query="id",

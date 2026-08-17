@@ -4,7 +4,7 @@ import os
 from html import escape
 from pathlib import Path
 
-from _internal import safe_json
+from _internal import first_line, safe_json, served_structure_definitions
 from httk.serve.web.widgets import WidgetAsset, WidgetRenderResult, optimade_protocol_asset, optimade_protocol_href
 
 RESPONSE_FIELDS = (
@@ -35,12 +35,19 @@ def render(context, **props):
     base_url = os.environ.get("ALTERMAGNETS_OPTIMADE_BASE_URL", "/optimade/amdb").rstrip("/") or "/"
     widget_id = escape(context.widget_id, quote=True)
     config_id = escape(f"site-material-detail-{context.widget_id}-config", quote=True)
+    definitions = served_structure_definitions()
+    field_info = {
+        name: {"description": description}
+        for name in RESPONSE_FIELDS
+        if (description := first_line(definitions.get(name, {}).get("description"))) is not None
+    }
     config = {
         "base_url": base_url,
         "entry_type": "structures",
         "id_query": "id",
         "response_fields": list(RESPONSE_FIELDS),
         "widget_id": context.widget_id,
+        "field_info": field_info,
     }
     asset = WidgetAsset(
         "site-material-detail.mjs",

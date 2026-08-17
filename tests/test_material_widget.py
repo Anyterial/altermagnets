@@ -85,3 +85,15 @@ def test_material_widget_requests_every_attribute_used_by_detail_js() -> None:
     }
 
     assert set(config["response_fields"]) == consumed_fields
+
+
+def test_material_widget_embeds_field_info_first_lines() -> None:
+    config_text = MODULE.render(_context()).html.split('type="application/json">', 1)[1].split("</script>", 1)[0]
+    field_info = json.loads(config_text)["field_info"]
+    # Populated from the same served schema the service serves; every entry is a
+    # single first-line description keyed by a requested response field.
+    assert set(field_info).issubset(set(MODULE.RESPONSE_FIELDS))
+    assert "_httk_dft_band_gap" in field_info
+    band_gap = field_info["_httk_dft_band_gap"]["description"]
+    assert band_gap.startswith("The Kohn-Sham band gap")
+    assert "\n" not in band_gap

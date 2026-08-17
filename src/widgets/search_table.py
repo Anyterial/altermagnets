@@ -2,7 +2,18 @@
 
 import os
 
+from _internal import first_line, served_structure_definitions
 from httk.serve.web.widgets.optimade_table import render as render_optimade_table
+
+
+def _with_descriptions(columns):
+    """Add each served property's first description line as a column hover hint."""
+    definitions = served_structure_definitions()
+    described = []
+    for column in columns:
+        description = first_line(definitions.get(column["key"], {}).get("description"))
+        described.append({**column, "description": description} if description is not None else column)
+    return tuple(described)
 
 
 def render(context, **props):
@@ -13,32 +24,34 @@ def render(context, **props):
     return render_optimade_table(
         context,
         base_url=base_url,
-        columns=(
-            {"key": "_anyterial_formula", "label": "Material", "format": "formula"},
-            {"key": "_httk_magndata_ids", "label": "MAGNDATA IDs", "format": {"name": "join", "separator": ", "}},
-            {"key": "_anyterial_classification", "label": "Collinearity"},
-            {"key": "_anyterial_space_group", "label": "Space group"},
-            {
-                "key": "_anyterial_max_spin_splitting",
-                "label": r"$\Delta E^{\mathrm{max}}_{\mathrm{split}}$",
-                "format": {"name": "number", "digits": 3, "suffix": " eV"},
-            },
-            {
-                "key": "_anyterial_avg_spin_splitting",
-                "label": r"$\Delta E^{\mathrm{avg}}_{\mathrm{split}}$",
-                "format": {"name": "number", "digits": 3, "suffix": " eV"},
-            },
-            {
-                "key": "_anyterial_spin_splitting_fraction",
-                "label": "FΔ",
-                "format": {"name": "number", "digits": 1, "scale": 100, "suffix": " %"},
-            },
-            {
-                "key": "_httk_dft_band_gap",
-                "label": "KS Gap",
-                "format": {"name": "number", "digits": 3, "suffix": " eV"},
-            },
-            {"key": "_anyterial_min_crustal_abundance", "label": "Min abundance"},
+        columns=_with_descriptions(
+            (
+                {"key": "_anyterial_formula", "label": "Material", "format": "formula"},
+                {"key": "_httk_magndata_ids", "label": "MAGNDATA IDs", "format": {"name": "join", "separator": ", "}},
+                {"key": "_anyterial_classification", "label": "Collinearity"},
+                {"key": "_anyterial_space_group", "label": "Space group"},
+                {
+                    "key": "_anyterial_max_spin_splitting",
+                    "label": r"$\Delta E^{\mathrm{max}}_{\mathrm{split}}$",
+                    "format": {"name": "number", "digits": 3, "suffix": " eV"},
+                },
+                {
+                    "key": "_anyterial_avg_spin_splitting",
+                    "label": r"$\Delta E^{\mathrm{avg}}_{\mathrm{split}}$",
+                    "format": {"name": "number", "digits": 3, "suffix": " eV"},
+                },
+                {
+                    "key": "_anyterial_spin_splitting_fraction",
+                    "label": "FΔ",
+                    "format": {"name": "number", "digits": 1, "scale": 100, "suffix": " %"},
+                },
+                {
+                    "key": "_httk_dft_band_gap",
+                    "label": "KS Gap",
+                    "format": {"name": "number", "digits": 3, "suffix": " eV"},
+                },
+                {"key": "_anyterial_min_crustal_abundance", "label": "Min abundance"},
+            )
         ),
         page_size=50,
         page_size_query="page_size",
@@ -54,7 +67,7 @@ def render(context, **props):
             "abundance_desc": "-_anyterial_min_crustal_abundance,-_anyterial_max_spin_splitting,id",
         },
         caption="Screened altermagnet search results",
-        advanced_filter={"help_url": "https://schemas.anyterial.se/defs/"},
+        advanced_filter={"help_url": context.url_for("fields")},
         detail_route="material",
         detail_column="_anyterial_formula",
         detail_query="id",

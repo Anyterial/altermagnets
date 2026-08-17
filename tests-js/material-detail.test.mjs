@@ -186,6 +186,25 @@ test("detail widget distinguishes no id, not found, and API-down states", async 
   assert.notEqual(missing.result.textContent, down.result.textContent);
 });
 
+test("field labels carry a native title hint starting with the OPTIMADE field name", async () => {
+  const { result } = shell({
+    field_info: {
+      _httk_dft_band_gap: { description: "The Kohn-Sham band gap of a material." },
+      _anyterial_electronic_type: {},
+    },
+  });
+  const network = fetchFor(realisticResource);
+  globalThis.fetch = network.fetch;
+  await material.loadShell(result, OptimadeTransport);
+  const labels = result.querySelectorAll("dt");
+  const gap = labels.find((dt) => dt.textContent.startsWith("KS Gap"));
+  assert.ok(gap, "KS Gap label is rendered");
+  assert.equal(gap.title, "_httk_dft_band_gap — The Kohn-Sham band gap of a material.");
+  const type = labels.find((dt) => dt.textContent.startsWith("KS Gap Type"));
+  assert.ok(type, "KS Gap Type label is rendered");
+  assert.equal(type.title, "_anyterial_electronic_type");
+});
+
 test("figure URL validation is origin-bound and rejects insecure mixed content", () => {
   const document = new DomDocument("https://site.example.test/material");
   installDom(document);

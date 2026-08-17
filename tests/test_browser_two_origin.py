@@ -369,7 +369,9 @@ def test_advanced_filter_disclosure_roundtrip(two_origins: Origins, page: Page) 
     advanced = page.locator("[data-httk-serve-optimade-advanced]")
     advanced.wait_for(state="attached", timeout=TIMEOUT_MS)
     help_link = advanced.locator("a.httk-serve-optimade-table__advanced-help")
-    assert help_link.get_attribute("href") == "https://schemas.anyterial.se/defs/"
+    # The advanced help link now points at the site's own static field-definitions page
+    # (src/widgets/search_table.py help_url = context.url_for("fields")), published as fields.html.
+    assert help_link.get_attribute("href") == "fields.html"
 
     advanced.locator("summary").click()
     filter_input = advanced.locator("[data-httk-serve-optimade-advanced-filter]")
@@ -473,6 +475,40 @@ def test_detail_loads_variants_references_and_figures(two_origins: Origins, page
         "light => [...document.querySelectorAll('img.theme-aware-figure')].some((image, index) => image.src !== light[index] && image.src === image.dataset.srcDark)",
         light_sources,
         timeout=TIMEOUT_MS,
+    )
+
+
+def test_field_definitions_page_and_hover_hints(two_origins: Origins, page: Page) -> None:
+    # The static field-definitions page renders server-side with no fetch, so its table rows and
+    # definition links exist immediately on load.
+    page.goto(f"{two_origins.site_url}/fields.html", wait_until="domcontentloaded")
+    rows = page.locator(".httk-serve-optimade-fields tbody tr")
+    rows.first.wait_for(state="visible", timeout=TIMEOUT_MS)
+    assert rows.count() >= 50
+    httk_link = page.locator('.httk-serve-optimade-fields a[href^="https://schemas.httk.org/"]', has_text="_httk_magndata_ids")
+    assert httk_link.count() >= 1
+    anyterial_link = page.locator(
+        '.httk-serve-optimade-fields a[href^="https://schemas.anyterial.se/"]', has_text="_anyterial_classification"
+    )
+    assert anyterial_link.count() >= 1
+
+    # From the search page, the advanced-search help link navigates to the fields page.
+    page.goto(f"{two_origins.site_url}/search.html", wait_until="domcontentloaded")
+    rows = _rows(page)
+    rows.first.wait_for(state="visible", timeout=TIMEOUT_MS)
+    help_link = page.locator("a.httk-serve-optimade-table__advanced-help")
+    help_link.wait_for(state="attached", timeout=TIMEOUT_MS)
+    assert (help_link.get_attribute("href") or "").endswith("fields.html")
+    # Column headers carry the baked hover hint that starts with the prefixed OPTIMADE field name.
+    assert page.locator('[data-httk-serve-optimade-table] thead th[title^="_anyterial_max_spin_splitting"]').count() == 1
+
+    # The material detail page labels carry the same style of native title hint.
+    record = _detail_record(two_origins)
+    page.goto(
+        f"{two_origins.site_url}/material.html?{urlencode({'id': record['id']})}", wait_until="domcontentloaded"
+    )
+    page.locator('[data-site-material-detail] dt[title^="_httk_dft_band_gap"]').first.wait_for(
+        state="attached", timeout=TIMEOUT_MS
     )
 
 

@@ -32,6 +32,11 @@ const INFO = {
   bnsMcif: "BNS setting indicated in the source MCIF file.",
 };
 
+// Per-property definition descriptions, keyed by prefixed OPTIMADE field name;
+// populated from the inert widget config so field labels can carry a native
+// title hint that starts with the exact filterable field name.
+let fieldDescriptions = {};
+
 const node = (tag, className = "", value = null) => {
   const result = document.createElement(tag);
   if (className) result.className = className;
@@ -94,10 +99,14 @@ const infoDot = (message) => {
   dot.append(bubble);
   return dot;
 };
-const field = (parent, label, value, message = "", className = "") => {
+const field = (parent, label, value, message = "", className = "", property = "") => {
   const wrapper = node("div", className);
   const dt = node("dt");
   dt.append(document.createTextNode(label));
+  if (property) {
+    const description = fieldDescriptions[property]?.description;
+    dt.title = description ? `${property} — ${description}` : property;
+  }
   if (message) dt.append(infoDot(message));
   const dd = node("dd");
   if (value instanceof Node) dd.append(value);
@@ -304,12 +313,12 @@ function buildDetail(resource, included, apiBase) {
 
   const identity = section("Identity");
   const identityGrid = node("dl", "details-grid");
-  field(identityGrid, "Elements", elementsFor(attributes, formula));
-  field(identityGrid, "Space group", latexJoin(parentGroups) === "n/a" ? inlineLatex(attributes._anyterial_space_group) || "n/a" : latexJoin(parentGroups), INFO.spaceGroup);
+  field(identityGrid, "Elements", elementsFor(attributes, formula), "", "", "_anyterial_elements");
+  field(identityGrid, "Space group", latexJoin(parentGroups) === "n/a" ? inlineLatex(attributes._anyterial_space_group) || "n/a" : latexJoin(parentGroups), INFO.spaceGroup, "", "_anyterial_space_group");
   const magndataLinks = ids.map((id) => ({ label: id, url: magndataUrl(id) })).filter((item) => item.url);
-  field(identityGrid, "MAGNDATA IDs", magndataLinks.length ? linkList(magndataLinks, "comma-link-list") : "n/a", INFO.magndata);
-  field(identityGrid, "ICSD IDs", joinValue(attributes._anyterial_icsd_ids));
-  field(identityGrid, "Parent space group(s)", latexJoin(parentGroups), INFO.parentGroups, "details-wide");
+  field(identityGrid, "MAGNDATA IDs", magndataLinks.length ? linkList(magndataLinks, "comma-link-list") : "n/a", INFO.magndata, "", "_httk_magndata_ids");
+  field(identityGrid, "ICSD IDs", joinValue(attributes._anyterial_icsd_ids), "", "", "_anyterial_icsd_ids");
+  field(identityGrid, "Parent space group(s)", latexJoin(parentGroups), INFO.parentGroups, "details-wide", "_anyterial_parent_spacegroups");
   const references = referencesFor(resource, included);
   field(identityGrid, "References", references.length ? linkList(references, "inline-link-list") : "n/a", "", "details-wide");
   identity.append(identityGrid);
@@ -317,17 +326,17 @@ function buildDetail(resource, included, apiBase) {
 
   const properties = section("Properties");
   const propertiesGrid = node("dl", "details-grid");
-  field(propertiesGrid, "KS Gap", `${decimal(attributes._httk_dft_band_gap)} eV`, INFO.gap);
-  field(propertiesGrid, "KS Gap Type", electronic);
-  field(propertiesGrid, "Min abundance", abundance(attributes._anyterial_min_crustal_abundance), INFO.abundance, "details-wide");
+  field(propertiesGrid, "KS Gap", `${decimal(attributes._httk_dft_band_gap)} eV`, INFO.gap, "", "_httk_dft_band_gap");
+  field(propertiesGrid, "KS Gap Type", electronic, "", "", "_anyterial_electronic_type");
+  field(propertiesGrid, "Min abundance", abundance(attributes._anyterial_min_crustal_abundance), INFO.abundance, "details-wide", "_anyterial_min_crustal_abundance");
   properties.append(propertiesGrid);
   article.append(properties);
 
   const metrics = section("Spin-splitting metrics");
   const metricsGrid = node("dl", "metrics-grid");
-  field(metricsGrid, "$Δ E^{max}_{split}$", `${decimal(attributes._anyterial_max_spin_splitting)} eV`, INFO.maxSplit, "metric-panel");
-  field(metricsGrid, "$Δ E^{avg}_{split}$", `${decimal(attributes._anyterial_avg_spin_splitting)} eV`, INFO.avgSplit, "metric-panel");
-  field(metricsGrid, "FΔ", percent(attributes._anyterial_spin_splitting_fraction), INFO.fraction, "metric-panel");
+  field(metricsGrid, "$Δ E^{max}_{split}$", `${decimal(attributes._anyterial_max_spin_splitting)} eV`, INFO.maxSplit, "metric-panel", "_anyterial_max_spin_splitting");
+  field(metricsGrid, "$Δ E^{avg}_{split}$", `${decimal(attributes._anyterial_avg_spin_splitting)} eV`, INFO.avgSplit, "metric-panel", "_anyterial_avg_spin_splitting");
+  field(metricsGrid, "FΔ", percent(attributes._anyterial_spin_splitting_fraction), INFO.fraction, "metric-panel", "_anyterial_spin_splitting_fraction");
   metrics.append(metricsGrid);
   article.append(metrics);
 
@@ -379,6 +388,7 @@ async function loadShell(shell, Transport = OptimadeTransport) {
     showState(shell, "The material detail service is temporarily unavailable. Please try again later.");
     return;
   }
+  fieldDescriptions = config.field_info || {};
   const id = new URLSearchParams(window.location.search).get(config.id_query || "id")?.trim() || "";
   if (!id) {
     showNoSelection(shell);

@@ -45,7 +45,7 @@
       </header>
 
       {% set current_page = page.relurl if page.relurl else 'index' %}
-      {% if current_page == 'material' %}
+      {% if current_page == 'material' or current_page == 'fields' %}
       {% set current_section = 'search' %}
       {% elif current_page == 'index' %}
       {% set current_section = 'home' %}

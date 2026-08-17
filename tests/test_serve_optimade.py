@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import material_store
-from conftest import write_source_tables
+from conftest import write_detail_assets, write_source_tables
 from optimade import adapter, build_providers, build_service_app, run_validation, service
 from optimade import dataset as dataset_module
 from starlette.testclient import TestClient
@@ -202,6 +202,103 @@ def test_store_native_service_is_live_and_does_not_own_caller_store(tmp_path: Pa
 
     # The service did not close a store supplied by its caller.
     assert opened.store.searcher().variable(material_store.MaterialRecord) is not None
+    opened.database.dispose()
+
+
+# The 9 direct MaterialRecord projections the site's search table requests; none is
+# nested under the structure sub-record, so serving them must never SELECT it.
+SEARCH_TABLE_COLUMNS = (
+    "_anyterial_formula",
+    "_httk_magndata_ids",
+    "_anyterial_classification",
+    "_anyterial_space_group",
+    "_anyterial_max_spin_splitting",
+    "_anyterial_avg_spin_splitting",
+    "_anyterial_spin_splitting_fraction",
+    "_httk_dft_band_gap",
+    "_anyterial_min_crustal_abundance",
+)
+
+
+def _structure_table_names() -> set[str]:
+    """Resolve the structure record's table and its child tables without hardcoding."""
+    from httk.store.db.schema import resolve_schema
+
+    structure_schema = resolve_schema(resolve_schema(material_store.MaterialRecord).field("structure").target)
+    tables = {structure_schema.table_name}
+    tables.update(
+        field.child.table_name for field in structure_schema.fields if field.role == "child" and field.child is not None
+    )
+    return tables
+
+
+def test_search_table_columns_skip_structure_hydration(tmp_path: Path) -> None:
+    import sqlalchemy
+
+    structure_tables = _structure_table_names()
+    source = write_source_tables(tmp_path / "tables")
+    details = write_detail_assets(tmp_path / "details")
+    opened = material_store.open_in_memory_store(source, details_dir=details)
+    assert opened is not None
+    app = build_service_app(
+        public_base_url="https://api.example.test/optimade/amdb",
+        store=opened.store,
+        details_root=details,
+    )
+
+    def collector(statements: list[str]):
+        def record(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
+            statements.append(statement)
+
+        return record
+
+    # Positive control: a full request (no response_fields) must SELECT the structure
+    # table, proving the fixture actually hydrates structures when a request reads them.
+    full_statements: list[str] = []
+    full_record = collector(full_statements)
+    sqlalchemy.event.listen(opened.database.engine, "before_cursor_execute", full_record)
+    try:
+        with TestClient(app, base_url="http://testserver") as live:
+            full = live.get("/v1/structures", params={"page_limit": "180"})
+    finally:
+        sqlalchemy.event.remove(opened.database.engine, "before_cursor_execute", full_record)
+    assert full.status_code == 200
+    full_data = full.json()["data"]
+    assert any(item["attributes"].get("lattice_vectors") is not None for item in full_data)
+    assert any(table in statement for table in structure_tables for statement in full_statements)
+
+    statements: list[str] = []
+    pruned_record = collector(statements)
+    sqlalchemy.event.listen(opened.database.engine, "before_cursor_execute", pruned_record)
+    try:
+        with TestClient(app, base_url="http://testserver") as live:
+            response = live.get(
+                "/v1/structures",
+                params={"response_fields": ",".join(SEARCH_TABLE_COLUMNS), "page_limit": "180"},
+            )
+    finally:
+        sqlalchemy.event.remove(opened.database.engine, "before_cursor_execute", pruned_record)
+
+    assert response.status_code == 200
+    payload = response.json()
+    data = payload["data"]
+    assert data
+    for item in data:
+        assert all(column in item["attributes"] for column in SEARCH_TABLE_COLUMNS)
+    # am-1-0001 is the fixture row with every search-table property populated.
+    first = next(item for item in data if item["id"] == "anyt:am-1-0001")["attributes"]
+    assert first["_anyterial_formula"] == "CrSb"
+    assert first["_anyterial_classification"]
+    assert first["_anyterial_max_spin_splitting"] is not None
+    assert first["_httk_dft_band_gap"] is not None
+    # The search table never reads the nested structure, so no SQL touches its tables.
+    assert statements
+    assert not any(table in statement for table in structure_tables for statement in statements)
+    # Phase 2: the adapter always attaches references relationships and include was
+    # defaulted on this multi-row page, so the reply must not embed an included section.
+    assert len(data) > 1
+    assert "included" not in payload
+
     opened.database.dispose()
 
 

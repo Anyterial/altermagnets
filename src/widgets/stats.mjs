@@ -13,6 +13,7 @@ async function count(baseUrl, filter) {
   const base = new URL(`${baseUrl.replace(/\/$/, "")}/`, document.baseURI);
   const endpoint = new URL("v1/structures", base);
   endpoint.searchParams.set("page_limit", "1");
+  endpoint.searchParams.set("response_fields", "id");
   if (filter) endpoint.searchParams.set("filter", filter);
   const response = await fetch(endpoint, { headers: { Accept: "application/vnd.api+json, application/json" } });
   if (!response.ok) throw new Error(`OPTIMADE count request failed: ${response.status}`);

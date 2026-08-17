@@ -44,6 +44,7 @@ test("stats fills all placeholders from meta.data_returned", async () => {
   assert.equal(call, 4);
   assert.equal(requests.every((request) => request.pathname === "/optimade/amdb/v1/structures"), true);
   assert.equal(requests.every((request) => request.searchParams.get("page_limit") === "1"), true);
+  assert.equal(requests.every((request) => request.searchParams.get("response_fields") === "id"), true);
   assert.deepEqual(requests.map((request) => request.searchParams.get("filter") || ""), [
     "",
     '_anyterial_classification = "collinear"',
@@ -66,6 +67,7 @@ test("stats resolves a root-relative base_url against the page origin", async ()
   assert.equal(requests.length, 4);
   assert.equal(requests.every((request) => request.origin === "https://site.example.test"), true);
   assert.equal(requests.every((request) => request.pathname === "/optimade/amdb/v1/structures"), true);
+  assert.equal(requests.every((request) => request.searchParams.get("response_fields") === "id"), true);
   names.forEach((name) => assert.equal(targets[name].textContent, "42"));
 });
 

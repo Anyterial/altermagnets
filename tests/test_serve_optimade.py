@@ -222,7 +222,7 @@ SEARCH_TABLE_COLUMNS = (
 
 def _structure_table_names() -> set[str]:
     """Resolve the structure record's table and its child tables without hardcoding."""
-    from httk.store.backend.sql.schema import resolve_schema
+    from httk.store.backend.schema import resolve_schema
 
     structure_schema = resolve_schema(resolve_schema(material_store.MaterialRecord).field("structure").target)
     tables = {structure_schema.table_name}

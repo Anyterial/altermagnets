@@ -7,7 +7,7 @@ from typing import Any
 import material_store
 from httk.serve.optimade import adapter_from_stores
 from httk.serve.optimade.model import ResultRow
-from httk.store.db import StoredEntrySource
+from httk.store.backend.sql import StoredEntrySource
 
 SORTABLE_PROPERTIES = {
     "structures": (

@@ -4,7 +4,7 @@ Runtime prefers an offline-built DuckDB file, but can seed the same
 ``SqlStore`` schema into an in-memory SQLite database from the three source
 tables when the persistent store is absent or unusable. The record classes are
 deliberately ordinary frozen dataclasses: the schema is declared with
-httk-core's storage markers and implemented by ``httk.store.db.SqlStore``.
+httk-core's storage markers and implemented by ``httk.store.backend.sql.SqlStore``.
 """
 
 import bz2
@@ -63,7 +63,7 @@ from httk.core.storage import (
     project_storage_record,
     stored_property,
 )
-from httk.store.db import Database, SqlStore
+from httk.store import Backend, SqlStore
 
 __all__ = [
     "AMDB_DATASET",
@@ -699,7 +699,7 @@ register_entry_record(
 class OpenedMaterialStore:
     """The explicitly owned runtime database/store pair and its material count."""
 
-    database: Database
+    database: Backend
     store: SqlStore
     material_count: int
     mode: str
@@ -1898,9 +1898,9 @@ def build_store(
     os.close(descriptor)
     temporary_path = Path(temporary_name)
     temporary_path.unlink()
-    database: Database | None = None
+    database: Backend | None = None
     try:
-        created_database = Database.duckdb(temporary_path)
+        created_database = Backend.duckdb(temporary_path)
         database = created_database
         store = SqlStore(
             created_database,
@@ -1958,7 +1958,7 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
     store.
     """
     store_path = resolve_store_path(path)
-    database: Database | None = None
+    database: Backend | None = None
     try:
         if not store_path.is_file():
             logger.info("No prebuilt store at %s", store_path)
@@ -1966,7 +1966,7 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
         if store_path.stat().st_size == 0:
             logger.info("Prebuilt store %s is empty; rebuild with `make build_store`", store_path)
             return None
-        opened_database = Database.duckdb(store_path)
+        opened_database = Backend.duckdb(store_path)
         database = opened_database
         store = SqlStore(opened_database)
         # The layout stamp is the authoritative staleness check: a store built
@@ -2027,7 +2027,7 @@ def open_in_memory_store(
 
     source_dir = resolve_data_dir(data_dir)
     resolved_details_dir = resolve_details_dir(details_dir)
-    database: Database | None = None
+    database: Backend | None = None
     try:
         logger.info(
             "Seeding an in-memory store from %s (details: %s) — slow; prefer `make build_store`",
@@ -2037,7 +2037,7 @@ def open_in_memory_store(
         materials = _load_source_materials(source_dir, details_dir=resolved_details_dir)
         if not materials:
             return None
-        opened_database = Database.sqlite()
+        opened_database = Backend.sqlite()
         database = opened_database
         store = SqlStore(opened_database, entry_records=_entry_records_layout())
         # Bulk ingestion creates the tables and their indexes itself.
@@ -2086,5 +2086,5 @@ def cleanup_material_store(global_data: MutableMapping[str, Any]) -> None:
     global_data.pop("materials_store_mode", None)
     global_data.pop("materials_store_source", None)
     global_data.pop("materials_store_revision", None)
-    if isinstance(database, Database):
+    if isinstance(database, Backend):
         database.dispose()

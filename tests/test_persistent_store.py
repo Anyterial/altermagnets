@@ -2,7 +2,7 @@ from pathlib import Path
 
 from conftest import write_detail_assets, write_source_tables
 from httk.core import File
-from httk.store.db import Database
+from httk.store import Backend
 from material_store import (
     MaterialRecord,
     build_material_records,
@@ -92,7 +92,7 @@ def test_missing_corrupt_and_zero_stores_are_unavailable(tmp_path: Path) -> None
     corrupt.write_text("not a duckdb database", encoding="utf-8")
     assert open_prebuilt_store(corrupt) is None
     zero = tmp_path / "zero.duckdb"
-    database = Database.duckdb(zero)
+    database = Backend.duckdb(zero)
     database.dispose()
     assert open_prebuilt_store(zero) is None
     assert open_material_store(tmp_path / "missing.duckdb", data_dir=tmp_path / "missing-tables") is None
@@ -102,7 +102,7 @@ def test_runtime_falls_back_when_persistent_store_has_the_old_schema(tmp_path: P
     source = write_source_tables(tmp_path / "tables")
     details = write_detail_assets(tmp_path / "details")
     legacy_path = tmp_path / "legacy.duckdb"
-    legacy_database = Database.duckdb(legacy_path)
+    legacy_database = Backend.duckdb(legacy_path)
     with legacy_database.engine.begin() as connection:
         connection.exec_driver_sql("CREATE TABLE altermagnets_material_records (sid BIGINT PRIMARY KEY)")
         connection.exec_driver_sql("INSERT INTO altermagnets_material_records (sid) VALUES (1)")

@@ -174,7 +174,7 @@ def test_build_saves_only_coupled_runs_and_recovers_moments(tmp_path: Path) -> N
     # Only the one coupled run is saved, not every collected task.
     connection = duckdb.connect(str(target), read_only=True)
     try:
-        assert connection.execute('select count(*) from "core_run_v1"').fetchone()[0] == 1
+        assert connection.execute('select count(*) from "core_run"').fetchone()[0] == 1
     finally:
         connection.close()
 

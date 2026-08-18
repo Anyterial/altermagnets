@@ -242,7 +242,7 @@ def build_dataset(
         if not stored_structures:
             logger.warning(
                 "The material store holds no structures; every structure will serve null "
-                "(was the store built with the detail tree and httk-io available?)"
+                "(was the store built with the detail tree and httk-atomistic available?)"
             )
 
     # References: dedupe DOIs across the normalized material records in first-seen order.

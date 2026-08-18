@@ -1373,7 +1373,7 @@ def build_material_records(
     if load_details_structures and details_dir is not None and materials and with_structures == 0:
         logger.warning(
             "No material got a structure: check that %s holds the detail shard tree "
-            "and that the CONTCAR reader is importable (httk-io)",
+            "and that the CONTCAR reader is importable (httk-atomistic)",
             details_dir,
         )
     return tuple(materials)

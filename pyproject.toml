@@ -13,7 +13,6 @@ authors = [{ name = "Rickard Armiento", email = "gitcommits@armiento.net" }]
 dependencies = [
   "httk-store[duckdb]>=0.2,<1",
   "httk-serve>=0.2,<1",
-  "httk-io>=0.1,<1",
   "httk-atomistic>=0.3,<1",
 ]
 classifiers = [

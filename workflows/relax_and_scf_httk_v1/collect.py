@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from httk.atomistic import CartesianSiteMoments, UnitcellStructure, UnitcellStructureView
+from httk.atomistic.integrations.vasp.io import VASPOutputs
 from httk.core import DataRecord, FileRecord, load
 from httk.core.digests import sha256_file
-from httk.io.vasp import VASPOutputs
 from httk.workflow.collecting import JobRecord
 from httk.workflow.compat.v1 import run_directory, task_file
 from httk.workflow.compat.v1.reader import parse_v1_task_name

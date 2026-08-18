@@ -120,7 +120,7 @@ OPTIMADE service
 
 The same dataset is also served over the [OPTIMADE](https://www.optimade.org/)
 API by the thin `serve_optimade.py` entry point, built on the httk₂ modules
-(*httk-core*, *httk-io*, *httk-atomistic*, *httk-store*, *httk-serve*).
+(*httk-core*, *httk-atomistic*, *httk-store*, *httk-serve*).
 `MaterialRecord` and the DOI reference record are registered store-native
 backings. Their durable property projections serve 180 `structures` (with
 auto-derived composition fields and the `_anyterial_`/`_httk_` properties) and

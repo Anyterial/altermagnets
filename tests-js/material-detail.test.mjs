@@ -39,6 +39,7 @@ const fields = [
   "_anyterial_icsd_ids", "_httk_magndata_ids", "_httk_dft_band_gap",
   "_anyterial_max_spin_splitting", "_anyterial_avg_spin_splitting", "_anyterial_spin_splitting_fraction",
   "_anyterial_min_crustal_abundance", "_anyterial_magndata_variants", "_httk_custom_figures",
+  "lattice_vectors", "cartesian_site_positions", "species", "species_at_sites", "_httk_site_moments",
 ];
 
 function jsonResponse(value, url, status = 200) {
@@ -117,6 +118,11 @@ const realisticResource = {
     _anyterial_avg_spin_splitting: 0.8,
     _anyterial_spin_splitting_fraction: 0.2,
     _anyterial_min_crustal_abundance: 56.0,
+    lattice_vectors: null,
+    cartesian_site_positions: null,
+    species: null,
+    species_at_sites: null,
+    _httk_site_moments: null,
     _anyterial_magndata_variants: [{
       magndata_id: "165.1", source: "collinear", formula: "Fe2O3<script>alert(1)</script>", phases: ["AM"], wave_classes: ["d"],
       symprec: 1e-5, bns_mcif_latex: ["P2_1/c"], g_laue_classes: ["m-3m"], h_laue_classes: ["4/mmm"],
@@ -211,4 +217,134 @@ test("figure URL validation is origin-bound and rejects insecure mixed content",
   assert.equal(material.figureUrl("https://api.example.test/figure.svg", API), "https://api.example.test/figure.svg");
   assert.equal(material.figureUrl("https://evil.example/figure.svg", API), "");
   assert.equal(material.figureUrl("http://api.example.test/figure.svg", API), "");
+});
+
+// --- CrysViz interactive structure embed ---
+
+const CRYSVIZ_BASE = "https://crysviz.test/index.html";
+
+function structureAttributes(overrides = {}) {
+  return {
+    ...Object.fromEntries(fields.map((name) => [name, null])),
+    chemical_formula_reduced: "FeO",
+    // Simple cubic 2 Å cell so cartesian -> fractional is exact and checkable.
+    lattice_vectors: [[2, 0, 0], [0, 2, 0], [0, 0, 2]],
+    cartesian_site_positions: [[0, 0, 0], [1, 1, 1]],
+    species: [
+      { name: "Fe", chemical_symbols: ["Fe"] },
+      { name: "O", chemical_symbols: ["O"] },
+    ],
+    species_at_sites: ["Fe", "O"],
+    _httk_site_moments: [[0, 0, 4.2], null],
+    ...overrides,
+  };
+}
+
+function decodeCrysvizSrc(src) {
+  const encoded = src.split("#load-file=", 2)[1];
+  const [name, content] = encoded.split("|");
+  const b64 = decodeURIComponent(content);
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return { name: decodeURIComponent(name), payload: JSON.parse(new TextDecoder().decode(bytes)) };
+}
+
+test("crysvizPayload maps elements, fractional positions, spins and spinsActive", () => {
+  const payload = material.crysvizPayload(structureAttributes());
+  assert.equal(payload.format, "crysviz");
+  assert.ok(payload.version.startsWith("2"));
+  assert.equal(payload.selectedFrameIndex, 0);
+  const frame = payload.frames[0];
+  assert.deepEqual(frame.elements, ["Fe", "O"]);
+  assert.deepEqual(frame.lattice, [[2, 0, 0], [0, 2, 0], [0, 0, 2]]);
+  assert.deepEqual(frame.positions, [[0, 0, 0], [0.5, 0.5, 0.5]]);
+  assert.equal(frame.spins.length, 2);
+  assert.deepEqual(frame.spins[0], { vector: [0, 0, 4.2], atomIndex: 0 });
+  assert.deepEqual(frame.spins[1], { vector: [0, 0, 0], atomIndex: 1 });
+  assert.equal(payload.display.spinsActive, true);
+});
+
+test("crysvizPayload maps species labels to chemical symbols and drops spins when moments absent", () => {
+  const payload = material.crysvizPayload(structureAttributes({
+    species: [{ name: "Fe1", chemical_symbols: ["Fe"] }],
+    species_at_sites: ["Fe1"],
+    cartesian_site_positions: [[0, 0, 0]],
+    _httk_site_moments: null,
+  }));
+  assert.deepEqual(payload.frames[0].elements, ["Fe"]);
+  assert.equal("spins" in payload.frames[0], false);
+  assert.equal(payload.display.spinsActive, false);
+});
+
+test("crysvizPayload returns null for a null or malformed lattice", () => {
+  assert.equal(material.crysvizPayload(structureAttributes({ lattice_vectors: null })), null);
+  assert.equal(material.crysvizPayload(structureAttributes({ lattice_vectors: [[0, 0, 0], [0, 0, 0], [0, 0, 0]] })), null);
+  assert.equal(material.crysvizPayload(structureAttributes({ cartesian_site_positions: [[0, 0, 0]] })), null);
+});
+
+test("structure card renders a sandboxed CrysViz iframe when structure data is present", async () => {
+  const resource = { id: "s-1", type: "structures", attributes: structureAttributes() };
+  const { result } = shell({ crysviz_base_url: CRYSVIZ_BASE });
+  globalThis.fetch = fetchFor(resource).fetch;
+  await material.loadShell(result, OptimadeTransport);
+  const frames = result.querySelectorAll("iframe.crysviz-frame");
+  assert.equal(frames.length, 1);
+  assert.equal(result.querySelectorAll("img.theme-aware-figure").length, 0);
+  const frame = frames[0];
+  assert.equal(frame.getAttribute("sandbox"), "allow-scripts allow-popups allow-popups-to-escape-sandbox");
+  assert.equal(frame.getAttribute("referrerpolicy"), "no-referrer");
+  assert.equal(frame.getAttribute("loading"), "lazy");
+  assert.equal(frame.getAttribute("title"), "Interactive crystal structure (CrysViz)");
+  const src = frame.getAttribute("src");
+  assert.ok(src.startsWith(`${CRYSVIZ_BASE}?widget=1#load-file=`));
+  const { name, payload } = decodeCrysvizSrc(src);
+  assert.ok(name.endsWith(".crysviz"));
+  assert.deepEqual(payload.frames[0].positions, [[0, 0, 0], [0.5, 0.5, 0.5]]);
+});
+
+test("structure card falls back to the static figure when lattice_vectors is null", async () => {
+  const resource = { id: "s-2", type: "structures", attributes: structureAttributes({ lattice_vectors: null }) };
+  const { result } = shell();
+  globalThis.fetch = fetchFor(resource).fetch;
+  await material.loadShell(result, OptimadeTransport);
+  assert.equal(result.querySelectorAll("iframe.crysviz-frame").length, 0);
+  assert.equal(result.querySelectorAll("figure.is-missing").length, 3);
+});
+
+test("crysvizIframeSrc falls back (empty) when the encoded URL exceeds the guard", () => {
+  const count = 6000;
+  const big = structureAttributes({
+    cartesian_site_positions: Array.from({ length: count }, () => [1, 1, 1]),
+    species: [{ name: "Fe", chemical_symbols: ["Fe"] }],
+    species_at_sites: Array.from({ length: count }, () => "Fe"),
+    _httk_site_moments: Array.from({ length: count }, () => [0, 0, 1]),
+  });
+  assert.equal(material.crysvizIframeSrc(big, CRYSVIZ_BASE), "");
+  assert.notEqual(material.crysvizIframeSrc(structureAttributes(), CRYSVIZ_BASE), "");
+});
+
+test("crysvizPayload rejects a species label that is not a bare element symbol", () => {
+  // "Fe 2+" would corrupt the whitespace-delimited POSCAR rebuild → fallback.
+  assert.equal(material.crysvizPayload(structureAttributes({
+    species: [{ name: "Fe2+", chemical_symbols: ["Fe 2+"] }, { name: "O", chemical_symbols: ["O"] }],
+    species_at_sites: ["Fe2+", "O"],
+  })), null);
+  // An unmapped label that is itself not a bare symbol also fails.
+  assert.equal(material.crysvizPayload(structureAttributes({
+    species: null,
+    species_at_sites: ["Fe1", "O"],
+  })), null);
+});
+
+test("crysvizIframeSrc keeps a query-carrying base valid and the hash raw", () => {
+  const src = material.crysvizIframeSrc(structureAttributes(), "https://crysviz.test/index.html?embed=1");
+  assert.ok(src.startsWith("https://crysviz.test/index.html?"));
+  const query = src.split("#", 1)[0];
+  assert.ok(query.includes("embed=1"));
+  assert.ok(query.includes("widget=1"));
+  assert.equal(src.split("?").length, 2); // exactly one "?" — no "?a=b?widget=1"
+  // The load-file separator survives as a raw "|" between the two encoded halves.
+  const hash = src.split("#load-file=", 2)[1];
+  assert.equal(hash.split("|").length, 2);
 });

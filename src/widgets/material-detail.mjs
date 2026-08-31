@@ -37,6 +37,17 @@ const INFO = {
 // title hint that starts with the exact filterable field name.
 let fieldDescriptions = {};
 
+// CrysViz (https://crysviz.org, AGPL-3.0) is embedded in an iframe to render the
+// interactive crystal structure. The base is operator-overridable via the inert
+// widget config (crysviz_base_url), mirroring the OPTIMADE base_url; the payload
+// is a minimal frames-style `.crysviz` session in the URL hash. Only validated
+// numeric arrays and element symbols ever reach the iframe src.
+const CRYSVIZ_DEFAULT_BASE = "https://crysviz.org/index.html";
+// Guard against URLs too long for some browsers; over it we fall back to the
+// static structure figure.
+const CRYSVIZ_URL_MAX_CHARS = 65536;
+let crysvizBaseUrl = CRYSVIZ_DEFAULT_BASE;
+
 const node = (tag, className = "", value = null) => {
   const result = document.createElement(tag);
   if (className) result.className = className;
@@ -164,6 +175,120 @@ const figureUrl = (value, apiBase) => {
   }
 };
 
+const finiteNumber = (value) => typeof value === "number" && Number.isFinite(value);
+const isVec3 = (value) => Array.isArray(value) && value.length === 3 && value.every(finiteNumber);
+
+// Inverse of a 3x3 matrix (rows are the lattice vectors), or null when singular.
+function invert3x3(m) {
+  const [[a, b, c], [d, e, f], [g, h, i]] = m;
+  const A = e * i - f * h;
+  const B = -(d * i - f * g);
+  const C = d * h - e * g;
+  const det = a * A + b * B + c * C;
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-12) return null;
+  const D = -(b * i - c * h);
+  const E = a * i - c * g;
+  const F = -(a * h - b * g);
+  const G = b * f - c * e;
+  const H = -(a * f - c * d);
+  const I = a * e - b * d;
+  return [
+    [A / det, D / det, G / det],
+    [B / det, E / det, H / det],
+    [C / det, F / det, I / det],
+  ];
+}
+
+// Cartesian -> fractional: frac = cart · inv(lattice) (cart = frac · lattice, so
+// the .crysviz frame — read back by CrysViz's buildPOSCAR as "Direct" — needs
+// fractional coordinates).
+const cartToFrac = (cart, inv) => [0, 1, 2].map((axis) => cart[0] * inv[0][axis] + cart[1] * inv[1][axis] + cart[2] * inv[2][axis]);
+
+// Element symbol per site: map species_at_sites labels through the `species`
+// list to a real chemical symbol, falling back to the label itself. Every
+// resolved symbol is validated against a bare element pattern — labels are the
+// one free-text field reaching the payload, and a label like "Fe 2+" would
+// corrupt CrysViz's whitespace-delimited POSCAR rebuild. Any failure returns
+// null (→ static-figure fallback).
+const ELEMENT_SYMBOL = /^[A-Z][a-z]?$/;
+function crysvizElements(attributes) {
+  const labels = attributes.species_at_sites;
+  if (!Array.isArray(labels) || !labels.every((label) => typeof label === "string")) return null;
+  const symbols = new Map(arrayValue(attributes.species).map((entry) => [entry?.name, Array.isArray(entry?.chemical_symbols) ? entry.chemical_symbols[0] : null]));
+  const resolved = labels.map((label) => {
+    const mapped = symbols.get(label);
+    return typeof mapped === "string" && mapped ? mapped : label;
+  });
+  return resolved.every((symbol) => ELEMENT_SYMBOL.test(symbol)) ? resolved : null;
+}
+
+// One spin per site (index-aligned to atoms, plus an explicit atomIndex so the
+// viewer resolves them whether it treats the list as index-aligned or manual);
+// absent/null moments become a zero vector (CrysViz skips sub-threshold arrows).
+// Returns null when no per-site moments are available.
+function crysvizSpins(moments, count) {
+  if (!Array.isArray(moments)) return null;
+  const spins = [];
+  for (let index = 0; index < count; index += 1) {
+    const vector = moments[index];
+    // Deliberate: a null / malformed moment becomes a zero vector rather than
+    // dropping the entry — the array stays index-aligned to atoms, and CrysViz's
+    // arrow-magnitude threshold skips the zero vectors, so nothing is drawn.
+    spins.push({ vector: isVec3(vector) ? [vector[0], vector[1], vector[2]] : [0, 0, 0], atomIndex: index });
+  }
+  return spins;
+}
+
+// Build the minimal frames-style `.crysviz` session document, or null when the
+// structure is absent or malformed. `format`/`version` are load-gated by the
+// CrysViz reader; positions are fractional; spinsActive is set only when a
+// nonzero moment is present (so the arrows have something to draw).
+function crysvizPayload(attributes) {
+  const lattice = attributes.lattice_vectors;
+  if (!Array.isArray(lattice) || lattice.length !== 3 || !lattice.every(isVec3)) return null;
+  const inv = invert3x3(lattice);
+  if (!inv) return null;
+  const cart = attributes.cartesian_site_positions;
+  if (!Array.isArray(cart) || !cart.length || !cart.every(isVec3)) return null;
+  const elements = crysvizElements(attributes);
+  if (!elements || elements.length !== cart.length) return null;
+  const spins = crysvizSpins(attributes._httk_site_moments, cart.length);
+  const frame = { elements, lattice: lattice.map((row) => [...row]), positions: cart.map((point) => cartToFrac(point, inv)) };
+  if (spins) frame.spins = spins;
+  const spinsActive = !!spins && spins.some((spin) => spin.vector[0] || spin.vector[1] || spin.vector[2]);
+  return { format: "crysviz", version: "2.16", selectedFrameIndex: 0, frames: [frame], display: { spinsActive } };
+}
+
+// Unicode-safe base64 of the JSON payload (chunked so String.fromCharCode does
+// not overflow its argument limit on large structures).
+function encodeCrysvizPayload(payload) {
+  const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode.apply(null, bytes.subarray(offset, offset + 0x8000));
+  return btoa(binary);
+}
+
+// The iframe src for the interactive structure, or "" to fall back to the static
+// figure (no structure data, malformed base, or encoded URL over the length
+// guard). The widget flag is set with URLSearchParams so a base already carrying
+// a query stays valid; the #load-file hash is then concatenated RAW (only the
+// two halves are percent-encoded — the "|" separator must survive verbatim, so
+// it is never handed to URL for re-encoding).
+function crysvizIframeSrc(attributes, base = crysvizBaseUrl) {
+  const payload = crysvizPayload(attributes);
+  if (!payload) return "";
+  let url;
+  try {
+    url = new URL(base);
+  } catch {
+    return "";
+  }
+  url.hash = "";
+  url.searchParams.set("widget", "1");
+  const src = `${url.toString()}#load-file=${encodeURIComponent("structure.crysviz")}|${encodeURIComponent(encodeCrysvizPayload(payload))}`;
+  return src.length > CRYSVIZ_URL_MAX_CHARS ? "" : src;
+}
+
 function elementsFor(attributes, formula) {
   const supplied = arrayValue(attributes._anyterial_elements);
   if (supplied.length) return supplied.join(", ");
@@ -191,14 +316,29 @@ function buildFigures(attributes, apiBase) {
   let availableCount = 0;
   FIGURE_SPECS.forEach((spec) => {
     const record = records.get(spec.key) || {};
-    const light = record.available === true ? figureUrl(record.url, apiBase) : "";
+    // The structure card becomes the interactive CrysViz iframe when structure
+    // data is present; otherwise it keeps the static-figure/placeholder path.
+    const crysvizSrc = spec.key === "structure" ? crysvizIframeSrc(attributes) : "";
+    const light = crysvizSrc ? "" : record.available === true ? figureUrl(record.url, apiBase) : "";
     const dark = light ? figureUrl(record.dark_url, apiBase) || light : "";
-    const figure = node("figure", `figure-card ${spec.layout}${light ? "" : " is-missing"}`.trim());
+    const layout = crysvizSrc ? "figure-card--wide" : spec.layout;
+    const figure = node("figure", `figure-card ${layout}${light || crysvizSrc ? "" : " is-missing"}`.trim());
     const caption = node("figcaption", "figure-caption");
     caption.append(node("h4", "", spec.title));
     if (spec.summary) caption.append(node("p", "", spec.summary));
     figure.append(caption);
-    if (light) {
+    if (crysvizSrc) {
+      availableCount += 1;
+      const visual = node("div", "figure-visual figure-visual--interactive");
+      const frame = node("iframe", "crysviz-frame");
+      frame.setAttribute("src", crysvizSrc);
+      frame.setAttribute("title", "Interactive crystal structure (CrysViz)");
+      frame.setAttribute("sandbox", "allow-scripts allow-popups allow-popups-to-escape-sandbox");
+      frame.setAttribute("referrerpolicy", "no-referrer");
+      frame.setAttribute("loading", "lazy");
+      visual.append(frame);
+      figure.append(visual);
+    } else if (light) {
       availableCount += 1;
       const visual = node("div", "figure-visual");
       const image = node("img", "theme-aware-figure");
@@ -389,6 +529,7 @@ async function loadShell(shell, Transport = OptimadeTransport) {
     return;
   }
   fieldDescriptions = config.field_info || {};
+  crysvizBaseUrl = config.crysviz_base_url || CRYSVIZ_DEFAULT_BASE;
   const id = new URLSearchParams(window.location.search).get(config.id_query || "id")?.trim() || "";
   if (!id) {
     showNoSelection(shell);
@@ -415,4 +556,4 @@ const start = () => document.querySelectorAll("[data-site-material-detail]").for
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
 else start();
 
-export { figureUrl, loadShell };
+export { crysvizIframeSrc, crysvizPayload, figureUrl, loadShell };

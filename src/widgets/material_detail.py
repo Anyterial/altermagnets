@@ -26,6 +26,11 @@ RESPONSE_FIELDS = (
     "_anyterial_min_crustal_abundance",
     "_anyterial_magndata_variants",
     "_httk_custom_figures",
+    "lattice_vectors",
+    "cartesian_site_positions",
+    "species",
+    "species_at_sites",
+    "_httk_site_moments",
 )
 
 
@@ -33,6 +38,7 @@ def render(context, **props):
     """Render an inert shell that the browser fills from OPTIMADE."""
     del props
     base_url = os.environ.get("ALTERMAGNETS_OPTIMADE_BASE_URL", "/optimade/amdb").rstrip("/") or "/"
+    crysviz_base_url = os.environ.get("ALTERMAGNETS_CRYSVIZ_BASE_URL", "https://crysviz.org/index.html")
     widget_id = escape(context.widget_id, quote=True)
     config_id = escape(f"site-material-detail-{context.widget_id}-config", quote=True)
     definitions = served_structure_definitions()
@@ -43,6 +49,7 @@ def render(context, **props):
     }
     config = {
         "base_url": base_url,
+        "crysviz_base_url": crysviz_base_url,
         "entry_type": "structures",
         "id_query": "id",
         "response_fields": list(RESPONSE_FIELDS),

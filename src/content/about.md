@@ -97,6 +97,8 @@ For licensing information for these software packages, please refer to, e.g., th
 
 **Linked third-party services.** This website contains links to various third-party services that we use, e.g., to post information related to our activities. These third-party services operate as separate entities from this website and our services. Visits to them are subject to their own respective terms of service and privacy policies.
 
+**Interactive structure viewer.** The interactive crystal-structure figure on each material page is rendered by [CrysViz](https://crysviz.org) (AGPL-3.0), embedded in a sandboxed iframe from crysviz.org. The structure and magnetic-moment data are passed to it in the page URL; no additional data is sent.
+
 **Cookies.** This website does not use cookies.
 
 **Website visitor analytics.** We occasionally review aggregated anonymized usage statistics based on webserver log data.

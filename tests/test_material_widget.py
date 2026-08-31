@@ -82,6 +82,12 @@ def test_material_widget_requests_every_attribute_used_by_detail_js() -> None:
         "_anyterial_wave_classes",
         "_httk_dft_band_gap",
         "_httk_magndata_ids",
+        # Structure fields consumed by the CrysViz iframe embed.
+        "lattice_vectors",
+        "cartesian_site_positions",
+        "species",
+        "species_at_sites",
+        "_httk_site_moments",
     }
 
     assert set(config["response_fields"]) == consumed_fields

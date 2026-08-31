@@ -41,12 +41,16 @@ pytestmark = pytest.mark.browser
 
 TIMEOUT_MS = 30_000
 SYNTHETIC_DATA_ENVIRONMENT = "ALTERMAGNETS_BROWSER_SYNTHETIC"
+CRYSVIZ_ENVIRONMENT = "ALTERMAGNETS_CRYSVIZ_BASE_URL"
+# The sibling crysviz checkout's static app, served as a third local origin.
+CRYSVIZ_DOCS = Path(__file__).resolve().parents[2] / "crysviz" / "docs"
 
 
 @dataclass(frozen=True)
 class Origins:
     site_url: str
     api_url: str
+    crysviz_url: str
     browser: Browser
 
 
@@ -190,40 +194,55 @@ def two_origins(tmp_path_factory: pytest.TempPathFactory) -> Origins:
         _unavailable(f"Localhost sockets are unavailable: {error}")
     api_origin = f"http://127.0.0.1:{api_port}"
     api_url = f"{api_origin}/optimade/amdb"
-    static_root = tmp_path_factory.mktemp("static-site")
-    publish_static.publish_site(static_root, optimade_base_url=api_url)
-    static_server, static_thread = _start_static_server(static_root)
-    site_url = f"http://127.0.0.1:{static_server.server_port}"
-    use_synthetic = os.environ.get(SYNTHETIC_DATA_ENVIRONMENT) == "1" or not _has_source_tables()
-    service_app = (
-        _synthetic_app(tmp_path_factory, api_url, site_url)
-        if use_synthetic
-        else build_service_app(public_base_url=api_url, cors_origins=(site_url,))
-    )
-    app = compose_asgi_apps([ASGIAppMount("/optimade/amdb", service_app)])
-    api_server = uvicorn.Server(
-        uvicorn.Config(app, host="127.0.0.1", port=api_port, log_level="warning", access_log=False)
-    )
-    api_thread = threading.Thread(target=api_server.run, daemon=True)
-    api_thread.start()
-    browser = None
+    if not (CRYSVIZ_DOCS / "index.html").is_file():
+        _unavailable(f"Sibling crysviz static app is unavailable at {CRYSVIZ_DOCS}")
+    crysviz_server, crysviz_thread = _start_static_server(CRYSVIZ_DOCS)
+    crysviz_url = f"http://127.0.0.1:{crysviz_server.server_port}"
     try:
-        _wait_until_ready(api_url)
-        with sync_playwright() as playwright:
-            try:
-                browser = playwright.chromium.launch(
-                    headless=True, args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
-                )
-            except PlaywrightError as error:
-                _unavailable(f"Chromium is unavailable: {error}")
-            yield Origins(site_url=site_url, api_url=api_url, browser=browser)
-            browser.close()
+        static_root = tmp_path_factory.mktemp("static-site")
+        previous_crysviz = os.environ.get(CRYSVIZ_ENVIRONMENT)
+        os.environ[CRYSVIZ_ENVIRONMENT] = f"{crysviz_url}/index.html"
+        try:
+            publish_static.publish_site(static_root, optimade_base_url=api_url)
+        finally:
+            if previous_crysviz is None:
+                os.environ.pop(CRYSVIZ_ENVIRONMENT, None)
+            else:
+                os.environ[CRYSVIZ_ENVIRONMENT] = previous_crysviz
+        static_server, static_thread = _start_static_server(static_root)
+        site_url = f"http://127.0.0.1:{static_server.server_port}"
+        use_synthetic = os.environ.get(SYNTHETIC_DATA_ENVIRONMENT) == "1" or not _has_source_tables()
+        service_app = (
+            _synthetic_app(tmp_path_factory, api_url, site_url)
+            if use_synthetic
+            else build_service_app(public_base_url=api_url, cors_origins=(site_url,))
+        )
+        app = compose_asgi_apps([ASGIAppMount("/optimade/amdb", service_app)])
+        api_server = uvicorn.Server(
+            uvicorn.Config(app, host="127.0.0.1", port=api_port, log_level="warning", access_log=False)
+        )
+        api_thread = threading.Thread(target=api_server.run, daemon=True)
+        api_thread.start()
+        browser = None
+        try:
+            _wait_until_ready(api_url)
+            with sync_playwright() as playwright:
+                try:
+                    browser = playwright.chromium.launch(
+                        headless=True, args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+                    )
+                except PlaywrightError as error:
+                    _unavailable(f"Chromium is unavailable: {error}")
+                yield Origins(site_url=site_url, api_url=api_url, crysviz_url=crysviz_url, browser=browser)
+                browser.close()
+        finally:
+            if browser is not None and browser.is_connected():
+                browser.close()
+            api_server.should_exit = True
+            api_thread.join(timeout=15)
+            _stop_static_server(static_server, static_thread)
     finally:
-        if browser is not None and browser.is_connected():
-            browser.close()
-        api_server.should_exit = True
-        api_thread.join(timeout=15)
-        _stop_static_server(static_server, static_thread)
+        _stop_static_server(crysviz_server, crysviz_thread)
 
 
 @pytest.fixture
@@ -611,3 +630,49 @@ def test_cors_rejects_untrusted_origin(two_origins: Origins) -> None:
     _, allowed_headers = _api(two_origins, "/structures", {"page_limit": 1}, headers={"Origin": two_origins.site_url})
     assert denied_headers.get("access-control-allow-origin") != "http://evil.example"
     assert allowed_headers.get("access-control-allow-origin") == two_origins.site_url
+
+
+def _structured_record_ids(origins: Origins) -> tuple[str | None, str | None]:
+    """One material id WITH a served structure and one WITHOUT (null lattice)."""
+    body, _ = _api(origins, "/v1/structures", {"page_limit": 1000, "response_fields": "id,lattice_vectors"})
+    with_structure: str | None = None
+    without_structure: str | None = None
+    for record in body["data"]:
+        has_structure = record["attributes"].get("lattice_vectors") is not None
+        if has_structure and with_structure is None:
+            with_structure = record["id"]
+        elif not has_structure and without_structure is None:
+            without_structure = record["id"]
+        if with_structure is not None and without_structure is not None:
+            break
+    return with_structure, without_structure
+
+
+def test_material_structure_embeds_and_boots_crysviz_iframe(two_origins: Origins, page: Page) -> None:
+    material_id, _ = _structured_record_ids(two_origins)
+    if material_id is None:
+        pytest.fail("The OPTIMADE dataset has no material with a non-null structure to embed in CrysViz")
+    page.goto(f"{two_origins.site_url}/material.html?{urlencode({'id': material_id})}", wait_until="domcontentloaded")
+    frame_element = page.locator("iframe.crysviz-frame")
+    frame_element.wait_for(state="attached", timeout=TIMEOUT_MS)
+    assert frame_element.count() == 1
+    # (a) the sandboxed iframe is present, pointing at the crysviz origin.
+    assert (frame_element.get_attribute("sandbox") or "") == "allow-scripts allow-popups allow-popups-to-escape-sandbox"
+    assert (frame_element.get_attribute("src") or "").startswith(f"{two_origins.crysviz_url}/index.html")
+    # (b) the iframe CONTENT actually boots. Because the sandbox omits
+    # allow-same-origin the frame runs in an opaque origin; body.widget-mode is
+    # set from ?widget=1 and a canvas appears once the #load-file structure loads.
+    frame = page.frame_locator("iframe.crysviz-frame")
+    frame.locator("body.widget-mode").wait_for(state="attached", timeout=TIMEOUT_MS)
+    frame.locator("canvas").first.wait_for(state="visible", timeout=TIMEOUT_MS)
+
+
+def test_material_without_structure_uses_static_fallback(two_origins: Origins, page: Page) -> None:
+    _, material_id = _structured_record_ids(two_origins)
+    if material_id is None:
+        pytest.fail("The OPTIMADE dataset has no material with a null structure for the fallback path")
+    page.goto(f"{two_origins.site_url}/material.html?{urlencode({'id': material_id})}", wait_until="domcontentloaded")
+    page.locator("[data-site-material-detail] h2").wait_for(state="visible", timeout=TIMEOUT_MS)
+    # (c) null structure -> the figure grid renders with no CrysViz iframe.
+    page.locator(".figure-grid").wait_for(state="attached", timeout=TIMEOUT_MS)
+    assert page.locator("iframe.crysviz-frame").count() == 0

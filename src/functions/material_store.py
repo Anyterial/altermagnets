@@ -27,6 +27,8 @@ from httk.atomistic import (
     CartesianSiteMoments,
     UnitcellStructure,
     UnitcellStructureView,
+    conventional_cell,
+    primitive_cell,
 )
 from httk.atomistic.entries.structures import StructureEntry
 from httk.atomistic.storage.records import (
@@ -119,7 +121,7 @@ logger = report.context_logger(logging.getLogger("httk.altermagnets.material_sto
 #: change is treated as stale (falling back to in-memory seeding) instead of being
 #: silently adopted with missing child tables reading as ``None``. Bump on every
 #: stored-record schema change.
-STORE_LAYOUT_VERSION = 6  # bump: magndata_sort_key stored column for sortable _httk_magndata_ids
+STORE_LAYOUT_VERSION = 7  # bump: alternative conventional/primitive cell records
 
 ELEMENT_PATTERN = re.compile(r"[A-Z][a-z]?")
 SCREENING_RESULTS_FILENAME = "high_throughput_screening_results_fixed.csv"
@@ -1798,6 +1800,48 @@ def _entry_records_layout() -> dict[type, type | tuple[type, ...]]:
     }
 
 
+#: The derived-cell alternatives stored beside each main material record.
+_ALTERNATIVE_CELLS: tuple[tuple[str, Callable[[UnitcellStructure], Any]], ...] = (
+    ("conventional", conventional_cell),
+    ("primitive", primitive_cell),
+)
+
+
+def _save_alternative_cells(store: SqlStore, materials: Iterable[MaterialRecord]) -> tuple[int, int]:
+    """Derive and store the conventional/primitive alternatives of each material.
+
+    Bulk ingest is mains-only, so alternatives are saved with ordinary
+    :meth:`SqlStore.save` after the bulk context finalizes: each shares its
+    main's public id, carries the same scalar metadata, and gets its own
+    lineage under an immutable ``<id>~<kind>~<n>``. A derivation that raises
+    :class:`ValueError` (a magnetic supercell, or a site-moment correspondence
+    failure) skips only that kind, with a warning naming the material and kind.
+
+    :return: The ``(derived, skipped)`` counts across every material and kind.
+    """
+    derived = skipped = 0
+    for material in materials:
+        structure = material_structure(material)
+        if structure is None:
+            continue
+        assert material.id is not None  # always set to the amdb id at construction
+        for kind, derive in _ALTERNATIVE_CELLS:
+            try:
+                cell = derive(structure).structure
+            except ValueError as error:
+                skipped += 1
+                logger.warning("Skipping %s alternative for %s: %s", kind, material.id, error)
+                continue
+            store.save(
+                replace(material, structure=_material_structure_record(cell)),
+                alternative_of=material.id,
+                alternative_kind=kind,
+            )
+            derived += 1
+    logger.info("Stored %d alternative cell records, skipped %d derivations", derived, skipped)
+    return derived, skipped
+
+
 def build_store(
     target: str | os.PathLike[str] | None = None,
     *,
@@ -1956,6 +2000,9 @@ def build_store(
                 bulk.save(material)
             for doi in dict.fromkeys(doi for material in materials for doi in material.dois):
                 bulk.save(AltermagnetReferenceRecord((rid := _reference_id(doi)), doi, id=rid))
+        if not legacy:
+            # Alternatives are saved after the mains-only bulk context finalizes.
+            _save_alternative_cells(store, materials)
         write_elapsed = time.perf_counter() - write_started
         finalize_started = time.perf_counter()
         created_database.dispose()

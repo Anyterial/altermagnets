@@ -101,6 +101,35 @@ def test_stale_layout_store_is_rejected_and_falls_back(tmp_path: Path, monkeypat
         fallback.database.dispose()
 
 
+def test_build_stores_conventional_and_primitive_alternatives(tmp_path: Path) -> None:
+    source = write_source_tables(tmp_path / "tables")
+    details = write_detail_assets(tmp_path / "details")
+    store_path = build_store(
+        tmp_path / "store.duckdb", data_dir=source, details_dir=details, runs_dir=tmp_path / "runs"
+    )
+    opened = open_prebuilt_store(store_path)
+    assert opened is not None
+    try:
+
+        def immutable_ids(*, only_main_alt: bool) -> set[str]:
+            searcher = opened.store.searcher(only_main_alt=only_main_alt)
+            material = searcher.variable(MaterialRecord)
+            return {record["material"].immutable_id for record in searcher.results(material=material)}
+
+        mains = immutable_ids(only_main_alt=True)
+        every = immutable_ids(only_main_alt=False)
+        # Default (mains-only) queries hide the alternatives; asking for them reveals more.
+        assert mains == immutable_ids(only_main_alt=True) == {"anyt.am-1-1~1", "anyt.am-1-2~1", "anyt.am-1-3~1"}
+        alternatives = every - mains
+        # Not silently alternatives-free: the fixture cells derive both kinds.
+        assert alternatives, "build stored no alternative cell records"
+        assert alternatives == {
+            f"anyt.am-1-{number}~{kind}~1" for number in (1, 2, 3) for kind in ("conventional", "primitive")
+        }
+    finally:
+        opened.database.dispose()
+
+
 def test_build_reports_structure_summary(tmp_path: Path, caplog) -> None:
     source = write_source_tables(tmp_path / "tables")
     details = write_detail_assets(tmp_path / "details")

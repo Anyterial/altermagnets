@@ -153,8 +153,10 @@ test("material detail renders payload, safe figures, links, references, and aggr
   assert.equal(result.querySelectorAll("a").some((link) => link.getAttribute("href") === "https://doi.org/10.1234/%C3%BCber"), true);
   assert.equal(result.innerHTML.includes("<script>alert(1)</script>"), false);
   assert.equal(result.innerHTML.includes('<img src="x">'), false);
-  assert.equal(network.requests.at(-1).searchParams.get("include"), "references");
-  assert.equal(network.requests.at(-1).pathname, `/optimade/amdb/v1/structures/${encodeURIComponent(MATERIAL_ID)}`);
+  const oneRequest = network.requests.find((url) => url.pathname === `/optimade/amdb/v1/structures/${encodeURIComponent(MATERIAL_ID)}`);
+  assert.ok(oneRequest, "the single-entry request was issued");
+  assert.equal(oneRequest.searchParams.get("include"), "references");
+  assert.ok(network.requests.some((url) => url.pathname.endsWith("/_httk_alts")), "the alternatives request was issued");
   assert.equal(document.baseURI, "https://site.example.test/material");
 });
 
@@ -347,4 +349,105 @@ test("crysvizIframeSrc keeps a query-carrying base valid and the hash raw", () =
   // The load-file separator survives as a raw "|" between the two encoded halves.
   const hash = src.split("#load-file=", 2)[1];
   assert.equal(hash.split("|").length, 2);
+});
+
+// --- Alternative conventional/primitive cell frames ---
+
+function altResource(id, positions) {
+  return {
+    id,
+    type: "structures",
+    attributes: {
+      lattice_vectors: [[2, 0, 0], [0, 2, 0], [0, 0, 2]],
+      cartesian_site_positions: positions,
+      species: [{ name: "Fe", chemical_symbols: ["Fe"] }],
+      species_at_sites: positions.map(() => "Fe"),
+      _httk_site_moments: null,
+    },
+  };
+}
+
+// Wrap fetchFor so the per-group `_httk_alts` collection returns a valid page.
+function fetchForWithAlts(resource, alternatives) {
+  const base = fetchFor(resource);
+  const fetch = async (request) => {
+    const url = new URL(request);
+    if (url.pathname.endsWith("/_httk_alts")) {
+      base.requests.push(url);
+      return jsonResponse({ meta: { api_version: "1.3.0" }, data: alternatives }, url.href);
+    }
+    return base.fetch(request);
+  };
+  return { fetch, requests: base.requests };
+}
+
+test("altKind parses the composite id suffix and rejects a non-identifier suffix", () => {
+  assert.equal(material.altKind("anyt.am-1-1~conventional"), "conventional");
+  assert.equal(material.altKind("anyt.am-1-1~primitive"), "primitive");
+  assert.equal(material.altKind("anyt.am-1-1~a~b_2"), "b_2"); // suffix after the LAST "~"
+  assert.equal(material.altKind("anyt.am-1-1"), null); // no suffix at all
+  assert.equal(material.altKind("anyt.am-1-1~Conventional"), null); // uppercase is not a bare kind
+  assert.equal(material.altKind("anyt.am-1-1~2d"), null); // must start with a letter
+  assert.equal(material.altKind("anyt.am-1-1~"), null); // empty suffix
+});
+
+test("crysvizPayload appends alternative frames in the given order with frameKinds", () => {
+  // crysvizPayload preserves the caller's order (fetchAlternatives is what sorts).
+  const payload = material.crysvizPayload(structureAttributes(), [
+    { kind: "conventional", attributes: altResource("x~conventional", [[0, 0, 0]]).attributes },
+    { kind: "primitive", attributes: altResource("x~primitive", [[1, 1, 1]]).attributes },
+  ]);
+  assert.deepEqual(payload.frameKinds, ["loaded", "conventional", "primitive"]);
+  assert.equal(payload.frames.length, 3);
+  assert.deepEqual(payload.frames[1].positions, [[0, 0, 0]]);
+  assert.deepEqual(payload.frames[2].positions, [[0.5, 0.5, 0.5]]);
+  // A malformed alternative frame is skipped, not fatal.
+  const partial = material.crysvizPayload(structureAttributes(), [
+    { kind: "conventional", attributes: { lattice_vectors: null } },
+    { kind: "primitive", attributes: altResource("x~primitive", [[1, 1, 1]]).attributes },
+  ]);
+  assert.deepEqual(partial.frameKinds, ["loaded", "primitive"]);
+  // A single-frame payload (no alternatives) stays byte-identical: no frameKinds.
+  assert.equal("frameKinds" in material.crysvizPayload(structureAttributes()), false);
+});
+
+test("structure card embeds conventional and primitive alternative frames with frameKinds", async () => {
+  const resource = { id: MATERIAL_ID, type: "structures", attributes: structureAttributes() };
+  const alternatives = [
+    altResource(`${MATERIAL_ID}~primitive`, [[1, 1, 1]]),
+    altResource(`${MATERIAL_ID}~conventional`, [[0, 0, 0]]),
+  ];
+  const { result } = shell({ crysviz_base_url: CRYSVIZ_BASE });
+  const network = fetchForWithAlts(resource, alternatives);
+  globalThis.fetch = network.fetch;
+  await material.loadShell(result, OptimadeTransport);
+  const alt = network.requests.find((url) => url.pathname.endsWith("/_httk_alts"));
+  assert.ok(alt, "the alternatives collection was requested");
+  assert.equal(alt.searchParams.get("page_limit"), "8");
+  assert.equal(alt.searchParams.get("response_fields"), "lattice_vectors,cartesian_site_positions,species,species_at_sites,_httk_site_moments");
+  const frame = result.querySelectorAll("iframe.crysviz-frame")[0];
+  assert.ok(frame, "the structure iframe is present");
+  const { payload } = decodeCrysvizSrc(frame.getAttribute("src"));
+  assert.deepEqual(payload.frameKinds, ["loaded", "conventional", "primitive"]);
+  assert.equal(payload.frames.length, 3);
+  assert.deepEqual(payload.frames[1].positions, [[0, 0, 0]]);
+  assert.deepEqual(payload.frames[2].positions, [[0.5, 0.5, 0.5]]);
+  assert.equal(payload.display.spinsActive, true);
+});
+
+test("structure card falls back to a single loaded frame when the alternatives request fails", async () => {
+  const resource = { id: MATERIAL_ID, type: "structures", attributes: structureAttributes() };
+  const { result } = shell({ crysviz_base_url: CRYSVIZ_BASE });
+  const network = fetchFor(resource);
+  globalThis.fetch = async (request) => {
+    const url = new URL(request);
+    if (url.pathname.endsWith("/_httk_alts")) throw new Error("alternatives offline");
+    return network.fetch(request);
+  };
+  await material.loadShell(result, OptimadeTransport);
+  const frame = result.querySelectorAll("iframe.crysviz-frame")[0];
+  assert.ok(frame, "the loaded structure still renders");
+  const { payload } = decodeCrysvizSrc(frame.getAttribute("src"));
+  assert.equal(payload.frames.length, 1);
+  assert.equal("frameKinds" in payload, false);
 });

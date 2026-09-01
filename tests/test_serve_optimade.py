@@ -211,6 +211,49 @@ def test_store_native_service_is_live_and_does_not_own_caller_store(tmp_path: Pa
     opened.database.dispose()
 
 
+def test_httk_alts_routes_serve_composite_alternatives(tmp_path: Path) -> None:
+    """The real store-backed adapter must serve the derived-cell alternatives.
+
+    Regression for the deployment path: ``AltermagnetStoreAdapter`` wraps the
+    generic engine adapter, so its query seam must accept the engine's
+    ``alternatives``/``immutable_id`` kwargs (else every ``_httk_alts`` request is
+    a 500) and must not rewrite the composite ``<id>~<kind>`` id back to the
+    shared public id (else the client cannot parse the kind).
+    """
+    source = write_source_tables(tmp_path / "tables")
+    details = write_detail_assets(tmp_path / "details")
+    store_path = material_store.build_store(
+        tmp_path / "store.duckdb", data_dir=source, details_dir=details, runs_dir=tmp_path / "runs"
+    )
+    opened = material_store.open_prebuilt_store(store_path)
+    assert opened is not None
+    app = build_service_app(
+        public_base_url="https://api.example.test/optimade/amdb",
+        store=opened.store,
+        details_root=details,
+    )
+    try:
+        with TestClient(app, base_url="http://testserver") as live:
+            group = live.get("/v1/structures/anyt.am-1-1/_httk_alts")
+            assert group.status_code == 200, group.text
+            payload = group.json()
+            assert {item["id"] for item in payload["data"]} == {
+                "anyt.am-1-1~conventional",
+                "anyt.am-1-1~primitive",
+            }
+            assert {item["type"] for item in payload["data"]} == {"structures"}
+            assert {item["attributes"]["_httk_id"] for item in payload["data"]} == {"anyt.am-1-1"}
+            assert {item["attributes"]["_httk_kind"] for item in payload["data"]} == {"conventional", "primitive"}
+            assert payload["meta"]["data_returned"] == 2
+
+            single = live.get("/v1/structures/anyt.am-1-1/_httk_alts/conventional")
+            assert single.status_code == 200, single.text
+            assert single.json()["data"]["id"] == "anyt.am-1-1~conventional"
+            assert single.json()["data"]["attributes"]["_httk_kind"] == "conventional"
+    finally:
+        opened.database.dispose()
+
+
 # The 9 direct MaterialRecord projections the site's search table requests; none is
 # nested under the structure sub-record, so serving them must never SELECT it.
 SEARCH_TABLE_COLUMNS = (

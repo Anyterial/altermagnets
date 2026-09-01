@@ -140,10 +140,18 @@ class AltermagnetStoreAdapter:
             *,
             as_of: int | None = None,
             sort: Sequence[tuple[str, bool]] | None = None,
+            revisions: bool = False,
+            alternatives: bool = False,
+            immutable_id: str | None = None,
             debug: bool = False,
         ) -> _LiveResults:
             entry_type = entries[0] if len(entries) == 1 else ""
             remapped = entry_type in {"structures", "references"}
+            # On the revisions/alternatives routes the engine synthesizes its own
+            # id/_httk_id filters and the backend returns composite <id>~<kind> (or
+            # per-revision) ids; leave those untouched so the public-id remap does
+            # not mangle the synthesized filters or clobber the composite id.
+            id_remapped = remapped and not (revisions or alternatives)
             requested = set(response_fields)
             fields = list(response_fields)
             if remapped and _PUBLIC_ID not in fields:
@@ -151,7 +159,7 @@ class AltermagnetStoreAdapter:
             if entry_type == "structures" and _REFERENCE_IDS not in fields:
                 fields.append(_REFERENCE_IDS)
             store_sort = tuple(
-                (_PUBLIC_ID if name == "id" and remapped else name, descending) for name, descending in (sort or ())
+                (_PUBLIC_ID if name == "id" and id_remapped else name, descending) for name, descending in (sort or ())
             )
             source = query(
                 entries,
@@ -159,16 +167,19 @@ class AltermagnetStoreAdapter:
                 unknown_response_fields,
                 page_limit,
                 page_offset,
-                _rewrite_id_filter(filter_ast) if remapped else filter_ast,
+                _rewrite_id_filter(filter_ast) if id_remapped else filter_ast,
                 as_of=as_of,
                 sort=store_sort,
+                revisions=revisions,
+                alternatives=alternatives,
+                immutable_id=immutable_id,
                 debug=debug,
             )
             rows: list[ResultRow] = []
             for row in source:
                 values = dict(row.values)
                 public_id = values.get(_PUBLIC_ID)
-                if remapped and isinstance(public_id, str):
+                if id_remapped and isinstance(public_id, str):
                     values["id"] = public_id
                 reference_ids = values.pop(_REFERENCE_IDS, None)
                 if _PUBLIC_ID not in requested:

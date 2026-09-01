@@ -48,6 +48,15 @@ const CRYSVIZ_DEFAULT_BASE = "https://crysviz.org/index.html";
 const CRYSVIZ_URL_MAX_CHARS = 65536;
 let crysvizBaseUrl = CRYSVIZ_DEFAULT_BASE;
 
+// Alternative derived-cell frames (conventional/primitive) are fetched from the
+// per-group `_httk_alts` collection with a narrow structure-only transport. The
+// page limit is small and hardcoded: a group holds at most one latest revision
+// per kind, so a handful of resources always fit.
+const ALT_STRUCTURE_FIELDS = ["lattice_vectors", "cartesian_site_positions", "species", "species_at_sites", "_httk_site_moments"];
+const ALT_PAGE_LIMIT = 8;
+// Canonical frame order after the loaded cell; unknown kinds keep fetch order.
+const ALT_KIND_ORDER = ["conventional", "primitive"];
+
 const node = (tag, className = "", value = null) => {
   const result = document.createElement(tag);
   if (className) result.className = className;
@@ -239,11 +248,11 @@ function crysvizSpins(moments, count) {
   return spins;
 }
 
-// Build the minimal frames-style `.crysviz` session document, or null when the
-// structure is absent or malformed. `format`/`version` are load-gated by the
-// CrysViz reader; positions are fractional; spinsActive is set only when a
-// nonzero moment is present (so the arrows have something to draw).
-function crysvizPayload(attributes) {
+// Build one `.crysviz` frame (fractional positions, optional spins) from a
+// resource's structure attributes, or null when the structure is absent or
+// malformed. `spinsActive` is true only when a nonzero moment is present (so
+// the arrows have something to draw).
+function crysvizFrame(attributes) {
   const lattice = attributes.lattice_vectors;
   if (!Array.isArray(lattice) || lattice.length !== 3 || !lattice.every(isVec3)) return null;
   const inv = invert3x3(lattice);
@@ -256,7 +265,32 @@ function crysvizPayload(attributes) {
   const frame = { elements, lattice: lattice.map((row) => [...row]), positions: cart.map((point) => cartToFrac(point, inv)) };
   if (spins) frame.spins = spins;
   const spinsActive = !!spins && spins.some((spin) => spin.vector[0] || spin.vector[1] || spin.vector[2]);
-  return { format: "crysviz", version: "2.16", selectedFrameIndex: 0, frames: [frame], display: { spinsActive } };
+  return { frame, spinsActive };
+}
+
+// Build the frames-style `.crysviz` session document, or null when the loaded
+// structure is absent or malformed. `format`/`version` are load-gated by the
+// CrysViz reader. The loaded frame comes first; each derived alternative
+// ({ kind, attributes }) that yields a valid frame is appended in order, and a
+// top-level `frameKinds` (["loaded", ...present kinds]) is emitted only when at
+// least one alternative frame was added — so a single-frame payload stays byte
+// -identical and the widget keeps its in-browser Cell fallback.
+function crysvizPayload(attributes, alternatives = []) {
+  const loaded = crysvizFrame(attributes);
+  if (!loaded) return null;
+  const frames = [loaded.frame];
+  const frameKinds = ["loaded"];
+  let spinsActive = loaded.spinsActive;
+  for (const alternative of Array.isArray(alternatives) ? alternatives : []) {
+    const built = crysvizFrame(alternative.attributes || {});
+    if (!built) continue;
+    frames.push(built.frame);
+    frameKinds.push(alternative.kind);
+    spinsActive = spinsActive || built.spinsActive;
+  }
+  const payload = { format: "crysviz", version: "2.16", selectedFrameIndex: 0, frames, display: { spinsActive } };
+  if (frames.length > 1) payload.frameKinds = frameKinds;
+  return payload;
 }
 
 // Unicode-safe base64 of the JSON payload (chunked so String.fromCharCode does
@@ -274,8 +308,8 @@ function encodeCrysvizPayload(payload) {
 // a query stays valid; the #load-file hash is then concatenated RAW (only the
 // two halves are percent-encoded — the "|" separator must survive verbatim, so
 // it is never handed to URL for re-encoding).
-function crysvizIframeSrc(attributes, base = crysvizBaseUrl) {
-  const payload = crysvizPayload(attributes);
+function crysvizIframeSrc(attributes, base = crysvizBaseUrl, alternatives = []) {
+  const payload = crysvizPayload(attributes, alternatives);
   if (!payload) return "";
   let url;
   try {
@@ -310,7 +344,7 @@ function sourceLabel(source) {
   return CLASSIFICATION_LABELS[source] || "No symmetry table entry";
 }
 
-function buildFigures(attributes, apiBase) {
+function buildFigures(attributes, apiBase, alternatives = []) {
   const records = new Map(arrayValue(attributes._httk_custom_figures).map((item) => [item.key, item]));
   const grid = node("div", "figure-grid");
   let availableCount = 0;
@@ -318,7 +352,7 @@ function buildFigures(attributes, apiBase) {
     const record = records.get(spec.key) || {};
     // The structure card becomes the interactive CrysViz iframe when structure
     // data is present; otherwise it keeps the static-figure/placeholder path.
-    const crysvizSrc = spec.key === "structure" ? crysvizIframeSrc(attributes) : "";
+    const crysvizSrc = spec.key === "structure" ? crysvizIframeSrc(attributes, crysvizBaseUrl, alternatives) : "";
     const light = crysvizSrc ? "" : record.available === true ? figureUrl(record.url, apiBase) : "";
     const dark = light ? figureUrl(record.dark_url, apiBase) || light : "";
     const layout = crysvizSrc ? "figure-card--wide" : spec.layout;
@@ -427,7 +461,7 @@ function buildVariantCards(variants) {
   return list;
 }
 
-function buildDetail(resource, included, apiBase) {
+function buildDetail(resource, included, apiBase, alternatives = []) {
   const attributes = resource.attributes || {};
   const formula = attributes.chemical_formula_reduced || attributes._anyterial_formula || "";
   const ids = arrayValue(attributes._httk_magndata_ids).map(String);
@@ -482,7 +516,7 @@ function buildDetail(resource, included, apiBase) {
 
   const figureSection = section("Figures");
   const figureHeading = node("div", "detail-figure-heading");
-  const figureResult = buildFigures(attributes, apiBase);
+  const figureResult = buildFigures(attributes, apiBase, alternatives);
   figureHeading.append(node("h3", "", "Figures"), node("p", "section-note", `${figureResult.availableCount} of ${FIGURE_SPECS.length} detail figures available from the mounted calculation archive.`));
   figureSection.replaceChildren(figureHeading, figureResult.grid);
   article.append(figureSection);
@@ -518,6 +552,43 @@ function showNoSelection(shell) {
   shell.setAttribute("aria-busy", "false");
 }
 
+// The kind of an alternative resource, parsed from its composite id suffix
+// after the last "~" (e.g. "anyt.am-1-1~conventional" -> "conventional"), or
+// null when there is no suffix or it is not a bare snake_case identifier.
+function altKind(id) {
+  if (typeof id !== "string") return null;
+  const index = id.lastIndexOf("~");
+  if (index < 0) return null;
+  const kind = id.slice(index + 1);
+  return /^[a-z][a-z0-9_]*$/.test(kind) ? kind : null;
+}
+
+// Fetch the group's derived-cell alternatives with a second, narrow structure
+// -only transport. Returns the ordered [{ kind, attributes }] frames, or null
+// on any network/validation failure so the caller falls back to the loaded
+// -only payload without ever blocking the page.
+async function fetchAlternatives(Transport, config, apiBaseUrl, id) {
+  try {
+    const transport = new Transport(
+      { base_url: config.base_url, entry_type: "structures", response_fields: ALT_STRUCTURE_FIELDS, page_size: ALT_PAGE_LIMIT },
+      { documentBase: document.baseURI },
+    );
+    const fields = encodeURIComponent(ALT_STRUCTURE_FIELDS.join(","));
+    const nextUrl = `${apiBaseUrl.replace(/\/+$/, "")}/structures/${encodeURIComponent(id)}/_httk_alts?response_fields=${fields}&page_limit=${ALT_PAGE_LIMIT}`;
+    const page = await transport.fetchPage({ nextUrl });
+    const alternatives = [];
+    for (const resource of page.resources) {
+      const kind = altKind(resource.id);
+      if (kind) alternatives.push({ kind, attributes: resource.attributes || {} });
+    }
+    const rank = (kind) => (ALT_KIND_ORDER.indexOf(kind) + 1 || ALT_KIND_ORDER.length + 1);
+    return alternatives.sort((a, b) => rank(a.kind) - rank(b.kind));
+  } catch (error) {
+    console.error("Alternative cells OPTIMADE request failed", error);
+    return null;
+  }
+}
+
 async function loadShell(shell, Transport = OptimadeTransport) {
   const configNode = shell.querySelector('script[type="application/json"]');
   let config;
@@ -543,7 +614,8 @@ async function loadShell(shell, Transport = OptimadeTransport) {
       return;
     }
     const discovery = await transport.discover();
-    shell.replaceChildren(buildDetail(result.resource, result.included, discovery.apiBaseUrl));
+    const alternatives = await fetchAlternatives(Transport, config, discovery.apiBaseUrl, id);
+    shell.replaceChildren(buildDetail(result.resource, result.included, discovery.apiBaseUrl, alternatives));
     shell.setAttribute("aria-busy", "false");
     window.altermagnetsUi?.initSubtree(shell);
   } catch (error) {
@@ -556,4 +628,4 @@ const start = () => document.querySelectorAll("[data-site-material-detail]").for
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
 else start();
 
-export { crysvizIframeSrc, crysvizPayload, figureUrl, loadShell };
+export { altKind, crysvizIframeSrc, crysvizPayload, figureUrl, loadShell };

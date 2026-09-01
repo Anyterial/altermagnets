@@ -18,7 +18,7 @@ def test_persistent_build_reconstructs_ordered_links_and_variants(material_store
     try:
         searcher = opened.store.searcher()
         material = searcher.variable(MaterialRecord)
-        searcher.add(material.id == "anyt:am-1-0001")
+        searcher.add(material.id == "anyt.am-1-1")
         record = searcher.results(material=material).one()["material"]
         assert [link.ordinal for link in record.links] == [1, 2]
         assert [link.record.id for link in record.links] == ["0.528", "0.800"]
@@ -54,7 +54,7 @@ def test_builder_rejects_duplicates_and_nonfinite_values(tmp_path: Path) -> None
     records = build_material_records(
         [
             {
-                "AMDBId": "anyt:am-1-0001",
+                "AMDBId": "anyt.am-1-1",
                 "MAGNDATA ID": "0.900",
                 "Material": "Fe_As",
                 "Space group": "P4/nmm",
@@ -81,7 +81,7 @@ def test_builder_rejects_duplicates_and_nonfinite_values(tmp_path: Path) -> None
     try:
         build_store(tmp_path / "duplicate.duckdb", data_dir=source, legacy=True)
     except ValueError as error:
-        assert "duplicate canonical material ID 'anyt:am-1-0001'" in str(error)
+        assert "duplicate canonical material ID 'anyt.am-1-1'" in str(error)
     else:
         raise AssertionError("duplicate material ID was accepted")
 
@@ -119,7 +119,7 @@ def test_runtime_falls_back_when_persistent_store_has_the_old_schema(tmp_path: P
         assert opened.mode == "memory"
         searcher = opened.store.searcher()
         material = searcher.variable(MaterialRecord)
-        searcher.add(material.id == "anyt:am-1-0001")
+        searcher.add(material.id == "anyt.am-1-1")
         record = searcher.results(material=material).first()
         assert record is not None
         assert [figure.key for figure in record["material"].figures] == ["band"]

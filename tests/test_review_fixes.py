@@ -49,7 +49,7 @@ def _is_optimade_error(response) -> bool:
 
 
 def test_internal_public_id_is_not_filterable_on_structures(client: TestClient) -> None:
-    response = client.get("/v1/structures", params={"filter": '_httk_custom_public_id="anyt:am-1-0001"'})
+    response = client.get("/v1/structures", params={"filter": '_httk_custom_public_id="anyt.am-1-1"'})
     assert response.status_code == 400
     assert _is_optimade_error(response)
 
@@ -60,9 +60,9 @@ def test_public_id_filter_drives_internal_remap_and_returns_row(client: TestClie
     # and must still serve the row, while a direct external filter on
     # _httk_custom_public_id (above) still 400s. This exercises the internal remap
     # path that broke earlier; a non-id filter would not.
-    response = client.get("/v1/structures", params={"filter": 'id="anyt:am-1-0001"', "response_fields": "id"})
+    response = client.get("/v1/structures", params={"filter": 'id="anyt.am-1-1"', "response_fields": "id"})
     assert response.status_code == 200
-    assert [item["id"] for item in response.json()["data"]] == ["anyt:am-1-0001"]
+    assert [item["id"] for item in response.json()["data"]] == ["anyt.am-1-1"]
 
 
 def test_unusable_prebuilt_store_is_rejected_with_a_logged_reason(

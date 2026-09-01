@@ -176,7 +176,7 @@ def test_run_and_details_moments_share_content_id(tmp_path: Path) -> None:
     # The whole design rests on the run-ingested and details-built structures having
     # one content id for the same CONTCAR bytes and moment list.
     details = write_detail_assets(tmp_path / "details")
-    from_details = load_material_structure(details, "anyt:am-1-0001")
+    from_details = load_material_structure(details, "anyt.am-1-1")
     assert from_details is not None and from_details.site_moments is not None
     shard = details / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001"
     with bz2.open(shard / "MAGN.bz2", "rt", encoding="utf-8") as handle:

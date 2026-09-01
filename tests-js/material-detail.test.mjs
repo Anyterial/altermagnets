@@ -8,7 +8,7 @@ import { pathToFileURL } from "node:url";
 import { DomDocument, element, installDom } from "./dom.mjs";
 
 const API = "https://api.example.test/optimade/amdb";
-const MATERIAL_ID = "anyt:am-1/0001";
+const MATERIAL_ID = "anyt.am-1/0001";
 const siblingProtocol = new URL("../../httk-serve/src/httk/serve/web/assets/serve-optimade-table-protocol.mjs", import.meta.url);
 
 function resolveProtocolImport() {

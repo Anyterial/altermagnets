@@ -5,14 +5,14 @@ import httpx
 from httk.serve.web import create_asgi_app
 
 ROOT = Path(__file__).resolve().parents[1]
-PRIMARY_MATERIAL_ID = "anyt:am-1-0001"
+PRIMARY_MATERIAL_ID = "anyt.am-1-1"
 DETAIL_ASSET_PATHS = [
     ROOT / "data" / "details" / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001" / "band.svg",
     ROOT / "data" / "details" / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001" / "band.png",
-    ROOT / "data" / "details" / "amdb-1" / "0" / "00" / "000" / "anyt:am-1-0001" / "band.svg",
-    ROOT / "data" / "details" / "amdb-1" / "0" / "00" / "000" / "anyt:am-1-0001" / "band.png",
-    ROOT / "data" / "details" / "am-1" / "0" / "00" / "000" / "anyt:am-1-0001" / "band.svg",
-    ROOT / "data" / "details" / "am-1" / "0" / "00" / "000" / "anyt:am-1-0001" / "band.png",
+    ROOT / "data" / "details" / "amdb-1" / "0" / "00" / "000" / "anyt.am-1-1" / "band.svg",
+    ROOT / "data" / "details" / "amdb-1" / "0" / "00" / "000" / "anyt.am-1-1" / "band.png",
+    ROOT / "data" / "details" / "am-1" / "0" / "00" / "000" / "anyt.am-1-1" / "band.svg",
+    ROOT / "data" / "details" / "am-1" / "0" / "00" / "000" / "anyt.am-1-1" / "band.png",
 ]
 
 
@@ -34,7 +34,7 @@ def test_home_page_renders_static_placeholders_and_without_cookies() -> None:
     assert "Altermagnets Database" in response.text
     assert 'data-site-stat="total">—' in response.text
     assert "site-stats.mjs" in response.text
-    assert 'href="./material?id=anyt:am-1-0001"' in response.text
+    assert 'href="./material?id=anyt.am-1-1"' in response.text
     assert response.headers.get("set-cookie") is None
 
 
@@ -42,8 +42,8 @@ def test_highlights_page_renders_curated_static_cards() -> None:
     response = _request("/highlights")
 
     assert response.status_code == 200
-    assert 'href="./material?id=anyt:am-1-0005"' in response.text
-    assert 'href="./material?id=anyt:am-1-0101"' in response.text
+    assert 'href="./material?id=anyt.am-1-5"' in response.text
+    assert 'href="./material?id=anyt.am-1-101"' in response.text
     assert "current snapshot leader" in response.text
 
 

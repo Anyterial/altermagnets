@@ -60,7 +60,7 @@ def test_combined_discovery_mounts_index_and_amdb_and_paginates() -> None:
     assert configuration["entry_type"] == "structures"
     assert configuration["filter_query"] == "filter"
     assert configuration["sort_query"] == "sort"
-    assert configuration["sort_aliases"]["screening_rank"] == "id"
+    assert configuration["sort_aliases"]["screening_rank"] == "_anyterial_screening_rank"
     assert configuration["detail_route"] == "material"
     assert configuration["detail_column"] == "_anyterial_formula"
     assert configuration["detail_query"] == "id"
@@ -213,7 +213,7 @@ def test_combined_figure_route_and_nested_public_base() -> None:
         response = client.get(
             "/optimade/amdb/v1/structures",
             params={
-                "filter": 'id = "anyt:am-1-0001"',
+                "filter": 'id = "anyt.am-1-1"',
                 "response_fields": "_httk_custom_figures",
             },
         )
@@ -222,7 +222,7 @@ def test_combined_figure_route_and_nested_public_base() -> None:
         figure = next(item for item in figures if item["key"] == "structure")
         assert figure["url"].startswith("http://127.0.0.1:8080/optimade/amdb/extensions/figures/")
         served = client.get(urlsplit(figure["url"]).path)
-        old_route = client.get("/optimade/amdb/figures/anyt:am-1-0001/structure.svg")
+        old_route = client.get("/optimade/amdb/figures/anyt.am-1-1/structure.svg")
 
     assert served.status_code == 200
     assert served.headers["content-type"] == "image/svg+xml"

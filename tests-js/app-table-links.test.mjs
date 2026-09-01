@@ -60,7 +60,7 @@ async function loadApp() {
   return { document, window };
 }
 
-const HREF = "/material?id=anyt%3Aam-1-0001";
+const HREF = "/material?id=anyt.am-1-1";
 
 // Build the row shape the httk-serve widget emits: nine cells, the first a detail anchor.
 function buildTable(document) {

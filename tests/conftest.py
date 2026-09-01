@@ -69,7 +69,7 @@ def write_source_tables(directory: Path, *, material_count: int = 3) -> Path:
         ("AMDBId", "MAGNDATA ID", "Material", "Space group", "FdeltaPct", "MaxSS", "AvgSS", "Bandgap", "MinAbundPpm"),
         [
             {
-                "AMDBId": "anyt:am-1-0001",
+                "AMDBId": "anyt.am-1-1",
                 "MAGNDATA ID": "0.528,0.800",
                 "Material": "CrSb",
                 "Space group": "P6_3/mmc",
@@ -80,7 +80,7 @@ def write_source_tables(directory: Path, *, material_count: int = 3) -> Path:
                 "MinAbundPpm": "0.2",
             },
             {
-                "AMDBId": "anyt:am-1-0002",
+                "AMDBId": "anyt.am-1-2",
                 "MAGNDATA ID": "0.800",
                 "Material": "MnTe",
                 "Space group": "P6_3/mmc",
@@ -91,7 +91,7 @@ def write_source_tables(directory: Path, *, material_count: int = 3) -> Path:
                 "MinAbundPpm": "0.001",
             },
             {
-                "AMDBId": "anyt:am-1-0003",
+                "AMDBId": "anyt.am-1-3",
                 "MAGNDATA ID": "0.900",
                 "Material": "P6Fe_As",
                 "Space group": "P4/nmm",
@@ -125,7 +125,7 @@ def write_source_tables(directory: Path, *, material_count: int = 3) -> Path:
             for index in range(4, material_count + 1):
                 writer.writerow(
                     {
-                        "AMDBId": f"anyt:am-1-{index:04d}",
+                        "AMDBId": f"anyt.am-1-{index}",
                         "MAGNDATA ID": f"synthetic-{index:04d}",
                         "Material": f"Fe{index}O",
                         "Space group": "P4/nmm",

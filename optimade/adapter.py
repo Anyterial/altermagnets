@@ -21,6 +21,7 @@ SORTABLE_PROPERTIES = {
         "_anyterial_spin_splitting_fraction",
         "_httk_dft_band_gap",
         "_anyterial_min_crustal_abundance",
+        "_anyterial_screening_rank",
     )
 }
 

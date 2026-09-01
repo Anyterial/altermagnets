@@ -105,6 +105,10 @@ EXPECTED_DEFINITION_PROVENANCE = {
         "https://schemas.anyterial.se/defs/v0.1/properties/altermagnets/min_crustal_abundance",
         "min_crustal_abundance",
     ),
+    "_anyterial_screening_rank": (
+        "https://schemas.anyterial.se/defs/v0.1/properties/altermagnets/screening_rank",
+        "screening_rank",
+    ),
     "_httk_dft_band_gap": (
         "https://schemas.httk.org/defs/v0.1/properties/electronic/dft_band_gap",
         "dft_band_gap",
@@ -182,21 +186,23 @@ def test_store_native_service_is_live_and_does_not_own_caller_store(tmp_path: Pa
         first = live.get("/v1/structures", params={"sort": "id", "response_fields": "id"})
         assert first.status_code == 200
         assert [item["id"] for item in first.json()["data"]] == [
-            "anyt:am-1-0001",
-            "anyt:am-1-0002",
-            "anyt:am-1-0003",
+            "anyt.am-1-1",
+            "anyt.am-1-2",
+            "anyt.am-1-3",
         ]
 
         searcher = opened.store.searcher()
         material = searcher.variable(material_store.MaterialRecord)
         record = searcher.results(material=material).first()["material"]
-        opened.store.save(replace(record, id="anyt:am-1-9999", screening_rank=9999))
+        # A clone saved as a new entry must not reuse the source revision's
+        # store-minted immutable id.
+        opened.store.save(replace(record, id="anyt.am-1-9999", immutable_id=None, screening_rank=9999))
 
         later = live.get("/v1/structures", params={"sort": "id", "response_fields": "id"})
         assert later.status_code == 200
         assert later.json()["meta"]["data_returned"] == 4
-        assert later.json()["data"][-1]["id"] == "anyt:am-1-9999"
-        included = live.get("/v1/structures/anyt:am-1-0001", params={"include": "references"})
+        assert later.json()["data"][-1]["id"] == "anyt.am-1-9999"
+        included = live.get("/v1/structures/anyt.am-1-1", params={"include": "references"})
         assert included.status_code == 200
         assert included.json()["included"]
 
@@ -286,7 +292,7 @@ def test_search_table_columns_skip_structure_hydration(tmp_path: Path) -> None:
     for item in data:
         assert all(column in item["attributes"] for column in SEARCH_TABLE_COLUMNS)
     # am-1-0001 is the fixture row with every search-table property populated.
-    first = next(item for item in data if item["id"] == "anyt:am-1-0001")["attributes"]
+    first = next(item for item in data if item["id"] == "anyt.am-1-1")["attributes"]
     assert first["_anyterial_formula"] == "CrSb"
     assert first["_anyterial_classification"]
     assert first["_anyterial_max_spin_splitting"] is not None
@@ -303,7 +309,7 @@ def test_search_table_columns_skip_structure_hydration(tmp_path: Path) -> None:
 
 
 def _figure_dataset(details_root: Path) -> tuple[dict[str, Any], str, Path, Path]:
-    material_id = "anyt:am-1-0001"
+    material_id = "anyt.am-1-1"
     details_dir = details_root / "am-1" / "0" / "00" / "001" / material_id
     details_dir.mkdir(parents=True)
     svg_path = details_dir / "plot.svg"
@@ -534,14 +540,14 @@ def test_dataset_assembly_counts_and_exact_lattice() -> None:
     for property_values in properties.values():
         assert set(property_values) == EXPECTED_PROPERTY_NAMES
 
-    smfeo3 = structures["anyt:am-1-0039"]
+    smfeo3 = structures["anyt.am-1-39"]
     assert smfeo3 is not None
     row0 = smfeo3.cell.basis.to_floats()[0]
     # First lattice row: float-exact from the CONTCAR strings ("5.3982999999999999").
     assert row0[0] == 5.3982999999999999
     assert row0[1] == 0.0
     assert abs(row0[2]) < 1e-15  # the "~3e-16" residual is numerically zero
-    assert properties["anyt:am-1-0039"]["_anyterial_magnetic_phase"] == "altermagnet"
+    assert properties["anyt.am-1-39"]["_anyterial_magnetic_phase"] == "altermagnet"
 
 
 def test_live_definition_contract() -> None:
@@ -572,7 +578,7 @@ def test_null_structure_material_serves_null_lattice(providers: list) -> None:
 
 def test_moments_are_served_for_the_fixture_structure(providers: list) -> None:
     records = {record["__id"]: record for record in providers[0].records("structures")}
-    assert records["anyt:am-1-0039"]["_httk_site_moments"] == [
+    assert records["anyt.am-1-39"]["_httk_site_moments"] == [
         [0.0, 0.0, -0.0],
         [0.0, 0.0, -0.0],
         [0.0, 0.0, -0.0],
@@ -594,7 +600,7 @@ def test_moments_are_served_for_the_fixture_structure(providers: list) -> None:
         [0.0, 0.0, 0.007],
         [0.0, 0.0, -0.006],
     ]
-    assert "_httk_magnetism" in records["anyt:am-1-0039"]["structure_features"]
+    assert "_httk_magnetism" in records["anyt.am-1-39"]["structure_features"]
 
 
 def test_info_structures_lists_custom_and_standard_definitions(client: ApiClient) -> None:
@@ -618,6 +624,7 @@ def test_info_structures_lists_custom_and_standard_definitions(client: ApiClient
         "_anyterial_max_spin_splitting",
         "_anyterial_min_crustal_abundance",
         "_anyterial_parent_spacegroups",
+        "_anyterial_screening_rank",
         "_anyterial_search_text",
         "_anyterial_space_group",
         "_anyterial_space_group_search",
@@ -726,7 +733,7 @@ def test_detail_properties_and_absolute_figures(client: ApiClient) -> None:
     response = client.get(
         "/structures",
         params={
-            "filter": 'id = "anyt:am-1-0001"',
+            "filter": 'id = "anyt.am-1-1"',
             "response_fields": ",".join(fields),
         },
     )
@@ -740,15 +747,15 @@ def test_detail_properties_and_absolute_figures(client: ApiClient) -> None:
     assert attributes["_anyterial_magndata_variants"][0]["source"] == "collinear"
     assert attributes["_httk_custom_figures"][0] == {
         "key": "band",
-        "url": "https://plots.example.test/api/extensions/figures/anyt:am-1-0001/band.svg",
-        "dark_url": "https://plots.example.test/api/extensions/figures/anyt:am-1-0001/dark--band.svg",
+        "url": "https://plots.example.test/api/extensions/figures/anyt.am-1-1/band.svg",
+        "dark_url": "https://plots.example.test/api/extensions/figures/anyt.am-1-1/dark--band.svg",
         "media_type": "image/svg+xml",
         "available": True,
     }
 
 
 def test_non_default_properties_are_omitted_unless_requested(client: ApiClient) -> None:
-    response = client.get("/structures", params={"filter": 'id = "anyt:am-1-0001"'})
+    response = client.get("/structures", params={"filter": 'id = "anyt.am-1-1"'})
     assert response.status_code == 200
     attributes = response.json()["data"][0]["attributes"]
     assert all(
@@ -856,7 +863,7 @@ def test_structureless_and_unresolved_variant_projection(providers: list) -> Non
 
 # Golden full orderings captured from the legacy search before its deletion.
 def _material_ids(numbers):
-    return [f"anyt:am-1-{number:04d}" for number in numbers]
+    return [f"anyt.am-1-{number}" for number in numbers]
 
 
 GOLDEN_SORT_ORDERS = {
@@ -953,8 +960,8 @@ GOLDEN_SORT_ORDERS = {
             145,
             20,
             112,
-            58,
             109,
+            58,
             51,
             94,
             117,
@@ -1033,16 +1040,16 @@ GOLDEN_SORT_ORDERS = {
             26,
             43,
             54,
-            44,
             100,
+            44,
             5,
             168,
             108,
             38,
             84,
             93,
-            65,
             113,
+            65,
             80,
             64,
             57,
@@ -1388,19 +1395,6 @@ GOLDEN_SORT_ORDERS = {
             165,
             133,
             1,
-            3,
-            4,
-            5,
-            6,
-            7,
-            9,
-            20,
-            71,
-            79,
-            82,
-            83,
-            85,
-            91,
             101,
             102,
             119,
@@ -1411,9 +1405,22 @@ GOLDEN_SORT_ORDERS = {
             168,
             169,
             176,
-            76,
+            20,
+            3,
+            4,
+            5,
+            6,
+            7,
+            71,
+            79,
+            82,
+            83,
+            85,
+            9,
+            91,
             173,
             174,
+            76,
         ]
     ),
     "abundance_desc": _material_ids(
@@ -1623,7 +1630,7 @@ def test_search_filter_and_sort_goldens(client: ApiClient) -> None:
         assert expression.split(" ", 1)[0] in source
 
     sort_expressions = {
-        "screening_rank": "id",
+        "screening_rank": "_anyterial_screening_rank",
         "formula_asc": "_anyterial_formula,id",
         "max_ss_desc": "-_anyterial_max_spin_splitting,id",
         "avg_ss_desc": "-_anyterial_avg_spin_splitting,id",

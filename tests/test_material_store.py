@@ -45,7 +45,7 @@ def test_parse_magnetization_moments_rejects_malformed(text: str) -> None:
 
 def test_load_material_structure_reads_vasp_z_axis_moments(tmp_path: Path) -> None:
     details = write_detail_assets(tmp_path / "details")
-    structure = load_material_structure(details, "anyt:am-1-0001")
+    structure = load_material_structure(details, "anyt.am-1-1")
     assert structure is not None
     assert structure.site_moments is not None
     assert structure.site_moments == CartesianSiteMoments([[0.0, 0.0, 0.6], [0.0, 0.0, 0.0], [0.0, 0.0, 1.25]])
@@ -54,7 +54,7 @@ def test_load_material_structure_reads_vasp_z_axis_moments(tmp_path: Path) -> No
 def test_load_material_structure_warns_and_omits_invalid_moments(tmp_path: Path, caplog) -> None:
     details = write_detail_assets(tmp_path / "details")
     with caplog.at_level("WARNING"):
-        structure = load_material_structure(details, "anyt:am-1-0002")
+        structure = load_material_structure(details, "anyt.am-1-2")
     assert structure is not None
     assert structure.site_moments is None
     assert "2 rows for 3 sites" in caplog.text
@@ -63,7 +63,7 @@ def test_load_material_structure_warns_and_omits_invalid_moments(tmp_path: Path,
 def test_material_structure_round_trips_through_store(tmp_path: Path) -> None:
     source = write_source_tables(tmp_path / "tables")
     details = write_detail_assets(tmp_path / "details")
-    expected = load_material_structure(details, "anyt:am-1-0001")
+    expected = load_material_structure(details, "anyt.am-1-1")
     assert expected is not None
     store_path = build_store(tmp_path / "store.duckdb", data_dir=source, details_dir=details, legacy=True)
     opened = open_prebuilt_store(store_path)
@@ -167,7 +167,7 @@ def test_build_saves_only_coupled_runs_and_recovers_moments(tmp_path: Path) -> N
     source = write_source_tables(tmp_path / "tables")
     details = write_detail_assets(tmp_path / "details")
     runs = tmp_path / "runs"
-    _scf_run(runs, "CrSb")  # couples anyt:am-1-0001 by name; OUTCAR has no moments
+    _scf_run(runs, "CrSb")  # couples anyt.am-1-1 by name; OUTCAR has no moments
     _scf_run(runs, "Zzz")  # collected but no CSV material: never coupled or saved
     target = build_store(tmp_path / "store.duckdb", data_dir=source, details_dir=details, runs_dir=runs)
 
@@ -180,7 +180,7 @@ def test_build_saves_only_coupled_runs_and_recovers_moments(tmp_path: Path) -> N
 
     materials = _materials_by_id(target)
     # 2a lost-moments fallback: the coupled run is moment-free, details supplies moments.
-    recovered = material_structure(materials["anyt:am-1-0001"])
+    recovered = material_structure(materials["anyt.am-1-1"])
     assert recovered is not None and recovered.site_moments is not None
     # 2a no-structure fallback: MnTe has no run at all, details supplies the structure.
-    assert material_structure(materials["anyt:am-1-0002"]) is not None
+    assert material_structure(materials["anyt.am-1-2"]) is not None

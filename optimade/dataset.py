@@ -38,6 +38,7 @@ ANYTERIAL_DEFINITION_PATHS = {
     "_anyterial_wave_class": "wave_class.json",
     "_anyterial_electronic_type": "electronic_type.json",
     "_anyterial_min_crustal_abundance": "min_crustal_abundance.json",
+    "_anyterial_screening_rank": "screening_rank.json",
 }
 HTTK_DEFINITION_PATHS = {
     "_httk_dft_band_gap": "electronic/dft_band_gap.json",
@@ -191,6 +192,7 @@ def _material_properties(record: Any, public_base_url: str) -> dict[str, Any]:
         "_httk_dft_band_gap": record.bandgap,
         "_anyterial_electronic_type": record.electronic_type,
         "_anyterial_min_crustal_abundance": record.min_abund_ppm,
+        "_anyterial_screening_rank": record.screening_rank,
         "_anyterial_magnetic_phase": _screening_phase(record.magnetic_phases[0]) if record.magnetic_phases else None,
         "_anyterial_wave_class": record.wave_classes[0] if record.wave_classes else None,
         "_httk_magnetic_space_group_bns": (variants[0]["bns"][0] if variants and variants[0]["bns"] else None),
@@ -251,7 +253,9 @@ def build_dataset(
     for record in material_records.values():
         for doi in record.dois:
             if doi not in reference_id_by_doi:
-                reference_id = f"anyt:ref-{len(references) + 1:04d}"
+                # One scheme across both serving paths: the store path derives the
+                # same DOI-stable id via material_store._reference_id.
+                reference_id = material_store._reference_id(doi)
                 reference_id_by_doi[doi] = reference_id
                 references[reference_id] = {"doi": doi}
 

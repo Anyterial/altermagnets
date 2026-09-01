@@ -18,7 +18,7 @@ import re
 import tempfile
 import time
 from collections.abc import Callable, Iterable, Mapping, MutableMapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from functools import cache
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, cast
@@ -43,6 +43,7 @@ from httk.core import (
     EntryTypeDefinition,
     File,
     FileRecord,
+    IdentitySkip,
     Indexed,
     PropertyDefinition,
     Skip,
@@ -60,10 +61,11 @@ from httk.core.register import register_entry_family, register_entry_record
 from httk.core.storage import (
     QueryLiteralError,
     StoredPropertyProjection,
+    content_id,
     project_storage_record,
     stored_property,
 )
-from httk.store import Backend, SqlStore
+from httk.store import Backend, EntryIdScheme, SqlStore
 
 __all__ = [
     "AMDB_DATASET",
@@ -129,7 +131,7 @@ STORE_PATH_ENVIRONMENT = "ALTERMAGNETS_STORE_PATH"
 RUNS_PATH_ENVIRONMENT = "ALTERMAGNETS_RUNS_DIR"
 COUPLING_FILENAME = "amdb_run_content_ids.csv"
 DETAILS_PATH_ENVIRONMENT = "ALTERMAGNETS_DETAILS_DIR"
-MATERIAL_ID_PATTERN = re.compile(r"^(?:anyt:)?(?P<family>am|amdb)-(?P<series>[A-Za-z0-9]+)-(?P<number>\d+)$")
+MATERIAL_ID_PATTERN = re.compile(r"^(?:anyt[:.])?(?P<family>am|amdb)-(?P<series>[A-Za-z0-9]+)-(?P<number>\d+)$")
 LEGACY_MATERIAL_ID_PATTERN = re.compile(r"^(?:anyt:)?amdb-(?P<number>\d+)$")
 PLOT_FILENAMES: tuple[tuple[str, str], ...] = (
     ("band", "band.svg"),
@@ -255,7 +257,6 @@ class MaterialRecord:
         ),
     )
 
-    id: Annotated[str, Unique(), Indexed()]
     screening_rank: Annotated[int, Indexed()]
     formula: str
     space_group: Annotated[str, Indexed()]
@@ -280,6 +281,10 @@ class MaterialRecord:
     dois: tuple[str, ...]
     search_text: str
     structure: UnitcellStructureRecord | None = None
+    # Entry-id fields per the store contract; id is always set to the amdb
+    # public id at construction, immutable_id is minted by the store.
+    id: Annotated[str | None, IdentitySkip(), Indexed()] = field(default=None, compare=False)
+    immutable_id: Annotated[str | None, IdentitySkip(), Unique()] = field(default=None, compare=False)
 
     @stored_property
     def magndata_sort_key(self) -> str | None:
@@ -318,6 +323,10 @@ class AltermagnetReferenceRecord:
 
     public_id: Annotated[str, Unique(), Indexed()]
     doi: Annotated[str, Unique(), Indexed()]
+    # Entry-id fields per the store contract; id is always set to the stable
+    # public reference id at construction, immutable_id is minted by the store.
+    id: Annotated[str | None, IdentitySkip(), Indexed()] = field(default=None, compare=False)
+    immutable_id: Annotated[str | None, IdentitySkip(), Unique()] = field(default=None, compare=False)
 
 
 class AltermagnetStructureEntry:
@@ -366,6 +375,7 @@ ANYTERIAL_DEFINITION_PATHS = {
     "_anyterial_wave_class": "wave_class.json",
     "_anyterial_electronic_type": "electronic_type.json",
     "_anyterial_min_crustal_abundance": "min_crustal_abundance.json",
+    "_anyterial_screening_rank": "screening_rank.json",
 }
 HTTK_DEFINITION_PATHS = {
     "_httk_dft_band_gap": "electronic/dft_band_gap.json",
@@ -447,7 +457,9 @@ def _optimade_definitions() -> dict[str, PropertyDefinition]:
 
 def _reference_id(doi: str) -> str:
     """Return a stable public reference ID without depending on row order."""
-    return "anyt:ref-" + hashlib.sha256(doi.encode("utf-8")).hexdigest()[:16]
+    # The DOI digest is rendered decimal so the id conforms to the recommended
+    # <base>-<series>-<number> entry-id syntax while staying row-order independent.
+    return f"anyt.ref-1-{int(hashlib.sha256(doi.encode('utf-8')).hexdigest()[:16], 16)}"
 
 
 class _NestedQueryContext:
@@ -574,7 +586,9 @@ def _fraction_literal_to_percent(value: object) -> object:
 
 
 def _material_public_id(record: object) -> str:
-    return cast(MaterialRecord, record).id
+    public_id = cast(MaterialRecord, record).id
+    assert public_id is not None  # always set to the amdb id at construction
+    return public_id
 
 
 def _material_reference_ids(record: object) -> list[str]:
@@ -604,14 +618,17 @@ def _material_projections() -> dict[str, StoredPropertyProjection]:
         "_httk_dft_band_gap": ("bandgap", True),
         "_anyterial_electronic_type": ("electronic_type", False),
         "_anyterial_min_crustal_abundance": ("min_abund_ppm", True),
+        # Canonical ids are unpadded, so a lexicographic id sort no longer
+        # equals screening order; the site's default sort uses this rank.
+        "_anyterial_screening_rank": ("screening_rank", True),
     }
-    for name, (field, sortable) in direct.items():
+    for name, (column, sortable) in direct.items():
         projections[name] = StoredPropertyProjection(
             response=_provider_response(name),
-            query=_scalar_query(field),
-            sort=_field_sort(field) if sortable else None,
+            query=_scalar_query(column),
+            sort=_field_sort(column) if sortable else None,
         )
-    for name, field in {
+    for name, column in {
         "_anyterial_elements": "elements",
         "_anyterial_magnetic_phases": "magnetic_phases",
         "_anyterial_wave_classes": "wave_classes",
@@ -620,7 +637,7 @@ def _material_projections() -> dict[str, StoredPropertyProjection]:
     }.items():
         projections[name] = StoredPropertyProjection(
             response=_provider_response(name),
-            query=_list_query(field),
+            query=_list_query(column),
         )
     projections["_anyterial_spin_splitting_fraction"] = StoredPropertyProjection(
         response=_provider_response("_anyterial_spin_splitting_fraction"),
@@ -793,12 +810,17 @@ def material_id_aliases(material_id: str) -> tuple[str, ...]:
         return (cleaned,) if cleaned else ()
 
     series, digits = parsed
+    number = str(int(digits))
     aliases = (
         cleaned,
-        f"anyt:am-{series}-{digits}",
-        f"am-{series}-{digits}",
-        f"anyt:amdb-{series}-{digits}",
-        f"amdb-{series}-{digits}",
+        f"anyt.am-{series}-{number}",
+        # Legacy spellings, in each digit form (as given, 4-padded, unpadded),
+        # so unpadded canonical ids still resolve padded on-disk shard names.
+        *(
+            f"{prefix}-{series}-{form}"
+            for form in dict.fromkeys((digits, number.zfill(4), number))
+            for prefix in ("anyt:am", "am", "anyt:amdb", "amdb")
+        ),
     )
     return tuple(dict.fromkeys(aliases))
 
@@ -810,7 +832,7 @@ def details_dir_for_material(details_root: Path, material_id: str) -> Path | Non
     if parsed is None:
         return None
     series, digits = parsed
-    padded_digits = digits.zfill(3)
+    padded_digits = str(int(digits)).zfill(4)
     shard_roots = (
         details_root / f"am-{series}" / padded_digits[:1] / padded_digits[:2] / padded_digits[:3],
         details_root / f"amdb-{series}" / padded_digits[:1] / padded_digits[:2] / padded_digits[:3],
@@ -1038,7 +1060,7 @@ def _material_figures(details_root: Path, material_id: str) -> tuple[MaterialFig
 
 
 def _default_material_id(index: int) -> str:
-    return f"anyt:am-{AMDB_DATASET}-{index:04d}"
+    return f"anyt.am-{AMDB_DATASET}-{index}"
 
 
 def _parse_float(value: str) -> float | None:
@@ -1406,7 +1428,9 @@ def _run_observations(items: Iterable[Any]) -> tuple[_RunObservation, ...]:
         observations.append(
             _RunObservation(
                 task_id.removesuffix("_SCF"),
-                run.id,
+                # Collected runs have never passed a store, so Run.id is the
+                # store-minted field (None here); pin the content identity.
+                content_id(run),
                 relaxed.id,
                 relaxed,
                 str(item.record.payload_path),
@@ -1852,6 +1876,7 @@ def build_store(
             current = material.structure
             if current is not None and current.site_moments is not None:
                 return material
+            assert material.id is not None  # always set to the amdb id at construction
             details_structure = load_material_structure(resolved_details_dir, material.id)
             if details_structure is None:
                 return material
@@ -1905,6 +1930,9 @@ def build_store(
         store = SqlStore(
             created_database,
             entry_records={} if legacy else _entry_records_layout(),
+            # Mints entry ids for run/data/file rows saved without one; material
+            # and reference entries carry their public ids explicitly.
+            entry_ids=EntryIdScheme("anyt", "am", type_in_base=True),
         )
         # Bulk ingestion creates the tables index-less and builds the indexes
         # once the stream completes, so no separate ensure_tables/transaction.
@@ -1927,7 +1955,7 @@ def build_store(
             for material in materials:
                 bulk.save(material)
             for doi in dict.fromkeys(doi for material in materials for doi in material.dois):
-                bulk.save(AltermagnetReferenceRecord(_reference_id(doi), doi))
+                bulk.save(AltermagnetReferenceRecord((rid := _reference_id(doi)), doi, id=rid))
         write_elapsed = time.perf_counter() - write_started
         finalize_started = time.perf_counter()
         created_database.dispose()
@@ -2039,13 +2067,17 @@ def open_in_memory_store(
             return None
         opened_database = Backend.sqlite()
         database = opened_database
-        store = SqlStore(opened_database, entry_records=_entry_records_layout())
+        store = SqlStore(
+            opened_database,
+            entry_records=_entry_records_layout(),
+            entry_ids=EntryIdScheme("anyt", "am", type_in_base=True),
+        )
         # Bulk ingestion creates the tables and their indexes itself.
         with store.bulk_ingest() as bulk:
             for material in materials:
                 bulk.save(material)
             for doi in dict.fromkeys(doi for material in materials for doi in material.dois):
-                bulk.save(AltermagnetReferenceRecord(_reference_id(doi), doi))
+                bulk.save(AltermagnetReferenceRecord((rid := _reference_id(doi)), doi, id=rid))
         return OpenedMaterialStore(
             opened_database,
             store,

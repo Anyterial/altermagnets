@@ -60,7 +60,7 @@ def render(context, **props):
         # The widget resolves these human-facing sort aliases to OPTIMADE sorts, so a stray
         # `sort=screening_rank` from a non-JS navigation is translated, never sent verbatim.
         sort_aliases={
-            "screening_rank": "id",
+            "screening_rank": "_anyterial_screening_rank",
             "max_ss_desc": "-_anyterial_max_spin_splitting,id",
             "avg_ss_desc": "-_anyterial_avg_spin_splitting,id",
             "bandgap_desc": "-_httk_dft_band_gap,id",

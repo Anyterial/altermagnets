@@ -609,7 +609,7 @@ def test_page_size_dropdown_navigates_preserving_filter_and_sort(two_origins: Or
 
 
 def test_missing_material_renders_not_found(two_origins: Origins, page: Page) -> None:
-    page.goto(f"{two_origins.site_url}/material.html?id=anyt%3Aam-1-9999", wait_until="domcontentloaded")
+    page.goto(f"{two_origins.site_url}/material.html?id=anyt.am-1-9999", wait_until="domcontentloaded")
     page.get_by_text("The requested material entry could not be found.").wait_for(state="visible", timeout=TIMEOUT_MS)
 
 

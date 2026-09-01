@@ -20,12 +20,16 @@ from .adapter import SORTABLE_PROPERTIES, AltermagnetStoreAdapter
 from .figures import (
     DARK_CACHE_MAX_BYTES,
     DARK_CACHE_MAX_ENTRIES,
+    STRUCTURE_DOWNLOADS,
     _dark_svg,
     _figure_index,
     _find_figure,
     _media_type,
     _read_file,
     _stored_figure_match,
+    _stored_material_record,
+    structure_download_body,
+    structure_download_filename,
 )
 
 logger = report.context_logger(logging.getLogger("httk.altermagnets.optimade"), "optimade")
@@ -124,6 +128,26 @@ def build_service_app(
         nonlocal dark_cache_bytes
         material_id = request.path_params["material_id"]
         filename = request.path_params["filename"]
+        download = STRUCTURE_DOWNLOADS.get(filename)
+        if download is not None:
+            # Structure files are generated on request from the DATABASE record's
+            # main structure (never the detail tree). Requires a live store.
+            record = _stored_material_record(store, material_id) if store is not None else None
+            if record is None:
+                return Response(status_code=404)
+            body = structure_download_body(record, download)
+            if body is None:
+                return Response(status_code=404)
+            return Response(
+                body,
+                media_type=download.content_type,
+                headers={
+                    "Content-Disposition": f'attachment; filename="{structure_download_filename(record.id, download)}"',
+                    "Cache-Control": "public, max-age=3600",
+                    "X-Content-Type-Options": "nosniff",
+                    "Access-Control-Allow-Origin": "*",
+                },
+            )
         match = (
             index.get(material_id)
             if index is not None

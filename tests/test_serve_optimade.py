@@ -20,7 +20,7 @@ import pytest
 pytest.importorskip("httk.serve.optimade")
 pytest.importorskip("httk.atomistic")
 
-from httk.core import EntryTypeDefinition, PropertyDefinition
+from httk.core import EntryTypeDefinition, PropertyDefinition, load
 from httk.serve.optimade import adapter_from_providers, create_asgi_app
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -209,6 +209,57 @@ def test_store_native_service_is_live_and_does_not_own_caller_store(tmp_path: Pa
     # The service did not close a store supplied by its caller.
     assert opened.store.searcher().variable(material_store.MaterialRecord) is not None
     opened.database.dispose()
+
+
+def test_structure_downloads_serve_generated_cif_and_poscar(tmp_path: Path) -> None:
+    """The figures route family also serves DB-generated CIF/POSCAR structure files."""
+    source = write_source_tables(tmp_path / "tables")
+    details = write_detail_assets(tmp_path / "details")
+    opened = material_store.open_in_memory_store(source, details_dir=details)
+    assert opened is not None
+    app = build_service_app(
+        public_base_url="https://api.example.test/optimade/amdb",
+        store=opened.store,
+        details_root=details,
+    )
+    try:
+        with TestClient(app, base_url="http://testserver") as live:
+            searcher = opened.store.searcher()
+            material = searcher.variable(material_store.MaterialRecord)
+            record = searcher.results(material=material).first()["material"]
+            expected = material_store.material_structure(record)
+            assert expected is not None
+
+            cases = [
+                ("structure.cif", "chemical/x-cif", f'attachment; filename="{record.id}.cif"', "roundtrip.cif"),
+                ("POSCAR", "text/plain", 'attachment; filename="POSCAR"', "POSCAR"),
+            ]
+            for filename, content_type, disposition, local_name in cases:
+                resp = live.get(f"/extensions/figures/{record.id}/{filename}")
+                assert resp.status_code == 200, resp.text
+                assert resp.headers["content-type"].startswith(content_type)
+                assert resp.headers["content-disposition"] == disposition
+                assert resp.headers["x-content-type-options"] == "nosniff"
+                assert resp.headers["access-control-allow-origin"] == "*"
+                assert resp.text.strip()
+                # Real serialization: parse the served body back and match the stored structure.
+                local_path = tmp_path / local_name
+                local_path.write_text(resp.text, encoding="utf-8")
+                loaded = load(str(local_path))
+                assert len(loaded.sites) == len(expected.sites)
+                assert sorted(loaded.species_at_sites) == sorted(expected.species_at_sites)
+
+            # A non-whitelisted filename falls through to the figure lookup and 404s.
+            assert live.get(f"/extensions/figures/{record.id}/structure.xyz").status_code == 404
+
+            # A material without a structure yields 404 for both generated files.
+            opened.store.save(
+                replace(record, id="anyt.am-1-7777", immutable_id=None, structure=None, screening_rank=7777)
+            )
+            assert live.get("/extensions/figures/anyt.am-1-7777/structure.cif").status_code == 404
+            assert live.get("/extensions/figures/anyt.am-1-7777/POSCAR").status_code == 404
+    finally:
+        opened.database.dispose()
 
 
 def test_httk_alts_routes_serve_composite_alternatives(tmp_path: Path) -> None:

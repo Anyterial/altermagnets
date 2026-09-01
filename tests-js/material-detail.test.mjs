@@ -482,3 +482,41 @@ test("structure iframe uses the document theme and follows a live theme toggle",
   document.documentElement.setAttribute("data-theme", "light");
   assert.ok(frame.getAttribute("src").split("#", 1)[0].includes("theme=light"));
 });
+
+// --- Dynamic structure download links ---
+
+test("structureDownloadLinks builds same-origin CIF and POSCAR links off the /v1 sibling route", () => {
+  installDom(new DomDocument("https://site.example.test/material"));
+  const links = material.structureDownloadLinks("anyt.am-1-1", "https://api.example.test/optimade/amdb/v1");
+  assert.deepEqual(links, [
+    { label: "Download CIF", url: "https://api.example.test/optimade/amdb/extensions/figures/anyt.am-1-1/structure.cif" },
+    { label: "Download POSCAR", url: "https://api.example.test/optimade/amdb/extensions/figures/anyt.am-1-1/POSCAR" },
+  ]);
+  // A trailing slash on the base must not leak the version segment into the path.
+  const trailing = material.structureDownloadLinks("anyt.am-1-1", "https://api.example.test/optimade/amdb/v1/");
+  assert.equal(trailing[0].url, "https://api.example.test/optimade/amdb/extensions/figures/anyt.am-1-1/structure.cif");
+  assert.deepEqual(material.structureDownloadLinks("", "https://api.example.test/optimade/amdb/v1"), []);
+});
+
+test("crysvizPayload attaches structure download menuLinks only when a structure is present", () => {
+  const links = [{ label: "Download CIF", url: "https://h/x/structure.cif" }];
+  assert.deepEqual(material.crysvizPayload(structureAttributes(), [], links).menuLinks, links);
+  // No structure → null payload, so no menuLinks anywhere.
+  assert.equal(material.crysvizPayload(structureAttributes({ lattice_vectors: null }), [], links), null);
+  // No links supplied → the key stays absent.
+  assert.equal("menuLinks" in material.crysvizPayload(structureAttributes()), false);
+});
+
+test("structure iframe payload carries CIF and POSCAR download links from the discovered API base", async () => {
+  const resource = { id: MATERIAL_ID, type: "structures", attributes: structureAttributes() };
+  const { result } = shell({ crysviz_base_url: CRYSVIZ_BASE });
+  globalThis.fetch = fetchFor(resource).fetch;
+  await material.loadShell(result, OptimadeTransport);
+  const frame = result.querySelectorAll("iframe.crysviz-frame")[0];
+  const { payload } = decodeCrysvizSrc(frame.getAttribute("src"));
+  const enc = encodeURIComponent(MATERIAL_ID);
+  assert.deepEqual(payload.menuLinks, [
+    { label: "Download CIF", url: `https://api.example.test/optimade/amdb/extensions/figures/${enc}/structure.cif` },
+    { label: "Download POSCAR", url: `https://api.example.test/optimade/amdb/extensions/figures/${enc}/POSCAR` },
+  ]);
+});

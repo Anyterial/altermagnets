@@ -1,12 +1,14 @@
 """Figure-byte machinery for the altermagnets OPTIMADE figure route."""
 
 import mimetypes
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import material_store
+from httk.core import save
 
 MAX_FIGURE_BYTES = 8 * 1024 * 1024
 DARK_CACHE_MAX_ENTRIES = 32
@@ -79,8 +81,8 @@ def _load_figure_index() -> dict[str, tuple[str, tuple[_StoredFigure, ...]]]:
         material_store.cleanup_material_store({"materials_database": opened.database})
 
 
-def _stored_figure_match(store: Any, material_id: str) -> tuple[str, tuple[_StoredFigure, ...]] | None:
-    """Read current figure metadata for one public material ID from the store."""
+def _stored_material_record(store: Any, material_id: str) -> Any | None:
+    """Fetch the MaterialRecord for one public material ID from the store, or None."""
     aliases = material_store.material_id_aliases(material_id)
     if not aliases:
         return None
@@ -91,11 +93,60 @@ def _stored_figure_match(store: Any, material_id: str) -> tuple[str, tuple[_Stor
         predicate = predicate | (material.id == alias)
     searcher.add(predicate)
     row = searcher.results(material=material).first()
-    if row is None:
+    return None if row is None else row["material"]
+
+
+def _stored_figure_match(store: Any, material_id: str) -> tuple[str, tuple[_StoredFigure, ...]] | None:
+    """Read current figure metadata for one public material ID from the store."""
+    record = _stored_material_record(store, material_id)
+    if record is None:
         return None
-    record = row["material"]
     indexed = _figure_index({record.id: record})
     return indexed.get(material_id) or indexed.get(record.id)
+
+
+@dataclass(frozen=True)
+class _StructureDownload:
+    """A fixed, generated structure-file endpoint (no path-traversal surface)."""
+
+    format: str  # httk-core save() format tag
+    content_type: str
+    suffix: str  # attachment-name suffix; "" ⇒ the fixed name POSCAR
+
+
+#: Fixed-name whitelist served from the DATABASE structure via httk-atomistic
+#: writers (never the detail tree). Keyed by the request filename.
+STRUCTURE_DOWNLOADS: dict[str, _StructureDownload] = {
+    "structure.cif": _StructureDownload("cif", "chemical/x-cif", ".cif"),
+    "POSCAR": _StructureDownload("vasp-poscar", "text/plain", ""),
+}
+
+
+def structure_download_filename(material_id: str, download: _StructureDownload) -> str:
+    """Return the Content-Disposition attachment filename for a download."""
+    return f"{material_id}{download.suffix}" if download.suffix else "POSCAR"
+
+
+def structure_download_body(record: Any, download: _StructureDownload) -> bytes | None:
+    """Serialize a record's MAIN structure to the download format, or None.
+
+    ``None`` means the material has no structure, the format cannot represent it
+    (e.g. POSCAR partial occupancy), or the generated file exceeds the size cap.
+    httk-core ``save`` selects the writer by ``format`` and writes to a path, so
+    a throwaway temp file is the cleanly supported buffer.
+    """
+    structure = material_store.material_structure(record)
+    if structure is None:
+        return None
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "structure"
+        try:
+            save(structure, path, format=download.format)
+            text = path.read_text(encoding="utf-8")
+        except (ValueError, OSError):
+            return None
+    data = text.encode("utf-8")
+    return data if len(data) <= MAX_FIGURE_BYTES else None
 
 
 def _media_type(file: _StoredFile) -> str:

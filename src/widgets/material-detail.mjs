@@ -275,7 +275,7 @@ function crysvizFrame(attributes) {
 // top-level `frameKinds` (["loaded", ...present kinds]) is emitted only when at
 // least one alternative frame was added — so a single-frame payload stays byte
 // -identical and the widget keeps its in-browser Cell fallback.
-function crysvizPayload(attributes, alternatives = []) {
+function crysvizPayload(attributes, alternatives = [], menuLinks = []) {
   const loaded = crysvizFrame(attributes);
   if (!loaded) return null;
   const frames = [loaded.frame];
@@ -290,6 +290,7 @@ function crysvizPayload(attributes, alternatives = []) {
   }
   const payload = { format: "crysviz", version: "2.16", selectedFrameIndex: 0, frames, display: { spinsActive } };
   if (frames.length > 1) payload.frameKinds = frameKinds;
+  if (Array.isArray(menuLinks) && menuLinks.length) payload.menuLinks = menuLinks;
   return payload;
 }
 
@@ -317,14 +318,29 @@ function onThemeChange(listener) {
   observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 }
 
+// Same-origin API links to the dynamically generated structure files, built the
+// way figure URLs are (figureUrl's origin discipline). The extensions route is a
+// sibling of the /v1 API, so a relative path resolved against the API base (with
+// its trailing slash stripped) replaces the version segment.
+function structureDownloadLinks(id, apiBase) {
+  if (!id || typeof apiBase !== "string" || !apiBase) return [];
+  const base = apiBase.replace(/\/+$/, "");
+  const cif = figureUrl(`extensions/figures/${encodeURIComponent(id)}/structure.cif`, base);
+  const poscar = figureUrl(`extensions/figures/${encodeURIComponent(id)}/POSCAR`, base);
+  const links = [];
+  if (cif) links.push({ label: "Download CIF", url: cif });
+  if (poscar) links.push({ label: "Download POSCAR", url: poscar });
+  return links;
+}
+
 // The iframe src for the interactive structure, or "" to fall back to the static
 // figure (no structure data, malformed base, or encoded URL over the length
 // guard). The widget flag is set with URLSearchParams so a base already carrying
 // a query stays valid; the #load-file hash is then concatenated RAW (only the
 // two halves are percent-encoded — the "|" separator must survive verbatim, so
 // it is never handed to URL for re-encoding).
-function crysvizIframeSrc(attributes, base = crysvizBaseUrl, alternatives = []) {
-  const payload = crysvizPayload(attributes, alternatives);
+function crysvizIframeSrc(attributes, base = crysvizBaseUrl, alternatives = [], menuLinks = []) {
+  const payload = crysvizPayload(attributes, alternatives, menuLinks);
   if (!payload) return "";
   let url;
   try {
@@ -360,7 +376,7 @@ function sourceLabel(source) {
   return CLASSIFICATION_LABELS[source] || "No symmetry table entry";
 }
 
-function buildFigures(attributes, apiBase, alternatives = []) {
+function buildFigures(attributes, apiBase, alternatives = [], menuLinks = []) {
   const records = new Map(arrayValue(attributes._httk_custom_figures).map((item) => [item.key, item]));
   const grid = node("div", "figure-grid");
   let availableCount = 0;
@@ -368,7 +384,7 @@ function buildFigures(attributes, apiBase, alternatives = []) {
     const record = records.get(spec.key) || {};
     // The structure card becomes the interactive CrysViz iframe when structure
     // data is present; otherwise it keeps the static-figure/placeholder path.
-    const crysvizSrc = spec.key === "structure" ? crysvizIframeSrc(attributes, crysvizBaseUrl, alternatives) : "";
+    const crysvizSrc = spec.key === "structure" ? crysvizIframeSrc(attributes, crysvizBaseUrl, alternatives, menuLinks) : "";
     const light = crysvizSrc ? "" : record.available === true ? figureUrl(record.url, apiBase) : "";
     const dark = light ? figureUrl(record.dark_url, apiBase) || light : "";
     const layout = crysvizSrc ? "figure-card--wide" : spec.layout;
@@ -391,7 +407,7 @@ function buildFigures(attributes, apiBase, alternatives = []) {
       // Follow live theme toggles: rebuild the src (with the new theme) — reuses
       // crysvizIframeSrc so there is one source of truth for the URL shape.
       onThemeChange(() => {
-        const next = crysvizIframeSrc(attributes, crysvizBaseUrl, alternatives);
+        const next = crysvizIframeSrc(attributes, crysvizBaseUrl, alternatives, menuLinks);
         if (next) frame.setAttribute("src", next);
       });
     } else if (light) {
@@ -538,7 +554,7 @@ function buildDetail(resource, included, apiBase, alternatives = []) {
 
   const figureSection = section("Figures");
   const figureHeading = node("div", "detail-figure-heading");
-  const figureResult = buildFigures(attributes, apiBase, alternatives);
+  const figureResult = buildFigures(attributes, apiBase, alternatives, structureDownloadLinks(resource.id, apiBase));
   figureHeading.append(node("h3", "", "Figures"), node("p", "section-note", `${figureResult.availableCount} of ${FIGURE_SPECS.length} detail figures available from the mounted calculation archive.`));
   figureSection.replaceChildren(figureHeading, figureResult.grid);
   article.append(figureSection);
@@ -650,4 +666,4 @@ const start = () => document.querySelectorAll("[data-site-material-detail]").for
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
 else start();
 
-export { altKind, crysvizIframeSrc, crysvizPayload, figureUrl, loadShell };
+export { altKind, crysvizIframeSrc, crysvizPayload, figureUrl, loadShell, structureDownloadLinks };

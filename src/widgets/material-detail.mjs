@@ -325,11 +325,15 @@ function onThemeChange(listener) {
 function structureDownloadLinks(id, apiBase) {
   if (!id || typeof apiBase !== "string" || !apiBase) return [];
   const base = apiBase.replace(/\/+$/, "");
-  const cif = figureUrl(`extensions/figures/${encodeURIComponent(id)}/structure.cif`, base);
-  const poscar = figureUrl(`extensions/figures/${encodeURIComponent(id)}/POSCAR`, base);
+  const fileUrl = (name) => figureUrl(`extensions/files/${encodeURIComponent(id)}/${name}`, base);
+  // POSCAR only for now: httk-atomistic's CIF writer refuses these relaxed cells
+  // until its lossy opt-in lands — then add { label: "Download CIF", file: "structure.cif" }.
+  const specs = [{ label: "Download POSCAR", file: "POSCAR" }];
   const links = [];
-  if (cif) links.push({ label: "Download CIF", url: cif });
-  if (poscar) links.push({ label: "Download POSCAR", url: poscar });
+  for (const { label, file } of specs) {
+    const url = fileUrl(file);
+    if (url) links.push({ label, url });
+  }
   return links;
 }
 

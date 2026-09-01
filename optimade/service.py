@@ -17,7 +17,7 @@ from starlette.responses import Response
 from starlette.routing import Mount, Route
 
 from .adapter import SORTABLE_PROPERTIES, AltermagnetStoreAdapter
-from .figures import (
+from .files import (
     DARK_CACHE_MAX_BYTES,
     DARK_CACHE_MAX_ENTRIES,
     STRUCTURE_DOWNLOADS,
@@ -224,7 +224,7 @@ def build_service_app(
 
     app = Starlette(
         routes=[
-            Route("/extensions/figures/{material_id}/{filename}", figure_response, methods=["GET", "HEAD"]),
+            Route("/extensions/files/{material_id}/{filename}", figure_response, methods=["GET", "HEAD"]),
             Mount("", optimade_app),
         ],
         lifespan=lifespan,

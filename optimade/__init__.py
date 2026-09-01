@@ -23,7 +23,7 @@ from .dataset import (
     load_schema_definitions,
 )
 from .dsp import build_dsp_app
-from .figures import figure_file_is_servable
+from .files import figure_file_is_servable
 from .service import (
     AMDB_DESCRIPTION,
     AMDB_HOMEPAGE,

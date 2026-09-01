@@ -129,9 +129,9 @@ const realisticResource = {
       warnings: ["<script>alert(1)</script>"], notes: ["note <img src=x>"], reference_dois: ["10.1234/über"],
     }],
     _httk_custom_figures: [
-      { key: "band", available: true, url: `${API}/extensions/figures/band.svg`, dark_url: `${API}/extensions/figures/dark-band.svg` },
+      { key: "band", available: true, url: `${API}/extensions/files/band.svg`, dark_url: `${API}/extensions/files/dark-band.svg` },
       { key: "structure", available: true, url: "https://evil.example/structure.svg" },
-      { key: "bz", available: true, url: "http://api.example.test/optimade/amdb/extensions/figures/bz.svg" },
+      { key: "bz", available: true, url: "http://api.example.test/optimade/amdb/extensions/files/bz.svg" },
     ],
   },
   relationships: { references: { data: [{ type: "references", id: "ref/1" }] } },
@@ -485,16 +485,16 @@ test("structure iframe uses the document theme and follows a live theme toggle",
 
 // --- Dynamic structure download links ---
 
-test("structureDownloadLinks builds same-origin CIF and POSCAR links off the /v1 sibling route", () => {
+test("structureDownloadLinks builds a same-origin POSCAR link off the /v1 sibling route", () => {
+  // POSCAR only for now; the CIF link returns when httk-atomistic's lossy writer lands.
   installDom(new DomDocument("https://site.example.test/material"));
   const links = material.structureDownloadLinks("anyt.am-1-1", "https://api.example.test/optimade/amdb/v1");
   assert.deepEqual(links, [
-    { label: "Download CIF", url: "https://api.example.test/optimade/amdb/extensions/figures/anyt.am-1-1/structure.cif" },
-    { label: "Download POSCAR", url: "https://api.example.test/optimade/amdb/extensions/figures/anyt.am-1-1/POSCAR" },
+    { label: "Download POSCAR", url: "https://api.example.test/optimade/amdb/extensions/files/anyt.am-1-1/POSCAR" },
   ]);
   // A trailing slash on the base must not leak the version segment into the path.
   const trailing = material.structureDownloadLinks("anyt.am-1-1", "https://api.example.test/optimade/amdb/v1/");
-  assert.equal(trailing[0].url, "https://api.example.test/optimade/amdb/extensions/figures/anyt.am-1-1/structure.cif");
+  assert.equal(trailing[0].url, "https://api.example.test/optimade/amdb/extensions/files/anyt.am-1-1/POSCAR");
   assert.deepEqual(material.structureDownloadLinks("", "https://api.example.test/optimade/amdb/v1"), []);
 });
 
@@ -507,7 +507,7 @@ test("crysvizPayload attaches structure download menuLinks only when a structure
   assert.equal("menuLinks" in material.crysvizPayload(structureAttributes()), false);
 });
 
-test("structure iframe payload carries CIF and POSCAR download links from the discovered API base", async () => {
+test("structure iframe payload carries the POSCAR download link from the discovered API base", async () => {
   const resource = { id: MATERIAL_ID, type: "structures", attributes: structureAttributes() };
   const { result } = shell({ crysviz_base_url: CRYSVIZ_BASE });
   globalThis.fetch = fetchFor(resource).fetch;
@@ -516,7 +516,6 @@ test("structure iframe payload carries CIF and POSCAR download links from the di
   const { payload } = decodeCrysvizSrc(frame.getAttribute("src"));
   const enc = encodeURIComponent(MATERIAL_ID);
   assert.deepEqual(payload.menuLinks, [
-    { label: "Download CIF", url: `https://api.example.test/optimade/amdb/extensions/figures/${enc}/structure.cif` },
-    { label: "Download POSCAR", url: `https://api.example.test/optimade/amdb/extensions/figures/${enc}/POSCAR` },
+    { label: "Download POSCAR", url: `https://api.example.test/optimade/amdb/extensions/files/${enc}/POSCAR` },
   ]);
 });

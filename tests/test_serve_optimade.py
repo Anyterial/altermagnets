@@ -235,7 +235,7 @@ def test_structure_downloads_serve_generated_cif_and_poscar(tmp_path: Path) -> N
                 ("POSCAR", "text/plain", 'attachment; filename="POSCAR"', "POSCAR"),
             ]
             for filename, content_type, disposition, local_name in cases:
-                resp = live.get(f"/extensions/figures/{record.id}/{filename}")
+                resp = live.get(f"/extensions/files/{record.id}/{filename}")
                 assert resp.status_code == 200, resp.text
                 assert resp.headers["content-type"].startswith(content_type)
                 assert resp.headers["content-disposition"] == disposition
@@ -250,14 +250,78 @@ def test_structure_downloads_serve_generated_cif_and_poscar(tmp_path: Path) -> N
                 assert sorted(loaded.species_at_sites) == sorted(expected.species_at_sites)
 
             # A non-whitelisted filename falls through to the figure lookup and 404s.
-            assert live.get(f"/extensions/figures/{record.id}/structure.xyz").status_code == 404
+            assert live.get(f"/extensions/files/{record.id}/structure.xyz").status_code == 404
 
             # A material without a structure yields 404 for both generated files.
             opened.store.save(
                 replace(record, id="anyt.am-1-7777", immutable_id=None, structure=None, screening_rank=7777)
             )
-            assert live.get("/extensions/figures/anyt.am-1-7777/structure.cif").status_code == 404
-            assert live.get("/extensions/figures/anyt.am-1-7777/POSCAR").status_code == 404
+            assert live.get("/extensions/files/anyt.am-1-7777/structure.cif").status_code == 404
+            assert live.get("/extensions/files/anyt.am-1-7777/POSCAR").status_code == 404
+    finally:
+        opened.database.dispose()
+
+
+# Downloadable files that resolve end-to-end through the real combined mount today.
+# Add "structure.cif" here when httk-atomistic's opt-in lossy CIF writer lands.
+_COMBINED_DOWNLOAD_FILES = ["POSCAR"]
+
+
+def test_combined_mount_serves_files_route_downloads_and_figures(tmp_path: Path) -> None:
+    """Through the real combined mount, the client-built download URL and a served
+    figure URL both resolve under the renamed ``/extensions/files/`` route.
+
+    Regression that would have caught the reported bug: it builds the download URL
+    exactly as the widget does (resolve the sibling ``extensions/...`` path against
+    the discovered ``.../optimade/amdb/v1`` API base) and GETs it against the app
+    mounted the way ``create_combined_app`` mounts the AMDB service.
+    """
+    from urllib.parse import urljoin
+
+    from httk.serve import ASGIAppMount, compose_asgi_apps
+    from starlette.applications import Starlette
+
+    source = write_source_tables(tmp_path / "tables")
+    details = write_detail_assets(tmp_path / "details")
+    opened = material_store.open_in_memory_store(source, details_dir=details)
+    assert opened is not None
+    amdb_app = build_service_app(
+        public_base_url="http://testserver/optimade/amdb",
+        store=opened.store,
+        details_root=details,
+    )
+    app = compose_asgi_apps([ASGIAppMount("/optimade/amdb", amdb_app)], root=ASGIAppMount("/", Starlette()))
+    try:
+        with TestClient(app, base_url="http://testserver") as live:
+            searcher = opened.store.searcher()
+            material = searcher.variable(material_store.MaterialRecord)
+            record = searcher.results(material=material).first()["material"]
+            expected = material_store.material_structure(record)
+            assert expected is not None
+
+            # Mirror the widget: the extensions route is a sibling of /v1, so a
+            # relative path resolved against the discovered API base replaces "v1".
+            api_base = "http://testserver/optimade/amdb/v1"
+            for filename in _COMBINED_DOWNLOAD_FILES:
+                url = urljoin(api_base, f"extensions/files/{record.id}/{filename}")
+                assert url == f"http://testserver/optimade/amdb/extensions/files/{record.id}/{filename}"
+                resp = live.get(url)
+                assert resp.status_code == 200, resp.text
+                local = tmp_path / filename
+                local.write_text(resp.text, encoding="utf-8")
+                loaded = load(str(local))
+                assert len(loaded.sites) == len(expected.sites)
+                assert sorted(loaded.species_at_sites) == sorted(expected.species_at_sites)
+
+            # A served figure URL resolves under the renamed route (protects the rename).
+            attributes = live.get(
+                f"/optimade/amdb/v1/structures/{record.id}", params={"response_fields": "_httk_custom_figures"}
+            ).json()["data"]["attributes"]
+            figure_url = next(
+                (fig["url"] for fig in (attributes.get("_httk_custom_figures") or []) if fig.get("available")), None
+            )
+            assert figure_url is not None and "/extensions/files/" in figure_url
+            assert live.get(figure_url).status_code == 200
     finally:
         opened.database.dispose()
 
@@ -446,12 +510,12 @@ def test_service_figure_route_whitelist_headers_and_dark_cache(providers: list, 
     )
     client = ApiClient(app)
 
-    light = client.get(f"/extensions/figures/{material_id}/plot.svg")
-    png = client.get(f"/extensions/figures/{material_id}/plot.png")
-    dark = client.get(f"/extensions/figures/{material_id}/dark--plot.svg")
+    light = client.get(f"/extensions/files/{material_id}/plot.svg")
+    png = client.get(f"/extensions/files/{material_id}/plot.png")
+    dark = client.get(f"/extensions/files/{material_id}/dark--plot.svg")
     assert client.get(f"/figures/{material_id}/plot.svg").status_code == 404
     svg_path.unlink()
-    cached_dark = client.get(f"/extensions/figures/{material_id}/dark--plot.svg")
+    cached_dark = client.get(f"/extensions/files/{material_id}/dark--plot.svg")
 
     assert light.status_code == 200
     assert light.content.startswith(b"<svg")
@@ -462,10 +526,10 @@ def test_service_figure_route_whitelist_headers_and_dark_cache(providers: list, 
     assert png.status_code == 200 and png.content.startswith(b"\x89PNG")
     assert dark.status_code == 200 and b"#f2f5fb" in dark.content
     assert cached_dark.status_code == 200 and cached_dark.content == dark.content
-    assert client.get(f"/extensions/figures/{material_id}/CONTCAR").status_code == 404
-    assert client.get("/extensions/figures/not-a-material/plot.svg").status_code == 404
-    assert client.get(f"/extensions/figures/{material_id}/../CONTCAR").status_code == 404
-    assert client.get(f"/extensions/figures/{material_id}/%2e%2e/CONTCAR").status_code == 404
+    assert client.get(f"/extensions/files/{material_id}/CONTCAR").status_code == 404
+    assert client.get("/extensions/files/not-a-material/plot.svg").status_code == 404
+    assert client.get(f"/extensions/files/{material_id}/../CONTCAR").status_code == 404
+    assert client.get(f"/extensions/files/{material_id}/%2e%2e/CONTCAR").status_code == 404
 
 
 def test_service_dark_cache_respects_byte_budget(
@@ -481,9 +545,9 @@ def test_service_dark_cache_respects_byte_budget(
     )
     client = ApiClient(app)
 
-    assert client.get(f"/extensions/figures/{material_id}/dark--plot.svg").status_code == 200
+    assert client.get(f"/extensions/files/{material_id}/dark--plot.svg").status_code == 200
     svg_path.unlink()
-    assert client.get(f"/extensions/figures/{material_id}/dark--plot.svg").status_code == 404
+    assert client.get(f"/extensions/files/{material_id}/dark--plot.svg").status_code == 404
 
 
 def test_size_none_is_unavailable_in_projection_and_route(providers: list, tmp_path: Path) -> None:
@@ -507,7 +571,7 @@ def test_size_none_is_unavailable_in_projection_and_route(providers: list, tmp_p
         dataset=dataset,
         details_root=tmp_path,
     )
-    assert ApiClient(app).get(f"/extensions/figures/{material_id}/plot.svg").status_code == 404
+    assert ApiClient(app).get(f"/extensions/files/{material_id}/plot.svg").status_code == 404
 
 
 def test_service_figure_route_missing_file_and_recorded_size_cap(providers: list, tmp_path: Path) -> None:
@@ -522,9 +586,9 @@ def test_service_figure_route_missing_file_and_recorded_size_cap(providers: list
         details_root=tmp_path,
     )
     client = ApiClient(app)
-    assert client.get(f"/extensions/figures/{material_id}/plot.png").status_code == 404
+    assert client.get(f"/extensions/files/{material_id}/plot.png").status_code == 404
     png_path.unlink()
-    assert client.get(f"/extensions/figures/{material_id}/plot.png").status_code == 404
+    assert client.get(f"/extensions/files/{material_id}/plot.png").status_code == 404
 
 
 def test_service_cors_is_configured_only_for_optimade(providers: list, tmp_path: Path) -> None:
@@ -548,7 +612,7 @@ def test_service_cors_is_configured_only_for_optimade(providers: list, tmp_path:
     allowed_get = client.request("GET", "/v1/info", headers={"Origin": "https://static.example"})
     denied_get = client.request("GET", "/v1/info", headers={"Origin": "https://other.example"})
     figure = client.request(
-        "GET", f"/extensions/figures/{material_id}/plot.png", headers={"Origin": "https://other.example"}
+        "GET", f"/extensions/files/{material_id}/plot.png", headers={"Origin": "https://other.example"}
     )
 
     assert allowed.status_code == 200
@@ -841,8 +905,8 @@ def test_detail_properties_and_absolute_figures(client: ApiClient) -> None:
     assert attributes["_anyterial_magndata_variants"][0]["source"] == "collinear"
     assert attributes["_httk_custom_figures"][0] == {
         "key": "band",
-        "url": "https://plots.example.test/api/extensions/figures/anyt.am-1-1/band.svg",
-        "dark_url": "https://plots.example.test/api/extensions/figures/anyt.am-1-1/dark--band.svg",
+        "url": "https://plots.example.test/api/extensions/files/anyt.am-1-1/band.svg",
+        "dark_url": "https://plots.example.test/api/extensions/files/anyt.am-1-1/dark--band.svg",
         "media_type": "image/svg+xml",
         "available": True,
     }

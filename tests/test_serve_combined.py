@@ -220,7 +220,7 @@ def test_combined_figure_route_and_nested_public_base() -> None:
         assert response.status_code == 200
         figures = response.json()["data"][0]["attributes"]["_httk_custom_figures"]
         figure = next(item for item in figures if item["key"] == "structure")
-        assert figure["url"].startswith("http://127.0.0.1:8080/optimade/amdb/extensions/figures/")
+        assert figure["url"].startswith("http://127.0.0.1:8080/optimade/amdb/extensions/files/")
         served = client.get(urlsplit(figure["url"]).path)
         old_route = client.get("/optimade/amdb/figures/anyt.am-1-1/structure.svg")
 

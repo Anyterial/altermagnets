@@ -299,7 +299,7 @@ test("structure card renders a sandboxed CrysViz iframe when structure data is p
   assert.equal(frame.getAttribute("loading"), "lazy");
   assert.equal(frame.getAttribute("title"), "Interactive crystal structure (CrysViz)");
   const src = frame.getAttribute("src");
-  assert.ok(src.startsWith(`${CRYSVIZ_BASE}?widget=1#load-file=`));
+  assert.ok(src.startsWith(`${CRYSVIZ_BASE}?widget=1&theme=light#load-file=`));
   const { name, payload } = decodeCrysvizSrc(src);
   assert.ok(name.endsWith(".crysviz"));
   assert.deepEqual(payload.frames[0].positions, [[0, 0, 0], [0.5, 0.5, 0.5]]);
@@ -450,4 +450,35 @@ test("structure card falls back to a single loaded frame when the alternatives r
   const { payload } = decodeCrysvizSrc(frame.getAttribute("src"));
   assert.equal(payload.frames.length, 1);
   assert.equal("frameKinds" in payload, false);
+});
+
+
+test("crysvizIframeSrc carries the current page theme and mirrors app.js dark resolution", () => {
+  const document = new DomDocument("https://site.example.test/material");
+  installDom(document);
+  // Absent data-theme resolves to light (matches app.js figure swapping).
+  const light = material.crysvizIframeSrc(structureAttributes(), CRYSVIZ_BASE);
+  assert.ok(light.split("#", 1)[0].includes("theme=light"));
+  // Only the "dark" site theme is dark.
+  document.documentElement.setAttribute("data-theme", "dark");
+  const dark = material.crysvizIframeSrc(structureAttributes(), CRYSVIZ_BASE);
+  assert.ok(dark.split("#", 1)[0].includes("theme=dark"));
+  // "twilight" is a non-dark site theme, so the widget stays light.
+  document.documentElement.setAttribute("data-theme", "twilight");
+  assert.ok(material.crysvizIframeSrc(structureAttributes(), CRYSVIZ_BASE).split("#", 1)[0].includes("theme=light"));
+  // The #load-file hash is still raw: exactly one "|" between the encoded halves.
+  assert.equal(dark.split("#load-file=", 2)[1].split("|").length, 2);
+});
+
+test("structure iframe uses the document theme and follows a live theme toggle", async () => {
+  const resource = { id: "s-1", type: "structures", attributes: structureAttributes() };
+  const { document, result } = shell({ crysviz_base_url: CRYSVIZ_BASE });
+  document.documentElement.setAttribute("data-theme", "dark");
+  globalThis.fetch = fetchFor(resource).fetch;
+  await material.loadShell(result, OptimadeTransport);
+  const frame = result.querySelectorAll("iframe.crysviz-frame")[0];
+  assert.ok(frame.getAttribute("src").split("#", 1)[0].includes("theme=dark"));
+  // Toggle to a light theme: the MutationObserver rebuilds the src.
+  document.documentElement.setAttribute("data-theme", "light");
+  assert.ok(frame.getAttribute("src").split("#", 1)[0].includes("theme=light"));
 });

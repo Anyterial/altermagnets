@@ -302,6 +302,21 @@ function encodeCrysvizPayload(payload) {
   return btoa(binary);
 }
 
+// The effective CrysViz theme, mirroring app.js theme-aware figures: only the
+// "dark" site theme is dark; "twilight"/"light"/absent all resolve to light.
+function pageTheme() {
+  return document.documentElement?.getAttribute?.("data-theme") === "dark" ? "dark" : "light";
+}
+
+// Live theme toggle: app.js swaps theme-aware <img>s by re-reading data-theme on
+// the root element; an iframe is not an <img>, so we mirror that by rebuilding the
+// iframe src when data-theme changes (the iframe reloads, resetting its rotation).
+function onThemeChange(listener) {
+  if (typeof MutationObserver !== "function") return; // initial-theme-only where unavailable
+  const observer = new MutationObserver(listener);
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+}
+
 // The iframe src for the interactive structure, or "" to fall back to the static
 // figure (no structure data, malformed base, or encoded URL over the length
 // guard). The widget flag is set with URLSearchParams so a base already carrying
@@ -319,6 +334,7 @@ function crysvizIframeSrc(attributes, base = crysvizBaseUrl, alternatives = []) 
   }
   url.hash = "";
   url.searchParams.set("widget", "1");
+  url.searchParams.set("theme", pageTheme());
   const src = `${url.toString()}#load-file=${encodeURIComponent("structure.crysviz")}|${encodeURIComponent(encodeCrysvizPayload(payload))}`;
   return src.length > CRYSVIZ_URL_MAX_CHARS ? "" : src;
 }
@@ -372,6 +388,12 @@ function buildFigures(attributes, apiBase, alternatives = []) {
       frame.setAttribute("loading", "lazy");
       visual.append(frame);
       figure.append(visual);
+      // Follow live theme toggles: rebuild the src (with the new theme) — reuses
+      // crysvizIframeSrc so there is one source of truth for the URL shape.
+      onThemeChange(() => {
+        const next = crysvizIframeSrc(attributes, crysvizBaseUrl, alternatives);
+        if (next) frame.setAttribute("src", next);
+      });
     } else if (light) {
       availableCount += 1;
       const visual = node("div", "figure-visual");

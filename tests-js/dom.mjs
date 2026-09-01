@@ -129,6 +129,9 @@ class DomElement extends DomNode {
 
   setAttribute(name, value) {
     this.attributes.set(name, String(value));
+    (this.__observers || []).forEach(({ cb, opts }) => {
+      if (!opts.attributeFilter || opts.attributeFilter.includes(name)) cb([{ type: "attributes", attributeName: name }]);
+    });
   }
 
   getAttribute(name) {
@@ -153,6 +156,7 @@ export class DomDocument extends DomNode {
     super();
     this.baseURI = baseURI;
     this.readyState = "complete";
+    this.documentElement = new DomElement("html");
   }
 
   createElement(tagName) {
@@ -166,9 +170,23 @@ export class DomDocument extends DomNode {
   addEventListener() {}
 }
 
+export class MutationObserver {
+  constructor(callback) {
+    this.callback = callback;
+  }
+
+  observe(node, opts = {}) {
+    node.__observers = node.__observers || [];
+    node.__observers.push({ cb: this.callback, opts });
+  }
+
+  disconnect() {}
+}
+
 export const installDom = (document) => {
   globalThis.Node = DomNode;
   globalThis.CSS = { escape: (value) => String(value) };
+  globalThis.MutationObserver = MutationObserver;
   globalThis.document = document;
 };
 

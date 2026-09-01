@@ -262,9 +262,8 @@ def test_structure_downloads_serve_generated_cif_and_poscar(tmp_path: Path) -> N
         opened.database.dispose()
 
 
-# Downloadable files that resolve end-to-end through the real combined mount today.
-# Add "structure.cif" here when httk-atomistic's opt-in lossy CIF writer lands.
-_COMBINED_DOWNLOAD_FILES = ["POSCAR"]
+# Downloadable files that resolve end-to-end through the real combined mount.
+_COMBINED_DOWNLOAD_FILES = ["structure.cif", "POSCAR"]
 
 
 def test_combined_mount_serves_files_route_downloads_and_figures(tmp_path: Path) -> None:

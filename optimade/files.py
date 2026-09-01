@@ -112,12 +112,15 @@ class _StructureDownload:
     format: str  # httk-core save() format tag
     content_type: str
     suffix: str  # attachment-name suffix; "" ⇒ the fixed name POSCAR
+    # CIF stores a/b/c/α/β/γ, which cannot exactly reproduce a relaxed cell's surd
+    # basis; the writer refuses unless told to round cell params (coords stay exact).
+    approximate: bool = False
 
 
 #: Fixed-name whitelist served from the DATABASE structure via httk-atomistic
 #: writers (never the detail tree). Keyed by the request filename.
 STRUCTURE_DOWNLOADS: dict[str, _StructureDownload] = {
-    "structure.cif": _StructureDownload("cif", "chemical/x-cif", ".cif"),
+    "structure.cif": _StructureDownload("cif", "chemical/x-cif", ".cif", approximate=True),
     "POSCAR": _StructureDownload("vasp-poscar", "text/plain", ""),
 }
 
@@ -141,7 +144,7 @@ def structure_download_body(record: Any, download: _StructureDownload) -> bytes 
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "structure"
         try:
-            save(structure, path, format=download.format)
+            save(structure, path, format=download.format, **({"approximate": True} if download.approximate else {}))
             text = path.read_text(encoding="utf-8")
         except (ValueError, OSError):
             return None

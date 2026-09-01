@@ -326,9 +326,10 @@ function structureDownloadLinks(id, apiBase) {
   if (!id || typeof apiBase !== "string" || !apiBase) return [];
   const base = apiBase.replace(/\/+$/, "");
   const fileUrl = (name) => figureUrl(`extensions/files/${encodeURIComponent(id)}/${name}`, base);
-  // POSCAR only for now: httk-atomistic's CIF writer refuses these relaxed cells
-  // until its lossy opt-in lands — then add { label: "Download CIF", file: "structure.cif" }.
-  const specs = [{ label: "Download POSCAR", file: "POSCAR" }];
+  const specs = [
+    { label: "Download CIF", file: "structure.cif" },
+    { label: "Download POSCAR", file: "POSCAR" },
+  ];
   const links = [];
   for (const { label, file } of specs) {
     const url = fileUrl(file);

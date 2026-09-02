@@ -25,6 +25,8 @@ from typing import Annotated, Any, ClassVar, cast
 
 from httk.atomistic import (
     CartesianSiteMoments,
+    Cell,
+    Sites,
     UnitcellStructure,
     UnitcellStructureView,
     conventional_cell,
@@ -1835,6 +1837,111 @@ def _entry_records_layout() -> dict[type, type | tuple[type, ...]]:
     }
 
 
+#: spglib magnetic-symmetry tolerance (Å), matched to the relaxed-DFT coordinate
+#: noise like :data:`RELAXED_STRUCTURE_PRECISION` rather than machine epsilon. It
+#: is reused as the fractional-coordinate dedup tolerance when folding onto the
+#: primitive cell, and as the µB threshold for the collinear (zero x/y) check.
+_MAGNETIC_SYMPREC = 1e-3
+
+
+def _magnetic_alternative_cell(structure: UnitcellStructure, kind: str) -> UnitcellStructure:
+    """Derive a magnetic conventional/primitive cell via spglib's MSG dataset.
+
+    httk-atomistic's exact :func:`conventional_cell`/:func:`primitive_cell` use
+    nuclear symmetry only and refuse when the magnetic order breaks a nuclear
+    translation. This fallback standardizes on the *magnetic* space group via
+    ``spglib.get_magnetic_symmetry_dataset`` and returns the result as a plain
+    :class:`~httk.atomistic.UnitcellStructure` under the same ``kind`` --
+    including when the cell is identical to the input.
+
+    The structure must carry collinear VASP moments as
+    :class:`~httk.atomistic.CartesianSiteMoments` with zero x/y on every site
+    (the loader's ``(0, 0, m)`` contract); the scalar z components are spglib's
+    magmoms. ``"conventional"`` uses the dataset's magnetic standardized cell
+    directly; ``"primitive"`` folds that cell onto ``primitive_lattice``.
+
+    :param structure: The moment-carrying structure to standardize.
+    :param kind: ``"conventional"`` or ``"primitive"``.
+    :return: The magnetic conventional or primitive cell.
+    :raises ValueError: If the moments are not collinear along z, spglib returns
+        no dataset, or a primitive fold yields inconsistent moments/site counts.
+    :raises ImportError: If spglib is not installed.
+    """
+    import numpy as np
+    import spglib
+
+    moments = structure.site_moments
+    if not isinstance(moments, CartesianSiteMoments):
+        raise ValueError("magnetic alternative cell requires CartesianSiteMoments")
+    cartesian = moments.cartesian_moments.to_floats()
+    if any(abs(row[0]) > _MAGNETIC_SYMPREC or abs(row[1]) > _MAGNETIC_SYMPREC for row in cartesian):
+        raise ValueError("magnetic alternative cell requires collinear moments along z (zero x/y components)")
+    magmoms = [float(row[2]) for row in cartesian]
+
+    # Mirror httk-atomistic's own spglib bridge (recognition._find_symmetry).
+    names = sorted(set(structure.species_at_sites))
+    lattice = structure.cell.basis.to_floats()
+    positions = structure.sites.reduced_coords.to_floats()
+    numbers = [names.index(name) + 1 for name in structure.species_at_sites]
+
+    dataset = spglib.get_magnetic_symmetry_dataset((lattice, positions, numbers, magmoms), symprec=_MAGNETIC_SYMPREC)
+    if dataset is None:
+        raise ValueError(f"spglib found no magnetic symmetry dataset at symprec={_MAGNETIC_SYMPREC}")
+
+    std_lattice = np.asarray(dataset.std_lattice, dtype=float)
+    std_positions = np.asarray(dataset.std_positions, dtype=float)
+    std_types = [int(number) for number in dataset.std_types]
+    std_tensors = [float(tensor) for tensor in np.ravel(np.asarray(dataset.std_tensors, dtype=float))]
+    if len(std_tensors) != len(std_positions):
+        raise ValueError("magnetic std_tensors are not collinear scalars")
+    # std_rotation_matrix is deliberately not applied: a collinear (0, 0, m) moment is a
+    # frame-free scalar convention, so the standardized scalar tensors carry through as-is,
+    # matching httk's own collinear-moment carry-through.
+
+    # Snap 6 orders below the dedup tolerance, then wrap into [0, 1): spglib's std_positions
+    # can be a hair negative (e.g. -1.6e-32) and a raw ``% 1.0`` fold can emit exactly 1.0.
+    if kind == "conventional":
+        cell_rows = std_lattice.tolist()
+        coords = (np.round(std_positions, 9) % 1.0).tolist()
+        types = std_types
+        tensors = std_tensors
+    elif kind == "primitive":
+        prim_lattice = np.asarray(dataset.primitive_lattice, dtype=float)
+        cell_rows = prim_lattice.tolist()
+        # spglib's row-vector convention: cart = frac @ lattice, so frac_prim = cart @ inv(prim_lattice).
+        fractional = np.round((std_positions @ std_lattice) @ np.linalg.inv(prim_lattice), 9) % 1.0
+        coords = []
+        types = []
+        tensors = []
+        for point, number, tensor in zip(fractional.tolist(), std_types, std_tensors):
+            duplicate = False
+            for index, kept in enumerate(coords):
+                delta = [(point[axis] - kept[axis] + 0.5) % 1.0 - 0.5 for axis in range(3)]
+                if types[index] == number and all(abs(component) < _MAGNETIC_SYMPREC for component in delta):
+                    if not math.isclose(tensors[index], tensor, rel_tol=1e-3, abs_tol=1e-3):
+                        raise ValueError("magnetic primitive fold maps sites with different moments together")
+                    duplicate = True
+                    break
+            if not duplicate:
+                coords.append(point)
+                types.append(number)
+                tensors.append(tensor)
+        expected = round(len(std_positions) * abs(np.linalg.det(prim_lattice)) / abs(np.linalg.det(std_lattice)))
+        if len(coords) != expected:
+            raise ValueError(f"magnetic primitive fold gave {len(coords)} sites, expected {expected}")
+    else:
+        raise ValueError(f"unknown magnetic alternative kind: {kind!r}")
+
+    species_at_sites = [names[number - 1] for number in types]
+    return UnitcellStructure(
+        Cell(cell_rows, precision=RELAXED_STRUCTURE_PRECISION),
+        Sites(coords, precision=RELAXED_STRUCTURE_PRECISION),
+        structure.species,
+        species_at_sites,
+        site_moments=CartesianSiteMoments([[0.0, 0.0, tensor] for tensor in tensors]),
+    )
+
+
 #: The derived-cell alternatives stored beside each main material record.
 _ALTERNATIVE_CELLS: tuple[tuple[str, Callable[[UnitcellStructure], Any]], ...] = (
     ("conventional", conventional_cell),
@@ -1848,9 +1955,16 @@ def _save_alternative_cells(store: SqlStore, materials: Iterable[MaterialRecord]
     Bulk ingest is mains-only, so alternatives are saved with ordinary
     :meth:`SqlStore.save` after the bulk context finalizes: each shares its
     main's public id, carries the same scalar metadata, and gets its own
-    lineage under an immutable ``<id>~<kind>~<n>``. A derivation that raises
-    :class:`ValueError` (a magnetic supercell, or a site-moment correspondence
-    failure) skips only that kind, with a warning naming the material and kind.
+    lineage under an immutable ``<id>~<kind>~<n>``. The exact nuclear-symmetry
+    derivation raises :class:`ValueError` for the whole moment-related refusal
+    family -- both a magnetic supercell (the magnetic order breaks a nuclear
+    translation) and a site-moment correspondence failure. The fallback catches
+    that family as a whole (not one specific message): whenever the structure
+    carries site moments, the kind is instead derived from spglib's magnetic
+    (MSG) symmetry dataset via :func:`_magnetic_alternative_cell` and stored
+    under the same kind -- including when it equals the input cell. The skip
+    warning fires only when that magnetic fallback also fails, or when the
+    structure has no moments to fall back on.
 
     :return: The ``(derived, skipped)`` counts across every material and kind.
     """
@@ -1861,18 +1975,39 @@ def _save_alternative_cells(store: SqlStore, materials: Iterable[MaterialRecord]
             continue
         assert material.id is not None  # always set to the amdb id at construction
         for kind, derive in _ALTERNATIVE_CELLS:
+            derived_from_magnetic = False
             try:
                 cell = derive(structure).structure
             except ValueError as error:
-                skipped += 1
-                logger.warning("Skipping %s alternative for %s: %s", kind, material.id, error)
-                continue
+                if structure.site_moments is None:
+                    skipped += 1
+                    logger.warning("Skipping %s alternative for %s: %s", kind, material.id, error)
+                    continue
+                try:
+                    cell = _magnetic_alternative_cell(structure, kind)
+                except (ValueError, ImportError) as fallback_error:
+                    skipped += 1
+                    logger.warning(
+                        "Skipping %s alternative for %s: %s (magnetic-symmetry fallback failed: %s)",
+                        kind,
+                        material.id,
+                        error,
+                        fallback_error,
+                    )
+                    continue
+                derived_from_magnetic = True
             store.save(
                 replace(material, structure=_material_structure_record(cell)),
                 alternative_of=material.id,
                 alternative_kind=kind,
             )
             derived += 1
+            if derived_from_magnetic:
+                logger.info(
+                    "Derived %s alternative for %s from magnetic symmetry (spglib MSG dataset)",
+                    kind,
+                    material.id,
+                )
     logger.info("Stored %d alternative cell records, skipped %d derivations", derived, skipped)
     return derived, skipped
 

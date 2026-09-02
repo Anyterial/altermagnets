@@ -1,11 +1,13 @@
+from dataclasses import replace
 from pathlib import Path
 
 import material_store
 import pytest
 from conftest import write_detail_assets, write_source_tables
-from httk.atomistic import CartesianSiteMoments
+from httk.atomistic import CartesianSiteMoments, Cell, Sites, Species, UnitcellStructure
 from material_store import (
     MaterialRecord,
+    _magnetic_alternative_cell,
     build_store,
     load_material_structure,
     material_structure,
@@ -244,3 +246,125 @@ def test_coupled_material_links_to_run_and_carries_total_energy(tmp_path: Path) 
         assert opened.store.linked(uncoupled, "produced_by") == ()
     finally:
         opened.database.dispose()
+
+
+def _collinear_structure(
+    lattice: list[list[float]], coords: list[list[float]], moments: list[list[float]]
+) -> UnitcellStructure:
+    species = [Species(name="Fe", chemical_symbols=("Fe",), concentration=(1.0,))]
+    return UnitcellStructure(
+        Cell(lattice),
+        Sites(coords),
+        species,
+        ["Fe"] * len(coords),
+        site_moments=CartesianSiteMoments(moments),
+    )
+
+
+def _z_moments(structure: UnitcellStructure) -> list[float]:
+    assert structure.site_moments is not None
+    return [row[2] for row in structure.site_moments.cartesian_moments.to_floats()]
+
+
+def test_magnetic_alternative_cell_keeps_afm_primitive_cell() -> None:
+    pytest.importorskip("spglib")
+    # 2a x a x b doubled simple cubic with a +/- pair: the nuclear primitive would
+    # halve it, but this cell already is the magnetic primitive.
+    structure = _collinear_structure(
+        [[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+        [[0.0, 0.0, 1.0], [0.0, 0.0, -1.0]],
+    )
+    input_volume = float(abs(structure.cell.volume.to_float()))
+
+    primitive = _magnetic_alternative_cell(structure, "primitive")
+    assert len(primitive.sites) == 2
+    assert float(abs(primitive.cell.volume.to_float())) == pytest.approx(input_volume)
+    assert sorted(_z_moments(primitive)) == pytest.approx([-1.0, 1.0])
+
+    conventional = _magnetic_alternative_cell(structure, "conventional")
+    assert len(conventional.sites) == 2
+    assert sorted(_z_moments(conventional)) == pytest.approx([-1.0, 1.0])
+    # The projected record (which needs structure.composition) must accept the result.
+    material_store._material_structure_record(conventional)
+
+
+def test_magnetic_alternative_cell_reduces_afm_chain() -> None:
+    pytest.importorskip("spglib")
+    # A genuine reduction: a 4-site +/- chain folds to its 2-site magnetic primitive.
+    structure = _collinear_structure(
+        [[4.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        [[0.0, 0.0, 0.0], [0.25, 0.0, 0.0], [0.5, 0.0, 0.0], [0.75, 0.0, 0.0]],
+        [[0.0, 0.0, 1.0], [0.0, 0.0, -1.0], [0.0, 0.0, 1.0], [0.0, 0.0, -1.0]],
+    )
+    input_volume = float(abs(structure.cell.volume.to_float()))
+
+    primitive = _magnetic_alternative_cell(structure, "primitive")
+    assert len(primitive.sites) == 2
+    assert float(abs(primitive.cell.volume.to_float())) == pytest.approx(input_volume / 2.0)
+    assert sorted(_z_moments(primitive)) == pytest.approx([-1.0, 1.0])
+
+
+def test_magnetic_alternative_cell_rejects_noncollinear_moments() -> None:
+    pytest.importorskip("spglib")
+    structure = _collinear_structure(
+        [[4.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        [[0.0, 0.0, 0.0], [0.25, 0.0, 0.0], [0.5, 0.0, 0.0], [0.75, 0.0, 0.0]],
+        [[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [1.0, 0.0, 0.0], [0.0, 0.0, -1.0]],
+    )
+    with pytest.raises(ValueError, match="collinear"):
+        _magnetic_alternative_cell(structure, "primitive")
+
+
+def test_magnetic_alternative_cell_folds_non_orthogonal_lattice() -> None:
+    pytest.importorskip("spglib")
+    # A non-orthogonal (hexagonal) lattice quadrupled along a1 exercises the fold on a
+    # cell where inv(L) != inv(L).T. (A transposed-inverse fold is caught by
+    # test_magnetic_alternative_cell_reduces_afm_chain via the site-count check, since
+    # spglib's primitive_lattice has a non-symmetric inverse even there; this test pins
+    # the non-orthogonal input path.) The +/- chain folds 4 -> 2 at half volume.
+    structure = _collinear_structure(
+        [[12.0, 0.0, 0.0], [-1.5, 2.598076, 0.0], [0.0, 0.0, 5.0]],
+        [[0.0, 0.0, 0.0], [0.25, 0.0, 0.0], [0.5, 0.0, 0.0], [0.75, 0.0, 0.0]],
+        [[0.0, 0.0, 1.0], [0.0, 0.0, -1.0], [0.0, 0.0, 1.0], [0.0, 0.0, -1.0]],
+    )
+    input_volume = float(abs(structure.cell.volume.to_float()))
+
+    primitive = _magnetic_alternative_cell(structure, "primitive")
+    assert len(primitive.sites) == 2
+    assert float(abs(primitive.cell.volume.to_float())) == pytest.approx(input_volume / 2.0)
+    assert sorted(_z_moments(primitive)) == pytest.approx([-1.0, 1.0])
+
+
+class _RecordingStore:
+    """Minimal stand-in that records the alternative saves `_save_alternative_cells` makes."""
+
+    def __init__(self) -> None:
+        self.saved: list[tuple[str, str]] = []
+
+    def save(self, record: object, *, alternative_of: str, alternative_kind: str) -> None:
+        self.saved.append((alternative_of, alternative_kind))
+
+
+def test_save_alternative_cells_uses_magnetic_fallback(tmp_path: Path) -> None:
+    pytest.importorskip("spglib")
+    # A real MaterialRecord (from the fixture build) whose structure is swapped for the
+    # 4-site +/- chain: its nuclear conventional/primitive derivations both refuse, so the
+    # magnetic fallback must supply both kinds with nothing skipped.
+    source = write_source_tables(tmp_path / "tables")
+    details = write_detail_assets(tmp_path / "details")
+    target = build_store(tmp_path / "store.duckdb", data_dir=source, details_dir=details, legacy=True)
+    base = _materials_by_id(target)["anyt.am-1-1"]
+    chain = _collinear_structure(
+        [[4.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        [[0.0, 0.0, 0.0], [0.25, 0.0, 0.0], [0.5, 0.0, 0.0], [0.75, 0.0, 0.0]],
+        [[0.0, 0.0, 1.0], [0.0, 0.0, -1.0], [0.0, 0.0, 1.0], [0.0, 0.0, -1.0]],
+    )
+    material = replace(base, structure=material_store._material_structure_record(chain), id="anyt.am-1-fold")
+
+    store = _RecordingStore()
+    derived, skipped = material_store._save_alternative_cells(store, [material])  # type: ignore[arg-type]
+
+    assert (derived, skipped) == (2, 0)
+    assert sorted(kind for _, kind in store.saved) == ["conventional", "primitive"]
+    assert all(alternative_of == "anyt.am-1-fold" for alternative_of, _ in store.saved)

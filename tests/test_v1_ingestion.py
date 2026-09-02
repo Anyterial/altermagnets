@@ -181,7 +181,9 @@ def test_run_and_details_moments_share_content_id(tmp_path: Path) -> None:
     shard = details / "amdb-1" / "0" / "00" / "000" / "amdb-1-0001"
     with bz2.open(shard / "MAGN.bz2", "rt", encoding="utf-8") as handle:
         moments = tuple(parse_magnetization_moments(handle.read()))
-    from_run = _COLLECT._with_site_moments(load(str(shard / "CONTCAR.bz2")), moments)
+    from_run = _COLLECT._with_site_moments(
+        load(str(shard / "CONTCAR.bz2"), precision=_COLLECT.RELAXED_STRUCTURE_PRECISION), moments
+    )
     assert UnitcellStructureView(from_details).id == UnitcellStructureView(from_run).id
 
 

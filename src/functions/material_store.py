@@ -123,6 +123,7 @@ logger = report.context_logger(logging.getLogger("httk.altermagnets.material_sto
 #: silently adopted with missing child tables reading as ``None``. Bump on every
 #: stored-record schema change.
 STORE_LAYOUT_VERSION = 9  # bump: produced_by weak link + _httk_custom_total_energy replace provenance snapshot
+RELAXED_STRUCTURE_PRECISION = 5e-4  # Cartesian Å; relaxed-DFT coordinate precision, so symmetry tolerance is realistic (not ~machine epsilon from full-precision CONTCAR digits)
 
 ELEMENT_PATTERN = re.compile(r"[A-Z][a-z]?")
 SCREENING_RESULTS_FILENAME = "high_throughput_screening_results_fixed.csv"
@@ -977,7 +978,7 @@ def load_material_structure(details_root: Path, material_id: str) -> UnitcellStr
         logger.debug("No CONTCAR.bz2 for %s in %s", material_id, details_dir)
         return None
     try:
-        structure = load(str(contcar))
+        structure = load(str(contcar), precision=RELAXED_STRUCTURE_PRECISION)
     except Exception as error:
         # A malformed CONTCAR must not sink the dataset, but the failure must be
         # visible: an environmental cause (e.g. the CONTCAR reader missing) fails

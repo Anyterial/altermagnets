@@ -18,6 +18,8 @@ logger = logging.getLogger("httk.altermagnets.relax_and_scf_httk_v1")
 
 _TOTAL_ENERGY_DEFINITION = "https://schemas.httk.org/defs/v0.1/properties/core/total_energy"
 
+RELAXED_STRUCTURE_PRECISION = 5e-4  # Cartesian Å; relaxed-DFT coordinate precision, so symmetry tolerance is realistic (not ~machine epsilon from full-precision CONTCAR digits)
+
 
 def run_material(record: JobRecord) -> str:
     """Return the CSV-facing material name for a collected v1 task."""
@@ -118,7 +120,7 @@ def collect(record: JobRecord) -> Mapping[str, object]:
     inner = _inner_run(step)
 
     try:
-        input_structure = load(str(task_file(step, "POSCAR")))
+        input_structure = load(str(task_file(step, "POSCAR")), precision=RELAXED_STRUCTURE_PRECISION)
         # Keep this read as a validation of the input role; the v1 framework's
         # synthesized Run has no input edge to attach it to.
         UnitcellStructureView(input_structure)
@@ -126,7 +128,7 @@ def collect(record: JobRecord) -> Mapping[str, object]:
         logger.warning("%s: cannot read input_structure: %s", outer, error)
 
     try:
-        relaxed_structure = load(str(task_file(inner, "CONTCAR")))
+        relaxed_structure = load(str(task_file(inner, "CONTCAR")), precision=RELAXED_STRUCTURE_PRECISION)
     except Exception as error:
         logger.warning("%s: relaxed_structure unavailable: %s", outer, error)
         raise

@@ -213,3 +213,44 @@ def test_build_saves_only_coupled_runs_and_recovers_moments(tmp_path: Path) -> N
     assert recovered is not None and recovered.site_moments is not None
     # 2a no-structure fallback: MnTe has no run at all, details supplies the structure.
     assert material_structure(materials["anyt.am-1-2"]) is not None
+
+
+def test_extract_provenance_from_coupled_run() -> None:
+    from types import SimpleNamespace
+
+    from httk.core.data_records import DataRecord
+    from httk.core.provenance import Run, RunEdge
+
+    energy = DataRecord.from_value("urn:x", "_httk_total_energy", -12.5)
+    run = Run(
+        workflow_declaration_uri="https://schemas.httk.org/defs/v0.1/workflows/x",
+        artifacts=(
+            RunEdge("relaxed_structure", "structures", "STRUCTID"),
+            RunEdge("total_energy", "_httk_records", "REC"),
+            RunEdge("vasprun", "files", "F1"),
+        ),
+        outputs=(
+            RunEdge("relaxed_structure", "structures", "STRUCTID"),
+            RunEdge("total_energy", "_httk_records", "REC"),
+            RunEdge("vasprun", "files", "F1"),
+        ),
+        source_id="httk-v1:abc",
+    )
+    observation = material_store._RunObservation(
+        "anyt.am-1-1", "runid", "STRUCTID", object(), "raw", SimpleNamespace(run=run, outputs={"total_energy": energy})
+    )
+    prov = material_store._extract_provenance(observation, {"STRUCTID": "anyt.am-1-1"})
+    assert prov is not None
+    assert prov.source_id == "httk-v1:abc"
+    assert prov.workflow_uri == "https://schemas.httk.org/defs/v0.1/workflows/x"
+    assert prov.total_energy == -12.5
+    # Identical artifact/output sides fold into one edge whose role notes both.
+    labels = {edge.label: edge for edge in prov.edges}
+    assert labels["relaxed_structure"].role == "artifact+output"
+    # Structure edges resolve to the public material id; other ids stay unresolved.
+    assert labels["relaxed_structure"].material_id == "anyt.am-1-1"
+    assert labels["total_energy"].material_id is None
+    # A run-less observation yields no provenance.
+    assert material_store._extract_provenance(
+        material_store._RunObservation("x", "r", "s", object(), "raw", SimpleNamespace(run=None, outputs={})), {}
+    ) is None

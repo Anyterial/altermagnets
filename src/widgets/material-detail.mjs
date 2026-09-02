@@ -504,6 +504,74 @@ function buildVariantCards(variants) {
   return list;
 }
 
+// Same-page link to another material's detail view (keeps the current path, swaps ?id=).
+const materialPageHref = (id) => new URL(`?id=${encodeURIComponent(id)}`, document.baseURI).href;
+
+// Build the plain provenance OBJECT the renderer consumes, from the served
+// `_httk_custom_provenance` snapshot. A future live `_httk_runs` fetch can build
+// the same shape and feed buildProvenance unchanged. Returns null when empty.
+function provenanceFromAttributes(attributes) {
+  const raw = attributes && attributes._httk_custom_provenance;
+  if (!raw || typeof raw !== "object") return null;
+  const edges = arrayValue(raw.edges).map((edge) => ({
+    role: String(edge.role || ""),
+    label: String(edge.label || ""),
+    entryType: String(edge.entry_type || ""),
+    entryId: String(edge.entry_id || ""),
+    materialId: edge.material_id == null ? null : String(edge.material_id),
+  }));
+  const provenance = {
+    sourceId: raw.source_id == null ? null : String(raw.source_id),
+    workflowUri: raw.workflow_uri == null ? null : String(raw.workflow_uri),
+    totalEnergy: safeNumber(raw.total_energy),
+    edges,
+  };
+  if (!provenance.sourceId && !provenance.workflowUri && provenance.totalEnergy === null && !edges.length) return null;
+  return provenance;
+}
+
+function buildProvenanceEdges(edges, currentId) {
+  const list = node("ul", "provenance-edges");
+  edges.forEach((edge) => {
+    const li = node("li", "provenance-edge");
+    li.append(node("span", "provenance-edge-label", edge.label || "edge"));
+    if (edge.role) li.append(node("span", "provenance-edge-role", edge.role));
+    li.append(node("span", "provenance-edge-type", edge.entryType));
+    if (edge.entryType === "structures" && edge.materialId) {
+      const current = edge.materialId === currentId;
+      const link = node("a", current ? "provenance-edge-id is-current" : "provenance-edge-id", edge.materialId);
+      link.href = materialPageHref(edge.materialId);
+      if (current) link.append(document.createTextNode(" (this material)"));
+      li.append(link);
+    } else {
+      // Unresolvable content id: show a clearly-styled short hash, never a broken link.
+      li.append(node("code", "provenance-edge-id provenance-edge-hash", `${edge.entryId.slice(0, 12)}\u2026`));
+    }
+    list.append(li);
+  });
+  return list;
+}
+
+// Render the Provenance section from a plain provenance object (renderer contract:
+// object in, section element out; null in → null out so the caller omits it).
+function buildProvenance(provenance, currentId) {
+  if (!provenance) return null;
+  const sec = section("Provenance");
+  sec.append(node("p", "section-note", "How this material was produced: the workflow run that generated it, its identifiers, and the entries it consumed and created."));
+  const dl = node("dl", "details-grid");
+  if (provenance.workflowUri) {
+    const value = /^https:\/\//i.test(provenance.workflowUri)
+      ? externalLink(provenance.workflowUri, provenance.workflowUri)
+      : provenance.workflowUri;
+    field(dl, "Workflow", value, "", "details-wide");
+  }
+  if (provenance.sourceId) field(dl, "Run source id", provenance.sourceId, "", "details-wide");
+  if (provenance.totalEnergy !== null) field(dl, "Total energy", `$${provenance.totalEnergy.toFixed(6)}\\ \\mathrm{eV}$`);
+  if (dl.childNodes.length) sec.append(dl);
+  if (provenance.edges.length) sec.append(buildProvenanceEdges(provenance.edges, currentId));
+  return sec;
+}
+
 function buildDetail(resource, included, apiBase, alternatives = []) {
   const attributes = resource.attributes || {};
   const formula = attributes.chemical_formula_reduced || attributes._anyterial_formula || "";
@@ -577,6 +645,9 @@ function buildDetail(resource, included, apiBase, alternatives = []) {
     messages.append(textList([...warnings, ...notes]));
     article.append(messages);
   }
+
+  const provenanceSection = buildProvenance(provenanceFromAttributes(attributes), resource.id);
+  if (provenanceSection) article.append(provenanceSection);
   return article;
 }
 
@@ -671,4 +742,4 @@ const start = () => document.querySelectorAll("[data-site-material-detail]").for
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
 else start();
 
-export { altKind, crysvizIframeSrc, crysvizPayload, figureUrl, loadShell, structureDownloadLinks };
+export { altKind, buildProvenance, crysvizIframeSrc, crysvizPayload, figureUrl, loadShell, provenanceFromAttributes, structureDownloadLinks };

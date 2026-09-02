@@ -38,7 +38,7 @@ const fields = [
   "_anyterial_electronic_type", "_anyterial_magnetic_phases", "_anyterial_wave_classes", "_anyterial_parent_spacegroups",
   "_anyterial_icsd_ids", "_httk_magndata_ids", "_httk_dft_band_gap",
   "_anyterial_max_spin_splitting", "_anyterial_avg_spin_splitting", "_anyterial_spin_splitting_fraction",
-  "_anyterial_min_crustal_abundance", "_anyterial_magndata_variants", "_httk_custom_figures",
+  "_anyterial_min_crustal_abundance", "_anyterial_magndata_variants", "_httk_custom_figures", "_httk_custom_provenance",
   "lattice_vectors", "cartesian_site_positions", "species", "species_at_sites", "_httk_site_moments",
 ];
 
@@ -128,6 +128,7 @@ const realisticResource = {
       symprec: 1e-5, bns_mcif_latex: ["P2_1/c"], g_laue_classes: ["m-3m"], h_laue_classes: ["4/mmm"],
       warnings: ["<script>alert(1)</script>"], notes: ["note <img src=x>"], reference_dois: ["10.1234/über"],
     }],
+    _httk_custom_provenance: null,
     _httk_custom_figures: [
       { key: "band", available: true, url: `${API}/extensions/files/band.svg`, dark_url: `${API}/extensions/files/dark-band.svg` },
       { key: "structure", available: true, url: "https://evil.example/structure.svg" },
@@ -519,4 +520,64 @@ test("structure iframe payload carries CIF and POSCAR download links from the di
     { label: "Download CIF", url: `https://api.example.test/optimade/amdb/extensions/files/${enc}/structure.cif` },
     { label: "Download POSCAR", url: `https://api.example.test/optimade/amdb/extensions/files/${enc}/POSCAR` },
   ]);
+});
+
+// --- Provenance section ---
+
+const PROV_ATTRS = {
+  source_id: "httk-v1:abc",
+  workflow_uri: "https://schemas.httk.org/defs/v0.1/workflows/x",
+  total_energy: -12.5,
+  edges: [
+    { role: "artifact+output", label: "relaxed_structure", entry_type: "structures", entry_id: "SID000000000000", material_id: "anyt.am-1-7" },
+    { role: "artifact+output", label: "total_energy", entry_type: "_httk_records", entry_id: "REC000000000000", material_id: null },
+  ],
+};
+
+test("provenanceFromAttributes builds the renderer object contract, or null when empty", () => {
+  installDom(new DomDocument("https://site.example.test/material"));
+  const obj = material.provenanceFromAttributes({ _httk_custom_provenance: PROV_ATTRS });
+  assert.equal(obj.sourceId, "httk-v1:abc");
+  assert.equal(obj.workflowUri, "https://schemas.httk.org/defs/v0.1/workflows/x");
+  assert.equal(obj.totalEnergy, -12.5);
+  assert.equal(obj.edges.length, 2);
+  assert.deepEqual(obj.edges[0], { role: "artifact+output", label: "relaxed_structure", entryType: "structures", entryId: "SID000000000000", materialId: "anyt.am-1-7" });
+  // Absent / empty provenance → null (caller omits the section).
+  assert.equal(material.provenanceFromAttributes({}), null);
+  assert.equal(material.provenanceFromAttributes({ _httk_custom_provenance: { edges: [] } }), null);
+});
+
+test("buildProvenance renders workflow link, energy, and highlighted/linked edges from the object", () => {
+  installDom(new DomDocument("https://site.example.test/material"));
+  const obj = material.provenanceFromAttributes({ _httk_custom_provenance: PROV_ATTRS });
+  // currentId matches the structure edge → highlighted "(this material)".
+  const section = material.buildProvenance(obj, "anyt.am-1-7");
+  assert.ok(section);
+  assert.match(section.textContent, /Provenance/);
+  assert.match(section.textContent, /this material/);
+  const anchors = section.querySelectorAll("a");
+  // Workflow URI is an external https link; structure edge links to the material page.
+  assert.ok(anchors.some((a) => a.getAttribute("href") === "https://schemas.httk.org/defs/v0.1/workflows/x"));
+  assert.ok(anchors.some((a) => a.getAttribute("href") === "https://site.example.test/material?id=anyt.am-1-7"));
+  // Total energy rendered as a KaTeX-ready value.
+  assert.match(section.textContent, /-12\.500000/);
+  // Unresolved record id shown as a short hash, not a link.
+  assert.match(section.textContent, /REC000000000/);
+  // Null object → no section.
+  assert.equal(material.buildProvenance(null, "x"), null);
+});
+
+test("detail page appends a Provenance section, and omits it when absent", async () => {
+  const withProv = { id: MATERIAL_ID, type: "structures", attributes: { ...Object.fromEntries(fields.map((n) => [n, null])), chemical_formula_reduced: "CrSb", _httk_custom_provenance: PROV_ATTRS } };
+  const shown = shell();
+  globalThis.fetch = fetchFor(withProv).fetch;
+  await material.loadShell(shown.result, OptimadeTransport);
+  assert.match(shown.result.textContent, /Provenance/);
+  assert.match(shown.result.textContent, /httk-v1:abc/);
+
+  const noProv = { id: MATERIAL_ID, type: "structures", attributes: { ...Object.fromEntries(fields.map((n) => [n, null])), chemical_formula_reduced: "CrSb" } };
+  const hidden = shell();
+  globalThis.fetch = fetchFor(noProv).fetch;
+  await material.loadShell(hidden.result, OptimadeTransport);
+  assert.doesNotMatch(hidden.result.textContent, /Provenance/);
 });

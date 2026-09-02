@@ -123,7 +123,7 @@ EXPECTED_DEFINITION_PROVENANCE = {
     ),
 }
 
-LOCAL_DEFINITION_NAMES = {"_httk_custom_figures"}
+LOCAL_DEFINITION_NAMES = {"_httk_custom_figures", "_httk_custom_provenance"}
 EXPECTED_PROPERTY_NAMES = set(EXPECTED_DEFINITION_PROVENANCE) | LOCAL_DEFINITION_NAMES
 
 
@@ -164,6 +164,47 @@ class ApiClient:
 
     def get(self, path: str, *, params: dict[str, str] | None = None) -> httpx.Response:
         return self.request("GET", path, params=params)
+
+
+def test_serves_material_provenance(tmp_path: Path) -> None:
+    """A material carrying denormalized provenance serves it as _httk_custom_provenance."""
+    source = write_source_tables(tmp_path / "tables")
+    opened = material_store.open_in_memory_store(source, details_dir=tmp_path / "details")
+    assert opened is not None
+    searcher = opened.store.searcher()
+    variable = searcher.variable(material_store.MaterialRecord)
+    searcher.add(variable.id == "anyt.am-1-1")
+    record = searcher.results(material=variable).first()["material"]
+    provenance = material_store.MaterialProvenance(
+        source_id="httk-v1:abc",
+        workflow_uri="https://schemas.httk.org/defs/v0.1/workflows/x",
+        total_energy=-12.5,
+        edges=(
+            material_store.MaterialProvenanceEdge("artifact+output", "relaxed_structure", "structures", "SID", "anyt.am-1-133"),
+            material_store.MaterialProvenanceEdge("artifact+output", "total_energy", "_httk_records", "REC", None),
+        ),
+    )
+    # Save a fresh material carrying provenance (cloning the fixture record's scalars).
+    opened.store.save(replace(record, id="anyt.am-1-133", immutable_id=None, screening_rank=133, provenance=provenance))
+    app = build_service_app(
+        public_base_url="https://api.example.test/optimade/amdb", store=opened.store, details_root=tmp_path / "details"
+    )
+    try:
+        with TestClient(app, base_url="http://testserver") as live:
+            served = live.get(
+                "/v1/structures/anyt.am-1-133", params={"response_fields": "_httk_custom_provenance"}
+            ).json()["data"]["attributes"]["_httk_custom_provenance"]
+            assert served["source_id"] == "httk-v1:abc"
+            assert served["workflow_uri"].startswith("https://")
+            assert served["total_energy"] == -12.5
+            edges = {edge["label"]: edge for edge in served["edges"]}
+            assert edges["relaxed_structure"]["material_id"] == "anyt.am-1-133"
+            assert edges["total_energy"]["material_id"] is None
+            # A provenance-free material serves null (section omitted client-side).
+            other = live.get("/v1/structures/anyt.am-1-1", params={"response_fields": "_httk_custom_provenance"}).json()
+            assert other["data"]["attributes"]["_httk_custom_provenance"] is None
+    finally:
+        opened.database.dispose()
 
 
 def test_store_native_service_is_live_and_does_not_own_caller_store(tmp_path: Path) -> None:

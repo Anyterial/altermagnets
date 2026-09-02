@@ -26,6 +26,7 @@ RESPONSE_FIELDS = (
     "_anyterial_min_crustal_abundance",
     "_anyterial_magndata_variants",
     "_httk_custom_figures",
+    "_httk_custom_provenance",
     "lattice_vectors",
     "cartesian_site_positions",
     "species",

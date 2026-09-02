@@ -83,6 +83,8 @@ __all__ = [
     "MagndataRecord",
     "MaterialFigure",
     "MaterialMagndataLink",
+    "MaterialProvenance",
+    "MaterialProvenanceEdge",
     "MaterialRecord",
     "OpenedMaterialStore",
     "PlotFile",
@@ -121,7 +123,7 @@ logger = report.context_logger(logging.getLogger("httk.altermagnets.material_sto
 #: change is treated as stale (falling back to in-memory seeding) instead of being
 #: silently adopted with missing child tables reading as ``None``. Bump on every
 #: stored-record schema change.
-STORE_LAYOUT_VERSION = 7  # bump: alternative conventional/primitive cell records
+STORE_LAYOUT_VERSION = 8  # bump: denormalized per-material provenance (source/workflow/energy/edges)
 
 ELEMENT_PATTERN = re.compile(r"[A-Z][a-z]?")
 SCREENING_RESULTS_FILENAME = "high_throughput_screening_results_fixed.csv"
@@ -242,6 +244,39 @@ class MaterialFigure:
 
 
 @dataclass(frozen=True)
+class MaterialProvenanceEdge:
+    """One labeled provenance edge (artifact/output) of a material's coupled run."""
+
+    __httk_storage__: ClassVar[StorageInfo] = StorageInfo(storage_name="altermagnets_provenance_edges")
+
+    role: str  # "artifact", "output", or "artifact+output" when the run lists both
+    label: str
+    entry_type: str
+    entry_id: str
+    # The public material id when this edge's entry_id resolves to a known
+    # material's structure; None otherwise (rendered as a short hash client-side).
+    material_id: str | None = None
+
+
+@dataclass(frozen=True)
+class MaterialProvenance:
+    """A material's denormalized provenance, snapshotted from its coupled run.
+
+    Stands in for a future live ``_httk_runs`` fetch (option 1): the served
+    ``_httk_custom_provenance`` payload is a build-time snapshot of the one run
+    that produced this material, so the browser needs no run endpoint to render
+    the Provenance section.
+    """
+
+    __httk_storage__: ClassVar[StorageInfo] = StorageInfo(storage_name="altermagnets_material_provenance")
+
+    source_id: str | None
+    workflow_uri: str | None
+    total_energy: float | None
+    edges: tuple[MaterialProvenanceEdge, ...]
+
+
+@dataclass(frozen=True)
 class MaterialRecord:
     """One screened material and its ordered MAGNDATA relationships."""
 
@@ -283,6 +318,7 @@ class MaterialRecord:
     dois: tuple[str, ...]
     search_text: str
     structure: UnitcellStructureRecord | None = None
+    provenance: MaterialProvenance | None = None
     # Entry-id fields per the store contract; id is always set to the amdb
     # public id at construction, immutable_id is minted by the store.
     id: Annotated[str | None, IdentitySkip(), Indexed()] = field(default=None, compare=False)
@@ -421,6 +457,24 @@ def _local_figure_definition() -> PropertyDefinition:
     return PropertyDefinition.from_optimade("_httk_custom_figures", document)
 
 
+def _local_provenance_definition() -> PropertyDefinition:
+    document = PropertyDefinition.from_simple(
+        "_httk_custom_provenance",
+        description=(
+            "Denormalized provenance of the run that produced this material: source id, "
+            "workflow declaration URI, total energy, and labeled artifact/output edges."
+        ),
+        fulltype="dictionary",
+        unit="inapplicable",
+    ).as_optimade()
+    document["x-optimade-requirements"] = {
+        "support": "may",
+        "query-support": "none",
+        "response-level": "should not",
+    }
+    return PropertyDefinition.from_optimade("_httk_custom_provenance", document)
+
+
 def _private_reference_ids_definition() -> PropertyDefinition:
     document = PropertyDefinition.from_simple(
         "_httk_custom_reference_ids",
@@ -452,6 +506,7 @@ def _optimade_definitions() -> dict[str, PropertyDefinition]:
                 served_name, json.loads(path.read_text(encoding="utf-8"))
             )
     definitions["_httk_custom_figures"] = _local_figure_definition()
+    definitions["_httk_custom_provenance"] = _local_provenance_definition()
     definitions["_httk_custom_public_id"] = _private_id_definition("structure")
     definitions["_httk_custom_reference_ids"] = _private_reference_ids_definition()
     return definitions
@@ -660,6 +715,7 @@ def _material_projections() -> dict[str, StoredPropertyProjection]:
     for name in (
         "_anyterial_magndata_variants",
         "_httk_custom_figures",
+        "_httk_custom_provenance",
         "_httk_magnetic_space_group_bns",
     ):
         projections[name] = StoredPropertyProjection(response=_provider_response(name))
@@ -1842,6 +1898,40 @@ def _save_alternative_cells(store: SqlStore, materials: Iterable[MaterialRecord]
     return derived, skipped
 
 
+def _extract_provenance(
+    observation: _RunObservation, structure_to_material: Mapping[str, str]
+) -> MaterialProvenance | None:
+    """Snapshot one material's provenance from its coupled run.
+
+    Artifacts and outputs are distinct edge sides; identical ``(label, type, id)``
+    triples are folded into one edge whose ``role`` records the sides it appears
+    on. Structure edges are resolved to a public material id where the store knows
+    one, so the browser can link them without a run/relationship endpoint.
+    """
+    run = getattr(observation.item, "run", None)
+    if run is None:
+        return None
+    outputs = getattr(observation.item, "outputs", {})
+    energy = outputs.get("total_energy") if isinstance(outputs, Mapping) else None
+    value = getattr(energy, "value", None)
+    total_energy = float(value) if isinstance(value, (int, float)) else None
+    roles: dict[tuple[str, str, str], set[str]] = {}
+    for side_name, edges in (("artifact", run.artifacts), ("output", run.outputs)):
+        for edge in edges:
+            roles.setdefault((edge.label, edge.entry_type, edge.entry_id), set()).add(side_name)
+    edge_records = tuple(
+        MaterialProvenanceEdge(
+            "+".join(sorted(sides)),
+            label,
+            entry_type,
+            entry_id,
+            structure_to_material.get(entry_id) if entry_type == "structures" else None,
+        )
+        for (label, entry_type, entry_id), sides in roles.items()
+    )
+    return MaterialProvenance(run.source_id, run.workflow_declaration_uri, total_energy, edge_records)
+
+
 def build_store(
     target: str | os.PathLike[str] | None = None,
     *,
@@ -1898,10 +1988,14 @@ def build_store(
         legacy_structures=legacy,
     )
     if coupled:
+        structure_to_material = {obs.structure_id: mid for mid, obs in coupled.items()}
         materials = tuple(
             replace(
                 material,
                 structure=_material_structure_record(coupled[material.id].structure.unwrap()),
+                # Denormalized provenance snapshot standing in for a live _httk_runs
+                # fetch (option 1) the stored serving path cannot yet express.
+                provenance=_extract_provenance(coupled[material.id], structure_to_material),
             )
             if material.id in coupled
             else material

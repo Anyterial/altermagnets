@@ -215,42 +215,32 @@ def test_build_saves_only_coupled_runs_and_recovers_moments(tmp_path: Path) -> N
     assert material_structure(materials["anyt.am-1-2"]) is not None
 
 
-def test_extract_provenance_from_coupled_run() -> None:
-    from types import SimpleNamespace
+def _material(store: object, amdb_id: str) -> MaterialRecord:
+    searcher = store.searcher()  # type: ignore[attr-defined]
+    variable = searcher.variable(MaterialRecord)
+    searcher.add(variable.id == amdb_id)
+    return searcher.results(material=variable).first()["material"]
 
-    from httk.core.data_records import DataRecord
-    from httk.core.provenance import Run, RunEdge
 
-    energy = DataRecord.from_value("urn:x", "_httk_total_energy", -12.5)
-    run = Run(
-        workflow_declaration_uri="https://schemas.httk.org/defs/v0.1/workflows/x",
-        artifacts=(
-            RunEdge("relaxed_structure", "structures", "STRUCTID"),
-            RunEdge("total_energy", "_httk_records", "REC"),
-            RunEdge("vasprun", "files", "F1"),
-        ),
-        outputs=(
-            RunEdge("relaxed_structure", "structures", "STRUCTID"),
-            RunEdge("total_energy", "_httk_records", "REC"),
-            RunEdge("vasprun", "files", "F1"),
-        ),
-        source_id="httk-v1:abc",
-    )
-    observation = material_store._RunObservation(
-        "anyt.am-1-1", "runid", "STRUCTID", object(), "raw", SimpleNamespace(run=run, outputs={"total_energy": energy})
-    )
-    prov = material_store._extract_provenance(observation, {"STRUCTID": "anyt.am-1-1"})
-    assert prov is not None
-    assert prov.source_id == "httk-v1:abc"
-    assert prov.workflow_uri == "https://schemas.httk.org/defs/v0.1/workflows/x"
-    assert prov.total_energy == -12.5
-    # Identical artifact/output sides fold into one edge whose role notes both.
-    labels = {edge.label: edge for edge in prov.edges}
-    assert labels["relaxed_structure"].role == "artifact+output"
-    # Structure edges resolve to the public material id; other ids stay unresolved.
-    assert labels["relaxed_structure"].material_id == "anyt.am-1-1"
-    assert labels["total_energy"].material_id is None
-    # A run-less observation yields no provenance.
-    assert material_store._extract_provenance(
-        material_store._RunObservation("x", "r", "s", object(), "raw", SimpleNamespace(run=None, outputs={})), {}
-    ) is None
+def test_coupled_material_links_to_run_and_carries_total_energy(tmp_path: Path) -> None:
+    """A coupled build asserts the produced_by weak link and the total-energy scalar."""
+    source = write_source_tables(tmp_path / "tables")
+    details = write_detail_assets(tmp_path / "details")
+    runs = tmp_path / "runs"
+    _scf_run(runs, "CrSb")  # couples anyt.am-1-1; OUTCAR TOTEN is -1.0 eV
+    target = build_store(tmp_path / "store.duckdb", data_dir=source, details_dir=details, runs_dir=runs)
+
+    opened = open_prebuilt_store(target)
+    assert opened is not None
+    try:
+        coupled = _material(opened.store, "anyt.am-1-1")
+        assert coupled.total_energy == -1.0
+        linked = opened.store.linked(coupled, "produced_by", eager=True)
+        assert len(linked) == 1
+        assert linked[0].source_id  # the collected run carries a non-empty source id
+        # An uncoupled material carries neither the scalar nor a producing run.
+        uncoupled = _material(opened.store, "anyt.am-1-2")
+        assert uncoupled.total_energy is None
+        assert opened.store.linked(uncoupled, "produced_by") == ()
+    finally:
+        opened.database.dispose()

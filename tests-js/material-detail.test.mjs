@@ -38,7 +38,7 @@ const fields = [
   "_anyterial_electronic_type", "_anyterial_magnetic_phases", "_anyterial_wave_classes", "_anyterial_parent_spacegroups",
   "_anyterial_icsd_ids", "_httk_magndata_ids", "_httk_dft_band_gap",
   "_anyterial_max_spin_splitting", "_anyterial_avg_spin_splitting", "_anyterial_spin_splitting_fraction",
-  "_anyterial_min_crustal_abundance", "_anyterial_magndata_variants", "_httk_custom_figures", "_httk_custom_provenance",
+  "_anyterial_min_crustal_abundance", "_anyterial_magndata_variants", "_httk_custom_figures", "_httk_custom_total_energy",
   "lattice_vectors", "cartesian_site_positions", "species", "species_at_sites", "_httk_site_moments",
 ];
 
@@ -128,7 +128,7 @@ const realisticResource = {
       symprec: 1e-5, bns_mcif_latex: ["P2_1/c"], g_laue_classes: ["m-3m"], h_laue_classes: ["4/mmm"],
       warnings: ["<script>alert(1)</script>"], notes: ["note <img src=x>"], reference_dois: ["10.1234/über"],
     }],
-    _httk_custom_provenance: null,
+    _httk_custom_total_energy: null,
     _httk_custom_figures: [
       { key: "band", available: true, url: `${API}/extensions/files/band.svg`, dark_url: `${API}/extensions/files/dark-band.svg` },
       { key: "structure", available: true, url: "https://evil.example/structure.svg" },
@@ -524,56 +524,125 @@ test("structure iframe payload carries CIF and POSCAR download links from the di
 
 // --- Provenance section ---
 
-const PROV_ATTRS = {
-  source_id: "httk-v1:abc",
-  workflow_uri: "https://schemas.httk.org/defs/v0.1/workflows/x",
-  total_energy: -12.5,
-  edges: [
-    { role: "artifact+output", label: "relaxed_structure", entry_type: "structures", entry_id: "SID000000000000", material_id: "anyt.am-1-7" },
-    { role: "artifact+output", label: "total_energy", entry_type: "_httk_records", entry_id: "REC000000000000", material_id: null },
-  ],
+const RUN_ID = "anyt.run-1-1";
+const RUN_FIELDS = ["_httk_workflow_declaration_uri", "_httk_source_id"];
+const RUN_RESOURCE = {
+  id: RUN_ID, type: "_httk_runs",
+  attributes: { _httk_source_id: "httk-v1:abc", _httk_workflow_declaration_uri: "https://schemas.httk.org/defs/v0.1/workflows/x" },
 };
 
-test("provenanceFromAttributes builds the renderer object contract, or null when empty", () => {
+// A fake transport that answers the narrow per-run fetchOne without hitting the network.
+class FakeRunTransport {
+  constructor(config) { this.config = config; FakeRunTransport.calls.push(config); }
+  async fetchOne(id) {
+    FakeRunTransport.fetched.push(id);
+    return { resource: { ...RUN_RESOURCE, id }, included: [] };
+  }
+}
+
+function structureWithRun(extra = {}) {
+  return {
+    id: "anyt.am-1-7", type: "structures",
+    attributes: { _httk_custom_total_energy: -1.0, ...extra },
+    relationships: { _httk_runs: { data: [{ type: "_httk_runs", id: RUN_ID, meta: { role: "artifact+output", _httk_label: "produced_by" } }] } },
+  };
+}
+
+test("fetchProvenance builds the renderer object from relationships and fetched runs, or null when empty", async () => {
   installDom(new DomDocument("https://site.example.test/material"));
-  const obj = material.provenanceFromAttributes({ _httk_custom_provenance: PROV_ATTRS });
+  FakeRunTransport.calls = [];
+  FakeRunTransport.fetched = [];
+  const obj = await material.fetchProvenance(FakeRunTransport, { base_url: API }, structureWithRun());
   assert.equal(obj.sourceId, "httk-v1:abc");
   assert.equal(obj.workflowUri, "https://schemas.httk.org/defs/v0.1/workflows/x");
-  assert.equal(obj.totalEnergy, -12.5);
-  assert.equal(obj.edges.length, 2);
-  assert.deepEqual(obj.edges[0], { role: "artifact+output", label: "relaxed_structure", entryType: "structures", entryId: "SID000000000000", materialId: "anyt.am-1-7" });
-  // Absent / empty provenance → null (caller omits the section).
-  assert.equal(material.provenanceFromAttributes({}), null);
-  assert.equal(material.provenanceFromAttributes({ _httk_custom_provenance: { edges: [] } }), null);
+  assert.equal(obj.totalEnergy, -1.0);
+  assert.equal(obj.edges.length, 1);
+  assert.deepEqual(obj.edges[0], { role: "artifact+output", label: "produced_by", entryType: "_httk_runs", entryId: RUN_ID, materialId: null });
+  // The narrow run transport targets the run endpoint and requests exactly the two run fields.
+  assert.deepEqual(FakeRunTransport.calls[0], { base_url: API, entry_type: "_httk_runs", response_fields: RUN_FIELDS, page_size: 1 });
+  assert.deepEqual(FakeRunTransport.fetched, [RUN_ID]);
+  // No runs and no energy → null (caller omits the section).
+  assert.equal(await material.fetchProvenance(FakeRunTransport, { base_url: API }, { id: "x", attributes: {}, relationships: {} }), null);
+  // Energy-only (no run relationship) still builds an object so the scalar renders.
+  const energyOnly = await material.fetchProvenance(FakeRunTransport, { base_url: API }, { id: "x", attributes: { _httk_custom_total_energy: -2.0 }, relationships: {} });
+  assert.equal(energyOnly.edges.length, 0);
+  assert.equal(energyOnly.totalEnergy, -2.0);
 });
 
-test("buildProvenance renders workflow link, energy, and highlighted/linked edges from the object", () => {
+test("fetchProvenance degrades to the in-hand relationship info when a run fetch fails", async () => {
   installDom(new DomDocument("https://site.example.test/material"));
-  const obj = material.provenanceFromAttributes({ _httk_custom_provenance: PROV_ATTRS });
-  // currentId matches the structure edge → highlighted "(this material)".
+  class FailingTransport {
+    constructor() {}
+    async fetchOne() { throw new Error("offline"); }
+  }
+  const obj = await material.fetchProvenance(FailingTransport, { base_url: API }, structureWithRun());
+  // The role + label + energy survive even though source id / workflow could not be fetched.
+  assert.equal(obj.sourceId, null);
+  assert.equal(obj.workflowUri, null);
+  assert.equal(obj.totalEnergy, -1.0);
+  assert.equal(obj.edges.length, 1);
+  assert.equal(obj.edges[0].label, "produced_by");
+});
+
+test("buildProvenance renders the workflow link, run source id, energy, and run edge from the object", () => {
+  installDom(new DomDocument("https://site.example.test/material"));
+  const obj = {
+    sourceId: "httk-v1:abc",
+    workflowUri: "https://schemas.httk.org/defs/v0.1/workflows/x",
+    totalEnergy: -12.5,
+    edges: [{ role: "artifact+output", label: "produced_by", entryType: "_httk_runs", entryId: "RUN000000000000", materialId: null }],
+  };
   const section = material.buildProvenance(obj, "anyt.am-1-7");
   assert.ok(section);
   assert.match(section.textContent, /Provenance/);
-  assert.match(section.textContent, /this material/);
+  assert.match(section.textContent, /httk-v1:abc/);
+  // Workflow URI is an external https link.
   const anchors = section.querySelectorAll("a");
-  // Workflow URI is an external https link; structure edge links to the material page.
   assert.ok(anchors.some((a) => a.getAttribute("href") === "https://schemas.httk.org/defs/v0.1/workflows/x"));
-  assert.ok(anchors.some((a) => a.getAttribute("href") === "https://site.example.test/material?id=anyt.am-1-7"));
+  // The relationship role + label render on the run edge, and the run id shows as a short hash.
+  assert.match(section.textContent, /produced_by/);
+  assert.match(section.textContent, /artifact\+output/);
+  assert.match(section.textContent, /RUN000000000/);
   // Total energy rendered as a KaTeX-ready value.
   assert.match(section.textContent, /-12\.500000/);
-  // Unresolved record id shown as a short hash, not a link.
-  assert.match(section.textContent, /REC000000000/);
+  // Energy-only object (no run edges) still renders the scalar.
+  const energyOnly = material.buildProvenance({ sourceId: null, workflowUri: null, totalEnergy: -1.0, edges: [] }, "x");
+  assert.match(energyOnly.textContent, /-1\.000000/);
   // Null object → no section.
   assert.equal(material.buildProvenance(null, "x"), null);
 });
 
-test("detail page appends a Provenance section, and omits it when absent", async () => {
-  const withProv = { id: MATERIAL_ID, type: "structures", attributes: { ...Object.fromEntries(fields.map((n) => [n, null])), chemical_formula_reduced: "CrSb", _httk_custom_provenance: PROV_ATTRS } };
+function runAwareFetch(structureResource) {
+  return async (request) => {
+    const url = new URL(request);
+    if (url.pathname === "/optimade/amdb/versions") return textResponse("version\n1\n", url.href);
+    if (url.pathname === "/optimade/amdb/v1/info") return jsonResponse({
+      data: { id: "/", type: "info", attributes: {
+        api_version: "1.3.0", formats: ["json"], entry_types_by_format: { json: ["structures", "_httk_runs"] },
+        available_endpoints: ["info", "structures", "_httk_runs"],
+      } },
+    }, url.href);
+    if (url.pathname === "/optimade/amdb/v1/info/structures") return jsonResponse({
+      data: { id: "structures", type: "info", properties: Object.fromEntries(fields.map((n) => [n, {}])), formats: ["json"], output_fields_by_format: { json: fields } },
+    }, url.href);
+    if (url.pathname === "/optimade/amdb/v1/info/_httk_runs") return jsonResponse({
+      data: { id: "_httk_runs", type: "info", properties: Object.fromEntries(RUN_FIELDS.map((n) => [n, {}])), formats: ["json"], output_fields_by_format: { json: RUN_FIELDS } },
+    }, url.href);
+    if (url.pathname === `/optimade/amdb/v1/_httk_runs/${encodeURIComponent(RUN_ID)}`) return jsonResponse(pageResponse(RUN_RESOURCE), url.href);
+    if (url.pathname.startsWith("/optimade/amdb/v1/structures/")) return jsonResponse(pageResponse(structureResource), url.href);
+    throw new Error(`unexpected URL ${url}`);
+  };
+}
+
+test("detail page appends a live Provenance section from the run relationship, and omits it when absent", async () => {
+  const withRun = structureWithRun({ ...Object.fromEntries(fields.map((n) => [n, null])), chemical_formula_reduced: "CrSb", _httk_custom_total_energy: -1.0 });
   const shown = shell();
-  globalThis.fetch = fetchFor(withProv).fetch;
+  globalThis.fetch = runAwareFetch(withRun);
   await material.loadShell(shown.result, OptimadeTransport);
   assert.match(shown.result.textContent, /Provenance/);
   assert.match(shown.result.textContent, /httk-v1:abc/);
+  assert.match(shown.result.textContent, /produced_by/);
+  assert.match(shown.result.textContent, /-1\.000000/);
 
   const noProv = { id: MATERIAL_ID, type: "structures", attributes: { ...Object.fromEntries(fields.map((n) => [n, null])), chemical_formula_reduced: "CrSb" } };
   const hidden = shell();

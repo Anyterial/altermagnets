@@ -70,7 +70,7 @@ def test_material_widget_requests_every_attribute_used_by_detail_js() -> None:
         "_anyterial_electronic_type",
         "_anyterial_elements",
         "_httk_custom_figures",
-        "_httk_custom_provenance",
+        "_httk_custom_total_energy",
         "_anyterial_formula",
         "_anyterial_icsd_ids",
         "_anyterial_magndata_variants",

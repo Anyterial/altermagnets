@@ -63,6 +63,7 @@ from httk.core.register import register_entry_family, register_entry_record
 from httk.core.storage import (
     QueryLiteralError,
     StoredPropertyProjection,
+    WeakLink,
     content_id,
     project_storage_record,
     stored_property,
@@ -83,8 +84,6 @@ __all__ = [
     "MagndataRecord",
     "MaterialFigure",
     "MaterialMagndataLink",
-    "MaterialProvenance",
-    "MaterialProvenanceEdge",
     "MaterialRecord",
     "OpenedMaterialStore",
     "PlotFile",
@@ -123,7 +122,7 @@ logger = report.context_logger(logging.getLogger("httk.altermagnets.material_sto
 #: change is treated as stale (falling back to in-memory seeding) instead of being
 #: silently adopted with missing child tables reading as ``None``. Bump on every
 #: stored-record schema change.
-STORE_LAYOUT_VERSION = 8  # bump: denormalized per-material provenance (source/workflow/energy/edges)
+STORE_LAYOUT_VERSION = 9  # bump: produced_by weak link + _httk_custom_total_energy replace provenance snapshot
 
 ELEMENT_PATTERN = re.compile(r"[A-Z][a-z]?")
 SCREENING_RESULTS_FILENAME = "high_throughput_screening_results_fixed.csv"
@@ -244,44 +243,24 @@ class MaterialFigure:
 
 
 @dataclass(frozen=True)
-class MaterialProvenanceEdge:
-    """One labeled provenance edge (artifact/output) of a material's coupled run."""
-
-    __httk_storage__: ClassVar[StorageInfo] = StorageInfo(storage_name="altermagnets_provenance_edges")
-
-    role: str  # "artifact", "output", or "artifact+output" when the run lists both
-    label: str
-    entry_type: str
-    entry_id: str
-    # The public material id when this edge's entry_id resolves to a known
-    # material's structure; None otherwise (rendered as a short hash client-side).
-    material_id: str | None = None
-
-
-@dataclass(frozen=True)
-class MaterialProvenance:
-    """A material's denormalized provenance, snapshotted from its coupled run.
-
-    Stands in for a future live ``_httk_runs`` fetch (option 1): the served
-    ``_httk_custom_provenance`` payload is a build-time snapshot of the one run
-    that produced this material, so the browser needs no run endpoint to render
-    the Provenance section.
-    """
-
-    __httk_storage__: ClassVar[StorageInfo] = StorageInfo(storage_name="altermagnets_material_provenance")
-
-    source_id: str | None
-    workflow_uri: str | None
-    total_energy: float | None
-    edges: tuple[MaterialProvenanceEdge, ...]
-
-
-@dataclass(frozen=True)
 class MaterialRecord:
     """One screened material and its ordered MAGNDATA relationships."""
 
     __httk_storage__: ClassVar[StorageInfo] = StorageInfo(
         storage_name="altermagnets_material_records",
+        # The one run that produced this material serves as the OPTIMADE
+        # ``_httk_runs`` relationship (live, replacing the old denormalized
+        # provenance snapshot). Every coupled run's structure edge appears on
+        # both the artifact and output side, so one declaration covers it.
+        links=(
+            WeakLink(
+                "produced_by",
+                Run,
+                exposed_relationship=True,
+                role="artifact+output",
+                description="The workflow run that produced this material.",
+            ),
+        ),
         indexes=(
             ("classification", "screening_rank"),
             ("electronic_type", "screening_rank"),
@@ -307,7 +286,7 @@ class MaterialRecord:
     fdelta_pct: Annotated[float | None, Indexed()]
     bandgap: Annotated[float | None, Indexed()]
     min_abund_ppm: Annotated[float | None, Indexed()]
-    links: tuple[MaterialMagndataLink, ...]
+    magndata_links: tuple[MaterialMagndataLink, ...]
     figures: tuple[MaterialFigure, ...]
     elements: tuple[str, ...]
     magnetic_phases: tuple[str, ...]
@@ -318,7 +297,9 @@ class MaterialRecord:
     dois: tuple[str, ...]
     search_text: str
     structure: UnitcellStructureRecord | None = None
-    provenance: MaterialProvenance | None = None
+    # The coupled run's total-energy DataRecord value, served symmetrically as the
+    # material-level ``_httk_custom_total_energy`` scalar beside the live run link.
+    total_energy: float | None = None
     # Entry-id fields per the store contract; id is always set to the amdb
     # public id at construction, immutable_id is minted by the store.
     id: Annotated[str | None, IdentitySkip(), Indexed()] = field(default=None, compare=False)
@@ -343,7 +324,7 @@ class MaterialRecord:
         :raises ValueError: If an id is empty or contains a character that
             sorts at or below the ``","`` separator.
         """
-        ids = [link.record.id for link in self.links]
+        ids = [link.record.id for link in self.magndata_links]
         for one in ids:
             if not one or any(ch <= "," for ch in one):
                 raise ValueError(f"MAGNDATA id {one!r} breaks join-key sort parity with list ordering")
@@ -457,22 +438,19 @@ def _local_figure_definition() -> PropertyDefinition:
     return PropertyDefinition.from_optimade("_httk_custom_figures", document)
 
 
-def _local_provenance_definition() -> PropertyDefinition:
+def _local_total_energy_definition() -> PropertyDefinition:
     document = PropertyDefinition.from_simple(
-        "_httk_custom_provenance",
-        description=(
-            "Denormalized provenance of the run that produced this material: source id, "
-            "workflow declaration URI, total energy, and labeled artifact/output edges."
-        ),
-        fulltype="dictionary",
-        unit="inapplicable",
+        "_httk_custom_total_energy",
+        description="Total energy (eV) of the workflow run that produced this material.",
+        fulltype="float",
+        unit="eV",
     ).as_optimade()
     document["x-optimade-requirements"] = {
         "support": "may",
         "query-support": "none",
         "response-level": "should not",
     }
-    return PropertyDefinition.from_optimade("_httk_custom_provenance", document)
+    return PropertyDefinition.from_optimade("_httk_custom_total_energy", document)
 
 
 def _private_reference_ids_definition() -> PropertyDefinition:
@@ -506,7 +484,7 @@ def _optimade_definitions() -> dict[str, PropertyDefinition]:
                 served_name, json.loads(path.read_text(encoding="utf-8"))
             )
     definitions["_httk_custom_figures"] = _local_figure_definition()
-    definitions["_httk_custom_provenance"] = _local_provenance_definition()
+    definitions["_httk_custom_total_energy"] = _local_total_energy_definition()
     definitions["_httk_custom_public_id"] = _private_id_definition("structure")
     definitions["_httk_custom_reference_ids"] = _private_reference_ids_definition()
     return definitions
@@ -715,7 +693,7 @@ def _material_projections() -> dict[str, StoredPropertyProjection]:
     for name in (
         "_anyterial_magndata_variants",
         "_httk_custom_figures",
-        "_httk_custom_provenance",
+        "_httk_custom_total_energy",
         "_httk_magnetic_space_group_bns",
     ):
         projections[name] = StoredPropertyProjection(response=_provider_response(name))
@@ -1429,7 +1407,7 @@ def build_material_records(
                 fdelta_pct=_parse_float(row.get("FdeltaPct", "")),
                 bandgap=bandgap,
                 min_abund_ppm=_parse_float(row.get("MinAbundPpm", "")),
-                links=links,
+                magndata_links=links,
                 figures=_material_figures(details_dir, material_id) if details_dir is not None else (),
                 elements=elements,
                 magnetic_phases=phases,
@@ -1898,38 +1876,38 @@ def _save_alternative_cells(store: SqlStore, materials: Iterable[MaterialRecord]
     return derived, skipped
 
 
-def _extract_provenance(
-    observation: _RunObservation, structure_to_material: Mapping[str, str]
-) -> MaterialProvenance | None:
-    """Snapshot one material's provenance from its coupled run.
-
-    Artifacts and outputs are distinct edge sides; identical ``(label, type, id)``
-    triples are folded into one edge whose ``role`` records the sides it appears
-    on. Structure edges are resolved to a public material id where the store knows
-    one, so the browser can link them without a run/relationship endpoint.
-    """
-    run = getattr(observation.item, "run", None)
-    if run is None:
-        return None
+def _coupled_total_energy(observation: _RunObservation) -> float | None:
+    """The coupled run's ``total_energy`` DataRecord value, served as a scalar."""
     outputs = getattr(observation.item, "outputs", {})
     energy = outputs.get("total_energy") if isinstance(outputs, Mapping) else None
     value = getattr(energy, "value", None)
-    total_energy = float(value) if isinstance(value, (int, float)) else None
-    roles: dict[tuple[str, str, str], set[str]] = {}
-    for side_name, edges in (("artifact", run.artifacts), ("output", run.outputs)):
-        for edge in edges:
-            roles.setdefault((edge.label, edge.entry_type, edge.entry_id), set()).add(side_name)
-    edge_records = tuple(
-        MaterialProvenanceEdge(
-            "+".join(sorted(sides)),
-            label,
-            entry_type,
-            entry_id,
-            structure_to_material.get(entry_id) if entry_type == "structures" else None,
-        )
-        for (label, entry_type, entry_id), sides in roles.items()
-    )
-    return MaterialProvenance(run.source_id, run.workflow_declaration_uri, total_energy, edge_records)
+    return float(value) if isinstance(value, (int, float)) else None
+
+
+def _link_material_runs(
+    store: SqlStore, materials: Iterable[MaterialRecord], coupled: Mapping[str, _RunObservation]
+) -> int:
+    """Assert the ``produced_by`` weak link from each coupled material to its run.
+
+    Links are refused inside a bulk-ingest context, so this runs after the bulk
+    stream finalizes (beside :func:`_save_alternative_cells`). Only runs whose
+    item was actually saved (a non-``missing_collector`` collection) are linked,
+    and one run backs one material (enforced in :func:`_build_coupling`), so this
+    asserts exactly one link per coupled material.
+
+    :return: The number of ``(material, run)`` links asserted.
+    """
+    by_id = {material.id: material for material in materials}
+    linked = 0
+    for amdb_id, observation in coupled.items():
+        material = by_id.get(amdb_id)
+        run = getattr(observation.item, "run", None)
+        if material is None or run is None or getattr(observation.item, "missing_collector", None) is not None:
+            continue
+        store.link(material, "produced_by", run)
+        linked += 1
+    logger.info("Linked %d coupled materials to their producing runs", linked)
+    return linked
 
 
 def build_store(
@@ -1988,14 +1966,13 @@ def build_store(
         legacy_structures=legacy,
     )
     if coupled:
-        structure_to_material = {obs.structure_id: mid for mid, obs in coupled.items()}
         materials = tuple(
             replace(
                 material,
                 structure=_material_structure_record(coupled[material.id].structure.unwrap()),
-                # Denormalized provenance snapshot standing in for a live _httk_runs
-                # fetch (option 1) the stored serving path cannot yet express.
-                provenance=_extract_provenance(coupled[material.id], structure_to_material),
+                # Symmetric scalar beside the live _httk_runs weak link asserted
+                # after the bulk context finalizes (_link_material_runs).
+                total_energy=_coupled_total_energy(coupled[material.id]),
             )
             if material.id in coupled
             else material
@@ -2095,8 +2072,10 @@ def build_store(
             for doi in dict.fromkeys(doi for material in materials for doi in material.dois):
                 bulk.save(AltermagnetReferenceRecord((rid := _reference_id(doi)), doi, id=rid))
         if not legacy:
-            # Alternatives are saved after the mains-only bulk context finalizes.
+            # Alternatives and weak links are asserted after the mains-only bulk
+            # context finalizes (both are refused inside bulk ingest).
             _save_alternative_cells(store, materials)
+            _link_material_runs(store, materials, coupled)
         write_elapsed = time.perf_counter() - write_started
         finalize_started = time.perf_counter()
         created_database.dispose()

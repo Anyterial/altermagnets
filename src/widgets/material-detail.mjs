@@ -56,6 +56,8 @@ const ALT_STRUCTURE_FIELDS = ["lattice_vectors", "cartesian_site_positions", "sp
 const ALT_PAGE_LIMIT = 8;
 // Canonical frame order after the loaded cell; unknown kinds keep fetch order.
 const ALT_KIND_ORDER = ["conventional", "primitive"];
+// The only run fields the Provenance section needs from each linked _httk_runs entry.
+const RUN_RESPONSE_FIELDS = ["_httk_workflow_declaration_uri", "_httk_source_id"];
 
 const node = (tag, className = "", value = null) => {
   const result = document.createElement(tag);
@@ -507,27 +509,48 @@ function buildVariantCards(variants) {
 // Same-page link to another material's detail view (keeps the current path, swaps ?id=).
 const materialPageHref = (id) => new URL(`?id=${encodeURIComponent(id)}`, document.baseURI).href;
 
-// Build the plain provenance OBJECT the renderer consumes, from the served
-// `_httk_custom_provenance` snapshot. A future live `_httk_runs` fetch can build
-// the same shape and feed buildProvenance unchanged. Returns null when empty.
-function provenanceFromAttributes(attributes) {
-  const raw = attributes && attributes._httk_custom_provenance;
-  if (!raw || typeof raw !== "object") return null;
-  const edges = arrayValue(raw.edges).map((edge) => ({
-    role: String(edge.role || ""),
-    label: String(edge.label || ""),
-    entryType: String(edge.entry_type || ""),
-    entryId: String(edge.entry_id || ""),
-    materialId: edge.material_id == null ? null : String(edge.material_id),
-  }));
-  const provenance = {
-    sourceId: raw.source_id == null ? null : String(raw.source_id),
-    workflowUri: raw.workflow_uri == null ? null : String(raw.workflow_uri),
-    totalEnergy: safeNumber(raw.total_energy),
-    edges,
-  };
-  if (!provenance.sourceId && !provenance.workflowUri && provenance.totalEnergy === null && !edges.length) return null;
-  return provenance;
+// Build the plain provenance OBJECT the renderer consumes from the structure's
+// LIVE `_httk_runs` relationships: each related run contributes its role + label
+// (from the relationship meta) as an edge, and is fetched through a narrow second
+// transport for its source id and workflow URI; the material-level scalar comes
+// from `_httk_custom_total_energy`. Returns null when there is nothing to show
+// (no runs and no energy). A run-fetch failure degrades to the info already in
+// hand so the section still renders. buildProvenance consumes this object
+// unchanged from the old snapshot path.
+async function fetchProvenance(Transport, config, resource) {
+  const attributes = resource.attributes || {};
+  const totalEnergy = safeNumber(attributes._httk_custom_total_energy);
+  const edges = arrayValue(resource.relationships?._httk_runs?.data)
+    .filter((entry) => entry && entry.id)
+    .map((entry) => ({
+      role: String(entry.meta?.role || ""),
+      label: String(entry.meta?._httk_label || ""),
+      entryType: "_httk_runs",
+      entryId: String(entry.id),
+      materialId: null,
+    }));
+  let sourceId = null;
+  let workflowUri = null;
+  if (edges.length) {
+    try {
+      const transport = new Transport(
+        { base_url: config.base_url, entry_type: "_httk_runs", response_fields: RUN_RESPONSE_FIELDS, page_size: 1 },
+        { documentBase: document.baseURI },
+      );
+      for (const edge of edges) {
+        const fetched = await transport.fetchOne(edge.entryId);
+        const runAttrs = fetched?.resource?.attributes || {};
+        if (sourceId === null && runAttrs._httk_source_id != null) sourceId = String(runAttrs._httk_source_id);
+        if (workflowUri === null && runAttrs._httk_workflow_declaration_uri != null) {
+          workflowUri = String(runAttrs._httk_workflow_declaration_uri);
+        }
+      }
+    } catch (error) {
+      console.error("Run provenance OPTIMADE request failed", error);
+    }
+  }
+  if (!edges.length && totalEnergy === null) return null;
+  return { sourceId, workflowUri, totalEnergy, edges };
 }
 
 function buildProvenanceEdges(edges, currentId) {
@@ -572,7 +595,7 @@ function buildProvenance(provenance, currentId) {
   return sec;
 }
 
-function buildDetail(resource, included, apiBase, alternatives = []) {
+function buildDetail(resource, included, apiBase, alternatives = [], provenance = null) {
   const attributes = resource.attributes || {};
   const formula = attributes.chemical_formula_reduced || attributes._anyterial_formula || "";
   const ids = arrayValue(attributes._httk_magndata_ids).map(String);
@@ -646,7 +669,7 @@ function buildDetail(resource, included, apiBase, alternatives = []) {
     article.append(messages);
   }
 
-  const provenanceSection = buildProvenance(provenanceFromAttributes(attributes), resource.id);
+  const provenanceSection = buildProvenance(provenance, resource.id);
   if (provenanceSection) article.append(provenanceSection);
   return article;
 }
@@ -729,7 +752,8 @@ async function loadShell(shell, Transport = OptimadeTransport) {
     }
     const discovery = await transport.discover();
     const alternatives = await fetchAlternatives(Transport, config, discovery.apiBaseUrl, id);
-    shell.replaceChildren(buildDetail(result.resource, result.included, discovery.apiBaseUrl, alternatives));
+    const provenance = await fetchProvenance(Transport, config, result.resource);
+    shell.replaceChildren(buildDetail(result.resource, result.included, discovery.apiBaseUrl, alternatives, provenance));
     shell.setAttribute("aria-busy", "false");
     window.altermagnetsUi?.initSubtree(shell);
   } catch (error) {
@@ -742,4 +766,4 @@ const start = () => document.querySelectorAll("[data-site-material-detail]").for
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
 else start();
 
-export { altKind, buildProvenance, crysvizIframeSrc, crysvizPayload, figureUrl, loadShell, provenanceFromAttributes, structureDownloadLinks };
+export { altKind, buildProvenance, crysvizIframeSrc, crysvizPayload, fetchProvenance, figureUrl, loadShell, structureDownloadLinks };

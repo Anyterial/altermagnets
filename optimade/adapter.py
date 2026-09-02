@@ -121,6 +121,11 @@ class AltermagnetStoreAdapter:
             (
                 StoredEntrySource(store, material_store.AltermagnetStructureEntry, "amdb-structures"),
                 StoredEntrySource(store, material_store.AltermagnetReferenceEntry, "amdb-references"),
+                # Serves the producing runs at _httk_runs so a structure's exposed
+                # produced_by weak link renders as a live OPTIMADE relationship. The
+                # id/filter/sort remaps below are structures/references-scoped, so
+                # runs pass through this envelope unmangled (audited).
+                StoredEntrySource(store, material_store.RunEntry, "amdb-runs"),
             ),
             sortable=SORTABLE_PROPERTIES,
         )

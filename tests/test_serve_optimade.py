@@ -123,7 +123,7 @@ EXPECTED_DEFINITION_PROVENANCE = {
     ),
 }
 
-LOCAL_DEFINITION_NAMES = {"_httk_custom_figures", "_httk_custom_provenance"}
+LOCAL_DEFINITION_NAMES = {"_httk_custom_figures", "_httk_custom_total_energy"}
 EXPECTED_PROPERTY_NAMES = set(EXPECTED_DEFINITION_PROVENANCE) | LOCAL_DEFINITION_NAMES
 
 
@@ -166,43 +166,93 @@ class ApiClient:
         return self.request("GET", path, params=params)
 
 
-def test_serves_material_provenance(tmp_path: Path) -> None:
-    """A material carrying denormalized provenance serves it as _httk_custom_provenance."""
+_RUN_POSCAR = """Fixture POSCAR
+1.0
+1 0 0
+0 1 0
+0 0 1
+H He Li
+1 1 1
+Direct
+0 0 0
+0.5 0.5 0.5
+0.25 0.25 0.25
+"""
+_RUN_OUTCAR = """ vasp.5.2.12 synthetic
+   FREE ENERGIE OF THE ION-ELECTRON SYSTEM (eV)
+   free  energy   TOTEN  =       -1.00000000 eV
+   energy  without entropy=      -1.00000000  energy(sigma->0) =      -1.00000000
+ General timing and accounting informations
+"""
+
+
+def _write_scf_run(runs: Path, material: str) -> None:
+    task = runs / "1" / "Runs" / f"ht.task.tetralith--default.{material}_SCF.cleanup.0.unclaimed.3.finished"
+    step = task / "ht.run.2025-01-01_00.00.00" / "ht.task.any.0.cleanup.0.unclaimed.3.finished"
+    inner = step / "ht.run.2025-01-01_00.00.01"
+    inner.mkdir(parents=True)
+    (step / "POSCAR").write_text(_RUN_POSCAR, encoding="utf-8")
+    (inner / "CONTCAR").write_text(_RUN_POSCAR, encoding="utf-8")
+    (inner / "OUTCAR").write_text(_RUN_OUTCAR, encoding="utf-8")
+
+
+def test_serves_material_run_relationship_and_energy(tmp_path: Path) -> None:
+    """A coupled material serves a live _httk_runs relationship, the run endpoint, and the energy scalar.
+
+    Drives the P7 serving edge end-to-end through the real ``build_service_app(store=...)``
+    path: the structure's exposed ``produced_by`` weak link renders as a wire-named
+    ``_httk_runs`` relationship, the referenced run resolves at ``/v1/_httk_runs/<id>``
+    with non-null prefixed values (auditing that the AMDB envelope leaves runs
+    unmangled), ``include`` inlines it, and the symmetric ``_httk_custom_total_energy``
+    scalar is served for the coupled material and null for an uncoupled one.
+    """
     source = write_source_tables(tmp_path / "tables")
-    opened = material_store.open_in_memory_store(source, details_dir=tmp_path / "details")
+    details = write_detail_assets(tmp_path / "details")
+    runs = tmp_path / "runs"
+    _write_scf_run(runs, "CrSb")  # couples anyt.am-1-1; OUTCAR TOTEN is -1.0 eV
+    target = material_store.build_store(tmp_path / "store.duckdb", data_dir=source, details_dir=details, runs_dir=runs)
+    opened = material_store.open_prebuilt_store(target)
     assert opened is not None
-    searcher = opened.store.searcher()
-    variable = searcher.variable(material_store.MaterialRecord)
-    searcher.add(variable.id == "anyt.am-1-1")
-    record = searcher.results(material=variable).first()["material"]
-    provenance = material_store.MaterialProvenance(
-        source_id="httk-v1:abc",
-        workflow_uri="https://schemas.httk.org/defs/v0.1/workflows/x",
-        total_energy=-12.5,
-        edges=(
-            material_store.MaterialProvenanceEdge("artifact+output", "relaxed_structure", "structures", "SID", "anyt.am-1-133"),
-            material_store.MaterialProvenanceEdge("artifact+output", "total_energy", "_httk_records", "REC", None),
-        ),
-    )
-    # Save a fresh material carrying provenance (cloning the fixture record's scalars).
-    opened.store.save(replace(record, id="anyt.am-1-133", immutable_id=None, screening_rank=133, provenance=provenance))
     app = build_service_app(
-        public_base_url="https://api.example.test/optimade/amdb", store=opened.store, details_root=tmp_path / "details"
+        public_base_url="https://api.example.test/optimade/amdb", store=opened.store, details_root=details
     )
     try:
         with TestClient(app, base_url="http://testserver") as live:
-            served = live.get(
-                "/v1/structures/anyt.am-1-133", params={"response_fields": "_httk_custom_provenance"}
-            ).json()["data"]["attributes"]["_httk_custom_provenance"]
-            assert served["source_id"] == "httk-v1:abc"
-            assert served["workflow_uri"].startswith("https://")
-            assert served["total_energy"] == -12.5
-            edges = {edge["label"]: edge for edge in served["edges"]}
-            assert edges["relaxed_structure"]["material_id"] == "anyt.am-1-133"
-            assert edges["total_energy"]["material_id"] is None
-            # A provenance-free material serves null (section omitted client-side).
-            other = live.get("/v1/structures/anyt.am-1-1", params={"response_fields": "_httk_custom_provenance"}).json()
-            assert other["data"]["attributes"]["_httk_custom_provenance"] is None
+            # (a) the structure carries the exposed produced_by weak link as a relationship,
+            # plus the symmetric material-level energy scalar.
+            structure = live.get(
+                "/v1/structures/anyt.am-1-1", params={"response_fields": "_httk_custom_total_energy"}
+            ).json()["data"]
+            assert structure["attributes"]["_httk_custom_total_energy"] == -1.0
+            related = structure["relationships"]["_httk_runs"]["data"]
+            assert len(related) == 1
+            assert related[0]["type"] == "_httk_runs"
+            assert related[0]["meta"]["role"] == "artifact+output"
+            assert related[0]["meta"]["_httk_label"] == "produced_by"
+            run_id = related[0]["id"]
+
+            # (b) the run resolves at its wire endpoint with non-null prefixed values.
+            run = live.get(
+                f"/v1/_httk_runs/{run_id}",
+                params={"response_fields": "_httk_source_id,_httk_workflow_declaration_uri"},
+            )
+            assert run.status_code == 200
+            run_attrs = run.json()["data"]["attributes"]
+            assert run_attrs["_httk_source_id"]
+            assert run_attrs["_httk_workflow_declaration_uri"]
+
+            # (c) include inlines the run resource on the structure endpoint.
+            included = (
+                live.get("/v1/structures/anyt.am-1-1", params={"include": "_httk_runs"}).json().get("included", [])
+            )
+            assert (("_httk_runs", run_id)) in {(item["type"], item["id"]) for item in included}
+
+            # (d) an uncoupled material serves a null energy and no run relationship.
+            other = live.get(
+                "/v1/structures/anyt.am-1-2", params={"response_fields": "_httk_custom_total_energy"}
+            ).json()["data"]
+            assert other["attributes"]["_httk_custom_total_energy"] is None
+            assert "_httk_runs" not in other.get("relationships", {})
     finally:
         opened.database.dispose()
 
@@ -1049,7 +1099,9 @@ def test_structureless_and_unresolved_variant_projection(providers: list) -> Non
         material = searcher.results(material=material_variable).first()["material"]
         unresolved = replace(
             material,
-            links=tuple(replace(link, record=replace(link.record, variants=())) for link in material.links),
+            magndata_links=tuple(
+                replace(link, record=replace(link.record, variants=())) for link in material.magndata_links
+            ),
         )
         formula = material.formula
         projected = dataset_module._material_properties(unresolved, "https://plots.example.test/api")

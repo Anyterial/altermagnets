@@ -20,10 +20,10 @@ def test_persistent_build_reconstructs_ordered_links_and_variants(material_store
         material = searcher.variable(MaterialRecord)
         searcher.add(material.id == "anyt.am-1-1")
         record = searcher.results(material=material).one()["material"]
-        assert [link.ordinal for link in record.links] == [1, 2]
-        assert [link.record.id for link in record.links] == ["0.528", "0.800"]
-        assert [variant.symprec for variant in record.links[0].record.variants] == [0.001, 0.01]
-        assert [variant.source_kind for variant in record.links[1].record.variants] == [
+        assert [link.ordinal for link in record.magndata_links] == [1, 2]
+        assert [link.record.id for link in record.magndata_links] == ["0.528", "0.800"]
+        assert [variant.symprec for variant in record.magndata_links[0].record.variants] == [0.001, 0.01]
+        assert [variant.source_kind for variant in record.magndata_links[1].record.variants] == [
             "collinear",
             "noncollinear-derived",
         ]
@@ -72,7 +72,7 @@ def test_builder_rejects_duplicates_and_nonfinite_values(tmp_path: Path) -> None
     assert records[0].avg_ss is None
     assert records[0].fdelta_pct is None
     assert records[0].bandgap is None
-    assert records[0].links[0].record.variants == ()
+    assert records[0].magndata_links[0].record.variants == ()
 
     duplicate = (source / "high_throughput_screening_results_fixed.csv").read_text(encoding="utf-8")
     (source / "high_throughput_screening_results_fixed.csv").write_text(

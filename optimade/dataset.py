@@ -168,31 +168,11 @@ def _figure_payload(record: Any, public_base_url: str) -> list[dict[str, Any]]:
     return figures
 
 
-def _provenance_payload(record: Any) -> dict[str, Any] | None:
-    """Project a material's stored provenance snapshot into a served dict, or None."""
-    provenance = getattr(record, "provenance", None)
-    if provenance is None:
-        return None
-    return {
-        "source_id": provenance.source_id,
-        "workflow_uri": provenance.workflow_uri,
-        "total_energy": provenance.total_energy,
-        "edges": [
-            {
-                "role": edge.role,
-                "label": edge.label,
-                "entry_type": edge.entry_type,
-                "entry_id": edge.entry_id,
-                "material_id": edge.material_id,
-            }
-            for edge in provenance.edges
-        ],
-    }
-
-
 def _material_properties(record: Any, public_base_url: str) -> dict[str, Any]:
     """Project one :class:`MaterialRecord` into served custom properties."""
-    variants = [_variant_payload(link.record.id, variant) for link in record.links for variant in link.record.variants]
+    variants = [
+        _variant_payload(link.record.id, variant) for link in record.magndata_links for variant in link.record.variants
+    ]
     return {
         "_anyterial_formula": record.formula or None,
         "_anyterial_elements": sorted(record.elements) or None,
@@ -208,7 +188,11 @@ def _material_properties(record: Any, public_base_url: str) -> dict[str, Any]:
         # page renders its no-symmetry-record placeholder from that state.
         "_anyterial_magndata_variants": variants,
         "_httk_custom_figures": _figure_payload(record, public_base_url),
-        "_httk_custom_provenance": _provenance_payload(record),
+        # The live _httk_runs weak-link relationship carries the run identity; this
+        # symmetric scalar is the material-level energy the detail page renders.
+        # The in-memory/--validate path serves no relationships, so its pages show
+        # only this scalar (documented degradation).
+        "_httk_custom_total_energy": getattr(record, "total_energy", None),
         "_anyterial_max_spin_splitting": record.max_ss,
         "_anyterial_avg_spin_splitting": record.avg_ss,
         "_anyterial_spin_splitting_fraction": (None if record.fdelta_pct is None else record.fdelta_pct / 100.0),
@@ -219,7 +203,7 @@ def _material_properties(record: Any, public_base_url: str) -> dict[str, Any]:
         "_anyterial_magnetic_phase": _screening_phase(record.magnetic_phases[0]) if record.magnetic_phases else None,
         "_anyterial_wave_class": record.wave_classes[0] if record.wave_classes else None,
         "_httk_magnetic_space_group_bns": (variants[0]["bns"][0] if variants and variants[0]["bns"] else None),
-        "_httk_magndata_ids": [link.record.id for link in record.links] or None,
+        "_httk_magndata_ids": [link.record.id for link in record.magndata_links] or None,
     }
 
 

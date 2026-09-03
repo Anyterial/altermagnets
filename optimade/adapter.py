@@ -127,6 +127,13 @@ class AltermagnetStoreAdapter:
                 # The id/filter/sort remaps below are structures/references-scoped, so
                 # runs pass through this envelope unmangled (audited).
                 StoredEntrySource(store, material_store.RunEntry, "amdb-runs"),
+                # The records and files families the runs' edges point at. Both serve
+                # raw store-minted ids (anyt.am.records-1-N / anyt.am.files-1-N) with no
+                # public-id column, so the id/filter/sort remaps deliberately skip them;
+                # served files pages get their tree-relative url rewritten to the byte
+                # route below.
+                StoredEntrySource(store, material_store.AltermagnetDataRecordEntry, "amdb-records"),
+                StoredEntrySource(store, material_store.FileEntry, "amdb-files"),
             ),
             sortable=SORTABLE_PROPERTIES,
         )
@@ -194,6 +201,11 @@ class AltermagnetStoreAdapter:
                     values["_httk_custom_figures"] = _absolute_figure_urls(
                         values["_httk_custom_figures"], self._public_base_url
                     )
+                if entry_type == "files" and isinstance(values.get("id"), str):
+                    # The stored url is the tree-relative locator; serve it as the
+                    # absolute byte-route url (mirrors _absolute_figure_urls; absolute so
+                    # the widget's www-origin fetch resolves against the api origin).
+                    values["url"] = f"{self._public_base_url}/extensions/files/entry/{values['id']}"
                 relationships = dict(row.relationships)
                 if entry_type == "structures" and isinstance(reference_ids, list) and reference_ids:
                     relationships["references"] = [{"id": value} for value in reference_ids]

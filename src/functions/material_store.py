@@ -58,10 +58,11 @@ from httk.core import (
     report,
     standard_entry_type,
 )
-from httk.core.data_records import DataRecordEntry
+from httk.core.data_records import RECORDS_DEFINITION_ID
 from httk.core.files import FileEntry
 from httk.core.provenance import ProductLink, Run, RunEdge, RunEntry
 from httk.core.register import register_entry_family, register_entry_record
+from httk.core.register.schemas import load_entry_type_definition
 from httk.core.storage import (
     QueryLiteralError,
     StoredPropertyProjection,
@@ -79,6 +80,8 @@ __all__ = [
     "SCREENING_RESULTS_FILENAME",
     "STORE_LAYOUT_VERSION",
     "STORE_PATH_ENVIRONMENT",
+    "AltermagnetDataRecord",
+    "AltermagnetDataRecordEntry",
     "AltermagnetReferenceEntry",
     "AltermagnetReferenceRecord",
     "AltermagnetStructureEntry",
@@ -128,7 +131,12 @@ logger = report.context_logger(logging.getLogger("httk.altermagnets.material_sto
 # Removing the link declaration changes the link fingerprint and RunEdge grows a
 # ``(entry_type, entry_id)`` index; either forces a rebuild, and the fingerprint --
 # not this version row -- is the operative staleness gate for a pre-change store.
-STORE_LAYOUT_VERSION = 10
+# Bump 11: the id scheme flips to ``anyt.am``/series ``1`` (materials ``anyt.am-1-N``,
+# minted types ``anyt.am.<type>-1-N``, references densely enumerated ``anyt.am.refs-1-N``),
+# ``MaterialRecord`` gains the stored ``reference_ids`` serving its references block, and
+# the ``_httk_records`` family is served through the extended ``AltermagnetDataRecord``.
+# The fingerprint does not see id changes, so this version row is the forcing gate.
+STORE_LAYOUT_VERSION = 11
 RELAXED_STRUCTURE_PRECISION = 5e-4  # Cartesian Å; relaxed-DFT coordinate precision, so symmetry tolerance is realistic (not ~machine epsilon from full-precision CONTCAR digits)
 
 ELEMENT_PATTERN = re.compile(r"[A-Z][a-z]?")
@@ -300,6 +308,11 @@ class MaterialRecord:
     # The coupled run's total-energy DataRecord value, served symmetrically as the
     # material-level ``_httk_custom_total_energy`` scalar beside the live run link.
     total_energy: float | None = None
+    # The densely enumerated ``anyt.am.refs-1-N`` ids of this material's DOIs, aligned
+    # with ``dois``, stamped at build/seed time (the enumeration needs the whole
+    # deployment's DOI order). Serving reads them straight off the row, so the
+    # doi->relationship->include chain resolves without re-deriving the global order.
+    reference_ids: tuple[str, ...] = ()
     # Entry-id fields per the store contract; id is always set to the amdb
     # public id at construction, immutable_id is minted by the store.
     id: Annotated[str | None, IdentitySkip(), Indexed()] = field(default=None, compare=False)
@@ -372,6 +385,86 @@ class AltermagnetReferenceEntry:
         return standard_entry_type("references").extended(
             {"_httk_custom_public_id": _private_id_definition("references")}
         )
+
+
+#: The served record-content properties added to the base ``_httk_records`` definition,
+#: mapped to the ``AltermagnetDataRecord`` field each reads. They expose every record's
+#: raw content (its property name, definition IRI, canonical JSON value, and the numeric
+#: value for numeric queries) so ``/_httk_records`` lists all records and their contents.
+_RECORD_CONTENT_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("_httk_custom_record_name", "name", "string"),
+    ("_httk_custom_record_definition_id", "definition_id", "string"),
+    ("_httk_custom_record_value_json", "value_json", "string"),
+    ("_httk_custom_record_value_number", "value_number", "float"),
+)
+
+
+def _record_content_definition(served_name: str, fulltype: str) -> PropertyDefinition:
+    """Build one served record-content property definition.
+
+    :param served_name: The prefixed served property name.
+    :param fulltype: The OPTIMADE simple fulltype of the value.
+    :return: The property definition, marked queryable-none and response-level should.
+    """
+    document = PropertyDefinition.from_simple(
+        served_name,
+        description=f"The record's {served_name.rsplit('_', 1)[-1]} value, served straight from the stored data record.",
+        fulltype=fulltype,
+    ).as_optimade()
+    document["x-optimade-requirements"] = {"support": "may", "query-support": "none", "response-level": "should"}
+    return PropertyDefinition.from_optimade(served_name, document)
+
+
+@dataclass(frozen=True)
+class AltermagnetDataRecord(DataRecord):
+    """A stored :class:`~httk.core.DataRecord` served under the AMDB ``_httk_records`` family.
+
+    Only the physical storage name differs from :class:`~httk.core.DataRecord`; the
+    identity name is kept so a converted record shares its base content id and the
+    provenance edges (which carry the collected DataRecord's content id) still resolve.
+    """
+
+    __httk_storage__: ClassVar[StorageInfo] = StorageInfo(
+        storage_name="altermagnets_data_records",
+        identity_name="core_data_record",
+        indexes=(("definition_id",), ("name",)),
+    )
+
+
+class AltermagnetDataRecordEntry:
+    """The store-native AMDB ``_httk_records`` family carrying per-record content properties."""
+
+    type = "records"
+    definition_id = RECORDS_DEFINITION_ID
+
+    @classmethod
+    def entry_type_definition(cls) -> EntryTypeDefinition:
+        """Return the base records definition extended with the served content properties."""
+        return load_entry_type_definition(RECORDS_DEFINITION_ID).extended(
+            {name: _record_content_definition(name, fulltype) for name, _field, fulltype in _RECORD_CONTENT_FIELDS}
+        )
+
+
+def _as_records_family(value: object) -> object:
+    """Convert a collected :class:`~httk.core.DataRecord` output to the AMDB records subclass.
+
+    Non-data-record outputs (files, structures) pass through unchanged. The subclass
+    preserves the base content id, so a run edge to the original record still resolves.
+
+    :param value: One collected run output.
+    :return: The value, converted when it is a plain ``DataRecord``.
+    """
+    if type(value) is DataRecord:
+        record = cast(DataRecord, value)
+        return AltermagnetDataRecord(
+            record.definition_id,
+            record.name,
+            record.value_json,
+            id=record.id,
+            immutable_id=record.immutable_id,
+            last_modified=record.last_modified,
+        )
+    return value
 
 
 ANYTERIAL_DEFS_BASE = "https://schemas.anyterial.se/defs/v0.1/properties"
@@ -490,11 +583,20 @@ def _optimade_definitions() -> dict[str, PropertyDefinition]:
     return definitions
 
 
-def _reference_id(doi: str) -> str:
-    """Return a stable public reference ID without depending on row order."""
-    # The DOI digest is rendered decimal so the id conforms to the recommended
-    # <base>-<series>-<number> entry-id syntax while staying row-order independent.
-    return f"anyt.ref-1-{int(hashlib.sha256(doi.encode('utf-8')).hexdigest()[:16], 16)}"
+def _reference_ids_by_doi(materials: Iterable["MaterialRecord"]) -> dict[str, str]:
+    """Densely enumerate ``anyt.am.refs-1-N`` ids for every DOI, in first-seen order.
+
+    The enumeration walks the materials' DOIs in deployment order (screening rank,
+    then per-material DOI order) and assigns consecutive 1..K numbers. It is the one
+    place the reference ids are minted: the save sites stamp each material's
+    :attr:`MaterialRecord.reference_ids` from this map and save the reference rows
+    under the same ids, so serving never re-derives the global order.
+
+    :param materials: The materials whose DOIs are enumerated, in deployment order.
+    :return: A DOI-to-``anyt.am.refs-1-N`` mapping in first-seen order.
+    """
+    ordered = dict.fromkeys(doi for material in materials for doi in material.dois)
+    return {doi: f"anyt.am.refs-1-{number}" for number, doi in enumerate(ordered, 1)}
 
 
 class _NestedQueryContext:
@@ -609,6 +711,13 @@ def _provider_response(property_name: str) -> Callable[[object], object]:
     return response
 
 
+def _record_field_response(field_name: str) -> Callable[[object], object]:
+    def response(record: object) -> object:
+        return getattr(record, field_name)
+
+    return response
+
+
 def _field_sort(field_name: str) -> Callable[[Any], Any]:
     def sort(context: Any) -> Any:
         return context.field(field_name)
@@ -627,7 +736,7 @@ def _material_public_id(record: object) -> str:
 
 
 def _material_reference_ids(record: object) -> list[str]:
-    return [_reference_id(doi) for doi in cast(MaterialRecord, record).dois]
+    return list(cast(MaterialRecord, record).reference_ids)
 
 
 def _reference_doi(record: object) -> str:
@@ -725,6 +834,12 @@ cast(Any, AltermagnetReferenceRecord).__httk_stored_properties__ = {
         sort=_field_sort("public_id"),
     ),
 }
+# Response-only projections reading each record's content field verbatim (keyed by the
+# served content-property name); the served ``_httk_records`` schema drives which appear.
+cast(Any, AltermagnetDataRecord).__httk_stored_properties__ = {
+    served_name: StoredPropertyProjection(response=_record_field_response(field_name))
+    for served_name, field_name, _fulltype in _RECORD_CONTENT_FIELDS
+}
 
 register_entry_family(
     name="altermagnets-structures",
@@ -745,6 +860,16 @@ register_entry_record(
     name="altermagnets-reference",
     family="altermagnets-references",
     record=f"{__name__}:AltermagnetReferenceRecord",
+)
+register_entry_family(
+    name="altermagnets-records",
+    family=f"{__name__}:AltermagnetDataRecordEntry",
+    definition_id=AltermagnetDataRecordEntry.definition_id,
+)
+register_entry_record(
+    name="altermagnets-record",
+    family="altermagnets-records",
+    record=f"{__name__}:AltermagnetDataRecord",
 )
 
 
@@ -1834,7 +1959,9 @@ def _entry_records_layout() -> dict[type, type | tuple[type, ...]]:
         AltermagnetStructureEntry: MaterialRecord,
         AltermagnetReferenceEntry: AltermagnetReferenceRecord,
         RunEntry: Run,
-        DataRecordEntry: DataRecord,
+        # The AMDB records family (internal type still ``records``) serves per-record
+        # content; the collector's DataRecord outputs are converted to it at save.
+        AltermagnetDataRecordEntry: AltermagnetDataRecord,
         FileEntry: FileRecord,
     }
 
@@ -2050,7 +2177,9 @@ def _resolve_edge_id(
         if label != "relaxed_structure":
             raise ValueError(f"structures edge {label!r} is not the relaxed structure; only it maps to the material")
         return material_id
-    families = {DataRecordEntry.type: DataRecordEntry, FileEntry.type: FileEntry}
+    # The collected record edge still carries the internal ``records`` type; the AMDB
+    # records family serves it, so its content id resolves against the converted rows.
+    families = {AltermagnetDataRecordEntry.type: AltermagnetDataRecordEntry, FileEntry.type: FileEntry}
     key = (entry_type, entry_id)
     if key not in memo:
         family = families.get(entry_type)
@@ -2297,9 +2426,18 @@ def build_store(
         store = SqlStore(
             created_database,
             entry_records={} if legacy else _entry_records_layout(),
-            # Mints entry ids for run/data/file rows saved without one; material
-            # and reference entries carry their public ids explicitly.
-            entry_ids=EntryIdScheme("anyt", "am", type_in_base=True),
+            # Mints entry ids (anyt.am[.type]-1-N) for run/data/file rows saved
+            # without one; material and reference entries carry their public ids
+            # explicitly (materials anyt.am-1-N, references anyt.am.refs-1-N).
+            entry_ids=EntryIdScheme("anyt.am", "1", type_in_base=True),
+        )
+        reference_id_by_doi = _reference_ids_by_doi(materials)
+        # Stamp the densely enumerated reference ids on the list ONCE so both the
+        # bulk save and the alternative-cell derivation (which replace()s off these
+        # materials) carry them; otherwise alternatives would serve empty references.
+        materials = tuple(
+            replace(material, reference_ids=tuple(reference_id_by_doi[doi] for doi in material.dois))
+            for material in materials
         )
         # Bulk ingestion creates the tables index-less and builds the indexes
         # once the stream completes, so no separate ensure_tables/transaction.
@@ -2317,11 +2455,11 @@ def build_store(
                 for item in [observation.item for observation in coupled.values()]:
                     if getattr(item, "missing_collector", None) is None:
                         for value in item.outputs.values():
-                            bulk.save(value)
+                            bulk.save(_as_records_family(value))
             for material in materials:
                 bulk.save(material)
-            for doi in dict.fromkeys(doi for material in materials for doi in material.dois):
-                bulk.save(AltermagnetReferenceRecord((rid := _reference_id(doi)), doi, id=rid))
+            for doi, rid in reference_id_by_doi.items():
+                bulk.save(AltermagnetReferenceRecord(rid, doi, id=rid))
         if not legacy:
             # Alternatives and the store-resolvable replacement runs (with their
             # rewritten product links) are saved after the mains-only bulk context
@@ -2443,14 +2581,15 @@ def open_in_memory_store(
         store = SqlStore(
             opened_database,
             entry_records=_entry_records_layout(),
-            entry_ids=EntryIdScheme("anyt", "am", type_in_base=True),
+            entry_ids=EntryIdScheme("anyt.am", "1", type_in_base=True),
         )
+        reference_id_by_doi = _reference_ids_by_doi(materials)
         # Bulk ingestion creates the tables and their indexes itself.
         with store.bulk_ingest() as bulk:
             for material in materials:
-                bulk.save(material)
-            for doi in dict.fromkeys(doi for material in materials for doi in material.dois):
-                bulk.save(AltermagnetReferenceRecord((rid := _reference_id(doi)), doi, id=rid))
+                bulk.save(replace(material, reference_ids=tuple(reference_id_by_doi[doi] for doi in material.dois)))
+            for doi, rid in reference_id_by_doi.items():
+                bulk.save(AltermagnetReferenceRecord(rid, doi, id=rid))
         return OpenedMaterialStore(
             opened_database,
             store,

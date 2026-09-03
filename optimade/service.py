@@ -13,7 +13,7 @@ from httk.serve.optimade import OptimadeConfig, adapter_from_providers
 from httk.serve.optimade import create_asgi_app as create_optimade_asgi_app
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import FileResponse, Response
 from starlette.routing import Mount, Route
 
 from .adapter import SORTABLE_PROPERTIES, AltermagnetStoreAdapter
@@ -28,6 +28,8 @@ from .files import (
     _read_file,
     _stored_figure_match,
     _stored_material_record,
+    resolve_locator_path,
+    stored_file_locator,
     structure_download_body,
     structure_download_filename,
 )
@@ -90,6 +92,7 @@ def build_service_app(
     store: Any | None = None,
     dataset: Mapping[str, Any] | None = None,
     details_root: Path | None = None,
+    runs_root: Path | None = None,
     root_link_target: str | None = None,
     root_link_id: str | None = None,
     root_link_name: str = AMDB_NAME,
@@ -121,6 +124,7 @@ def build_service_app(
         owned_database = opened.database
     index = _figure_index(dataset) if dataset is not None else None
     resolved_details_root = (details_root or material_store.resolve_details_dir()).resolve()
+    resolved_runs_root = (runs_root or material_store.resolve_runs_dir()).resolve()
     dark_cache: OrderedDict[tuple[str, str], bytes] = OrderedDict()
     dark_cache_bytes = 0
 
@@ -195,6 +199,30 @@ def build_service_app(
             },
         )
 
+    async def file_entry_response(request: Request) -> Response:
+        # Stream one served FileRecord's bytes on demand from the imported-runs tree.
+        # Requires a live store; the id is the store-minted anyt.am.files-1-N.
+        if store is None:
+            return Response(status_code=404)
+        located = stored_file_locator(store, request.path_params["id"])
+        if located is None:
+            return Response(status_code=404)
+        path = resolve_locator_path(located.locator, resolved_runs_root)
+        if path is None:
+            return Response(status_code=404)
+        # Content-Disposition uses the locator basename (compressed, e.g. .bz2), not
+        # FileRecord.name (which strips .bz2). No size cap: OUTCARs exceed the figure cap.
+        return FileResponse(
+            path,
+            media_type=located.media_type or "application/octet-stream",
+            headers={
+                "Content-Disposition": f'attachment; filename="{Path(located.locator).name}"',
+                "Cache-Control": "public, max-age=3600",
+                "X-Content-Type-Options": "nosniff",
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+
     adapter = (
         adapter_from_providers(providers, sortable=SORTABLE_PROPERTIES)
         if providers is not None
@@ -224,6 +252,7 @@ def build_service_app(
 
     app = Starlette(
         routes=[
+            Route("/extensions/files/entry/{id}", file_entry_response, methods=["GET", "HEAD"]),
             Route("/extensions/files/{material_id}/{filename}", figure_response, methods=["GET", "HEAD"]),
             Mount("", optimade_app),
         ],

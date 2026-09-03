@@ -58,6 +58,10 @@ const ALT_PAGE_LIMIT = 8;
 const ALT_KIND_ORDER = ["conventional", "primitive"];
 // The only run fields the Provenance section needs from each linked _httk_runs entry.
 const RUN_RESPONSE_FIELDS = ["_httk_workflow_declaration_uri", "_httk_source_id"];
+// The served fields each produced `files` entry needs to become a download link:
+// the human name (anchor text), the absolute byte-route url (href), and the size
+// shown as a compact annotation.
+const FILES_RESPONSE_FIELDS = ["name", "url", "size"];
 
 const node = (tag, className = "", value = null) => {
   const result = document.createElement(tag);
@@ -76,6 +80,19 @@ const decimal = (value, digits = 3) => {
 const percent = (value) => {
   const number = safeNumber(value);
   return number === null ? "n/a" : `${(number * 100).toFixed(1)}%`;
+};
+// Compact byte size for a download link ("" when unavailable), binary units.
+const fileSize = (value) => {
+  const number = safeNumber(value);
+  if (number === null || number < 0) return "";
+  const units = ["B", "kB", "MB", "GB", "TB"];
+  let size = number;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${unit === 0 ? size : size.toFixed(1)} ${units[unit]}`;
 };
 const abundance = (value) => {
   const number = safeNumber(value);
@@ -509,10 +526,12 @@ function buildVariantCards(variants) {
 // Same-page link to another material's detail view (keeps the current path, swaps ?id=).
 const materialPageHref = (id) => new URL(`?id=${encodeURIComponent(id)}`, document.baseURI).href;
 
-// Human word for a produced entry whose endpoint is NOT mounted, keyed by its
-// served (wire) type. `structures` entries resolve to real material pages; the
-// `_httk_records`/`files` endpoints are not served, so those render as labeled
-// non-link entries (the full id is kept in a title attribute).
+// Human word for a produced entry, keyed by its served (wire) type — the label
+// on the non-link fallback and the anchor-text fallback for a file with no served
+// name. `structures` entries resolve to real material pages; `files` entries
+// become download links from the mounted files endpoint (see attachFileDownloads),
+// degrading to a labeled non-link entry; `_httk_records` are rendered from the run
+// blocks alone and stay non-link. The full id is kept in a title attribute.
 const PRODUCED_KIND_WORDS = { _httk_records: "record", files: "file" };
 
 // The forward-relationship keys a run exposes for what it produced, and the
@@ -534,6 +553,38 @@ function producedEntries(run) {
     });
   });
   return [...seen.values()];
+}
+
+// Turn the `files`-type produced entries into real download links by fetching
+// their served name/url/size in ONE batched files request per page
+// (`filter=id="a" OR id="b" ...`, following the run-lookup transport pattern) and
+// attaching `{ name, url, size }` to each matching entry. Entries missing from the
+// response, or any failure (try/catch), keep no `file` and degrade to the non-link
+// rendering. Mutates and returns `produced` (records entries are never touched).
+async function attachFileDownloads(Transport, config, produced) {
+  const fileIds = produced.filter((item) => item.type === "files").map((item) => item.id);
+  if (!fileIds.length) return produced;
+  const filter = fileIds.map((id) => `id=${JSON.stringify(id)}`).join(" OR ");
+  try {
+    const transport = new Transport(
+      { base_url: config.base_url, entry_type: "files", response_fields: FILES_RESPONSE_FIELDS, page_size: fileIds.length },
+      { documentBase: document.baseURI },
+    );
+    const page = await transport.fetchPage({ filter });
+    const byId = new Map(arrayValue(page.resources).map((resource) => [resource.id, resource.attributes || {}]));
+    produced.forEach((item) => {
+      if (item.type !== "files") return;
+      const attrs = byId.get(item.id);
+      // `url` comes verbatim from the serve-time rewrite (absolute byte route) — do
+      // not rebuild it. No url (entry missing / not served) → leave it non-link.
+      if (attrs && typeof attrs.url === "string" && attrs.url) {
+        item.file = { name: typeof attrs.name === "string" ? attrs.name : "", url: attrs.url, size: attrs.size };
+      }
+    });
+  } catch (error) {
+    console.error("Produced files OPTIMADE request failed", error);
+  }
+  return produced;
 }
 
 // Locate the producing run resource. Primary lookup: the `_httk_relationships`
@@ -589,13 +640,15 @@ async function fetchProvenance(Transport, config, resource) {
     workflowUri: runAttrs._httk_workflow_declaration_uri != null ? String(runAttrs._httk_workflow_declaration_uri) : null,
     sourceId: runAttrs._httk_source_id != null ? String(runAttrs._httk_source_id) : null,
     totalEnergy,
-    produced: run ? producedEntries(run) : [],
+    produced: await attachFileDownloads(Transport, config, run ? producedEntries(run) : []),
   };
 }
 
 // The compact "This run produced" list: structures ids are real material-page
-// links (with a "(this material)" marker for the current id); records/files are
-// labeled non-link entries (edge label + a human kind word; full id in a title).
+// links (with a "(this material)" marker for the current id); files with a served
+// url (attached by attachFileDownloads) are download links (served name + compact
+// size); records — and any file whose batch entry did not resolve — are labeled
+// non-link entries (edge label + a human kind word; full id in a title).
 function buildProducedList(produced, currentId) {
   const list = node("ul", "provenance-produced");
   produced.forEach((item) => {
@@ -606,6 +659,15 @@ function buildProducedList(produced, currentId) {
       const link = node("a", current ? "provenance-produced-link is-current" : "provenance-produced-link", item.id);
       link.href = materialPageHref(item.id);
       if (current) link.append(document.createTextNode(" (this material)"));
+      li.append(link);
+    } else if (item.type === "files" && item.file) {
+      // Served-time url (absolute byte route) → a real download link; anchor text
+      // is the served name (full id kept in the title), compact size appended.
+      const link = node("a", "provenance-produced-link provenance-produced-file", item.file.name || PRODUCED_KIND_WORDS.files);
+      link.href = item.file.url;
+      link.title = item.id;
+      const size = fileSize(item.file.size);
+      if (size) link.append(node("span", "provenance-produced-size", ` (${size})`));
       li.append(link);
     } else {
       const entry = node("span", "provenance-produced-entry", PRODUCED_KIND_WORDS[item.type] || "entry");

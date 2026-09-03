@@ -910,6 +910,11 @@ html[data-theme="dark"] .theme-icon {
   font-style: italic;
 }
 
+.provenance-produced-size {
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
 .symmetry-table-wrap {
   margin-bottom: 2px;
 }

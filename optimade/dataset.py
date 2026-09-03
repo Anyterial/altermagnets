@@ -1,5 +1,6 @@
 """Dataset assembly and custom-property projection for the altermagnets service."""
 
+import json
 import logging
 from collections.abc import Iterable, Mapping, MutableMapping
 from pathlib import Path
@@ -8,7 +9,7 @@ from typing import Any
 import material_store
 from httk.atomistic import StructureEntryProvider
 from httk.core import PropertyDefinition, RelatedEntry, report
-from httk.store import ReferenceEntryProvider
+from httk.store import DataRecordEntryProvider, FileEntryProvider, ReferenceEntryProvider
 
 from .files import figure_file_is_servable
 
@@ -211,6 +212,8 @@ def build_dataset(
     public_base_url: str = DEFAULT_PUBLIC_BASE_URL,
     *,
     records_out: MutableMapping[str, Any] | None = None,
+    files_out: MutableMapping[str, Any] | None = None,
+    data_records_out: MutableMapping[str, Any] | None = None,
 ) -> tuple[
     dict[str, Any],
     dict[str, dict[str, Any]],
@@ -238,6 +241,20 @@ def build_dataset(
                 structure = material_store.material_structure(record)
                 if structure is not None:
                     stored_structures[record.id] = structure
+            # The runs' file/record outputs (present only in a prebuilt store built with
+            # the runs tree) so validation can cover the mounted files/records endpoints.
+            if files_out is not None:
+                file_searcher = opened.store.searcher()
+                file_var = file_searcher.variable(material_store.FileRecord)
+                for result in file_searcher.results(file=file_var):
+                    file_record = result["file"]
+                    files_out[file_record.id] = file_record
+            if data_records_out is not None:
+                record_searcher = opened.store.searcher()
+                record_var = record_searcher.variable(material_store.AltermagnetDataRecord)
+                for result in record_searcher.results(record=record_var):
+                    data_record = result["record"]
+                    data_records_out[data_record.id] = data_record
         finally:
             # Record-backed views read lazily, so the store must outlive them. A
             # file-backed engine reconnects after dispose, but disposing the
@@ -255,14 +272,13 @@ def build_dataset(
             )
 
     # References: dedupe DOIs across the normalized material records in first-seen order.
+    # Ids are read straight off each material's stored ``reference_ids`` (aligned with
+    # its ``dois``), the same densely enumerated ids the store path serves.
     reference_id_by_doi: dict[str, str] = {}
     references: dict[str, dict[str, Any]] = {}
     for record in material_records.values():
-        for doi in record.dois:
+        for doi, reference_id in zip(record.dois, record.reference_ids, strict=True):
             if doi not in reference_id_by_doi:
-                # One scheme across both serving paths: the store path derives the
-                # same DOI-stable id via material_store._reference_id.
-                reference_id = material_store._reference_id(doi)
                 reference_id_by_doi[doi] = reference_id
                 references[reference_id] = {"doi": doi}
 
@@ -292,9 +308,21 @@ def build_providers(
     *,
     material_records: MutableMapping[str, Any] | None = None,
 ) -> list[Any]:
-    """Register the ``_anyterial_`` prefix and build the structures + references providers."""
+    """Register the ``_anyterial_`` prefix and build every serving provider for validation.
+
+    Beyond structures and references, this also serves the runs' file and data-record
+    outputs (present only in a prebuilt store built with the runs tree) so
+    ``validate_optimade`` covers the mounted ``files`` and ``_httk_records`` endpoints.
+    Runs are not validated here (there is no cheap in-memory RunEntryProvider round-trip
+    from the store's reconstructed runs); that remains a known validation gap.
+    """
+    files: dict[str, Any] = {}
+    data_records: dict[str, Any] = {}
     structures, properties, relationships, references = build_dataset(
-        public_base_url=public_base_url, records_out=material_records
+        public_base_url=public_base_url,
+        records_out=material_records,
+        files_out=files,
+        data_records_out=data_records,
     )
     structure_provider = AltermagnetStructureProvider(
         structures,
@@ -302,5 +330,34 @@ def build_providers(
         properties=properties,
         relationships=relationships,
     )
-    reference_provider = ReferenceEntryProvider(references)
-    return [structure_provider, reference_provider]
+    providers: list[Any] = [structure_provider, ReferenceEntryProvider(references)]
+    # Only a runs-backed prebuilt store holds files/records; skip empty providers so a
+    # store without them validates rather than tripping the "no records served" guard.
+    if files:
+        providers.append(FileEntryProvider(files))
+    if data_records:
+        providers.append(DataRecordEntryProvider(data_records, definitions=_record_definitions(data_records)))
+    return providers
+
+
+def _record_definitions(data_records: Mapping[str, Any]) -> dict[str, PropertyDefinition]:
+    """Resolve each stored data record's served property definition from httk-schemas.
+
+    The record's ``definition_id`` IRI ``.../properties/<relpath>`` maps to
+    ``<relpath>.json`` under the httk-schemas tree, keyed by the record's served
+    property name for :class:`DataRecordEntryProvider`.
+
+    :param data_records: The stored data records keyed by id.
+    :return: The served-property-name to definition map for the records present.
+    """
+    marker = "/properties/"
+    definitions: dict[str, PropertyDefinition] = {}
+    for record in data_records.values():
+        if record.name in definitions or marker not in record.definition_id:
+            continue
+        path = HTTK_DEFS_DIR / f"{record.definition_id.split(marker, 1)[1]}.json"
+        if path.is_file():
+            definitions[record.name] = PropertyDefinition.from_optimade(
+                record.name, json.loads(path.read_text(encoding="utf-8"))
+            )
+    return definitions

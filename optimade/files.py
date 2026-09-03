@@ -81,6 +81,55 @@ def _load_figure_index() -> dict[str, tuple[str, tuple[_StoredFigure, ...]]]:
         material_store.cleanup_material_store({"materials_database": opened.database})
 
 
+@dataclass(frozen=True)
+class _FileLocator:
+    """The FileRecord fields the byte route needs after the store connection closes."""
+
+    locator: str
+    media_type: str | None
+
+
+def stored_file_locator(store: Any, file_id: str) -> _FileLocator | None:
+    """Return one served FileRecord's tree-relative locator and media type, or None.
+
+    :param store: The live entry store to read.
+    :param file_id: The store-minted ``anyt.am.files-1-N`` id to fetch.
+    :return: The locator/media-type pair, or ``None`` when no such file exists.
+    """
+    if not file_id:
+        return None
+    searcher = store.searcher()
+    record = searcher.variable(material_store.FileRecord)
+    searcher.add(record.id == file_id)
+    row = searcher.results(record=record).first()
+    if row is None:
+        return None
+    file = row["record"]
+    return _FileLocator(str(file.url), file.media_type if isinstance(file.media_type, str) else None)
+
+
+def resolve_locator_path(locator: str, runs_root: Path) -> Path | None:
+    """Resolve a tree-relative file locator under ``runs_root``, guarding traversal.
+
+    Absolute locators and any path that resolves (through ``..`` or a symlink)
+    outside ``runs_root`` are rejected, mirroring :func:`_safe_path`.
+
+    :param locator: The stored tree-relative locator (``FileRecord.url``).
+    :param runs_root: The imported-runs root the locator is relative to.
+    :return: The contained regular file, or ``None`` when absent or escaping.
+    """
+    relative = Path(locator)
+    if relative.is_absolute():
+        return None
+    root = runs_root.resolve()
+    candidate = (root / relative).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None
+
+
 def _stored_material_record(store: Any, material_id: str) -> Any | None:
     """Fetch the MaterialRecord for one public material ID from the store, or None."""
     aliases = material_store.material_id_aliases(material_id)

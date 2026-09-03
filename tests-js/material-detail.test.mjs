@@ -564,7 +564,13 @@ function structureWithRun(extra = {}) {
 // recording each config, each filter, and each id fetched.
 class FakeRunTransport {
   constructor(config) { this.config = config; FakeRunTransport.configs.push(config); }
-  async fetchPage({ filter }) { FakeRunTransport.filters.push(filter); return { resources: [RUN_RESOURCE] }; }
+  async fetchPage({ filter }) {
+    FakeRunTransport.filters.push(filter);
+    // The batched files request (entry_type "files") serves no matches here, so the
+    // file entries degrade to the non-link rendering; the run request serves the run.
+    if (this.config.entry_type === "files") return { resources: [] };
+    return { resources: [RUN_RESOURCE] };
+  }
   async fetchOne(id) { FakeRunTransport.fetched.push(id); return { resource: { ...RUN_RESOURCE, id } }; }
 }
 
@@ -572,8 +578,12 @@ test("fetchProvenance finds the run via the _httk_relationships filter route and
   installDom(new DomDocument("https://site.example.test/material"));
   FakeRunTransport.configs = []; FakeRunTransport.filters = []; FakeRunTransport.fetched = [];
   const obj = await material.fetchProvenance(FakeRunTransport, { base_url: API }, structureWithRun());
-  // The primary lookup is ONE filter request on the run endpoint with the EXACT filter string.
-  assert.deepEqual(FakeRunTransport.filters, [`_httk_relationships._httk_has_artifact.id HAS "${MATERIAL_WITH_RUN_ID}"`]);
+  // The primary lookup is ONE filter request on the run endpoint with the EXACT filter
+  // string, followed by ONE batched files request (the sole produced file id).
+  assert.deepEqual(FakeRunTransport.filters, [
+    `_httk_relationships._httk_has_artifact.id HAS "${MATERIAL_WITH_RUN_ID}"`,
+    `id="file-hash-000"`,
+  ]);
   assert.deepEqual(FakeRunTransport.configs[0], { base_url: API, entry_type: "_httk_runs", response_fields: RUN_FIELDS, page_size: 1 });
   assert.deepEqual(FakeRunTransport.fetched, []); // filter route resolved → no id fallback
   // A non-empty parsed result (an empty mock would slip past a truthiness check, so assert content).
@@ -697,6 +707,111 @@ test("buildProvenance renders the grid, structures links with the current-materi
   assert.equal(energyOnly.querySelectorAll("ul.provenance-produced").length, 0);
   // Null object → no section.
   assert.equal(material.buildProvenance(null, "x"), null);
+});
+
+// --- Produced files as real download links (batched files endpoint) ---
+
+const FILE_URL = "https://api.example.test/optimade/amdb/extensions/files/entry/file-hash-000";
+
+// Serves the run for the material-scoped filter and the files page for the batched
+// files request; records every filter and config seen so the batch can be asserted.
+class FileAwareTransport {
+  constructor(config) { this.config = config; FileAwareTransport.configs.push(config); }
+  async fetchPage({ filter }) {
+    FileAwareTransport.filters.push(filter);
+    if (this.config.entry_type === "files") return { resources: FileAwareTransport.fileResources };
+    return { resources: [RUN_RESOURCE] };
+  }
+  async fetchOne(id) { return { resource: { ...RUN_RESOURCE, id } }; }
+}
+
+test("fetchProvenance turns produced files into download links via ONE batched files request", async () => {
+  installDom(new DomDocument("https://site.example.test/material"));
+  FileAwareTransport.configs = []; FileAwareTransport.filters = [];
+  FileAwareTransport.fileResources = [
+    { id: "file-hash-000", type: "files", attributes: { name: "vasprun.xml", url: FILE_URL, size: 20480 } },
+  ];
+  const obj = await material.fetchProvenance(FileAwareTransport, { base_url: API }, structureWithRun());
+  // Exactly ONE files request (not N+1), with the EXACT id-OR filter and files config.
+  const fileFilters = FileAwareTransport.filters.filter((f) => f.startsWith("id="));
+  assert.deepEqual(fileFilters, [`id="file-hash-000"`]);
+  const filesConfig = FileAwareTransport.configs.find((c) => c.entry_type === "files");
+  assert.deepEqual(filesConfig, { base_url: API, entry_type: "files", response_fields: ["name", "url", "size"], page_size: 1 });
+  // The produced file entry carries the served name/url/size verbatim.
+  const file = obj.produced.find((item) => item.type === "files");
+  assert.deepEqual(file.file, { name: "vasprun.xml", url: FILE_URL, size: 20480 });
+  // The record entry is untouched (no file).
+  assert.equal("file" in obj.produced.find((item) => item.type === "_httk_records"), false);
+  // Rendering: the served name is the anchor text, the served url the href, size shown.
+  const section = material.buildProvenance(obj, MATERIAL_WITH_RUN_ID);
+  const links = section.querySelectorAll("a.provenance-produced-file");
+  assert.equal(links.length, 1);
+  assert.equal(links[0].getAttribute("href"), FILE_URL);
+  assert.match(links[0].textContent, /vasprun\.xml/);
+  assert.match(links[0].textContent, /20\.0 kB/);
+  assert.equal(links[0].title, "file-hash-000");
+  // The record still renders as a non-link entry; the file no longer does.
+  const entries = section.querySelectorAll("span.provenance-produced-entry");
+  assert.deepEqual(entries.map((s) => s.title), ["rec-hash-000"]);
+});
+
+test("fetchProvenance leaves produced files as non-link entries when the batched request fails", async () => {
+  installDom(new DomDocument("https://site.example.test/material"));
+  class FilesFailTransport {
+    constructor(config) { this.config = config; }
+    async fetchPage({ filter }) {
+      if (this.config.entry_type === "files") throw new Error("files endpoint offline");
+      return { resources: [RUN_RESOURCE] };
+    }
+    async fetchOne(id) { return { resource: { ...RUN_RESOURCE, id } }; }
+  }
+  const obj = await material.fetchProvenance(FilesFailTransport, { base_url: API }, structureWithRun());
+  const file = obj.produced.find((item) => item.type === "files");
+  assert.equal("file" in file, false);
+  // Degradation: the non-link span rendering is preserved (id in the title, kind word).
+  const section = material.buildProvenance(obj, MATERIAL_WITH_RUN_ID);
+  assert.equal(section.querySelectorAll("a.provenance-produced-file").length, 0);
+  const fileSpan = section.querySelectorAll("span.provenance-produced-entry").find((s) => s.title === "file-hash-000");
+  assert.ok(fileSpan);
+  assert.equal(fileSpan.textContent, "file");
+});
+
+test("fetchProvenance renders a mixed link/non-link list when the files batch is partial", async () => {
+  installDom(new DomDocument("https://site.example.test/material"));
+  const twoFileRun = {
+    id: RUN_ID, type: "_httk_runs",
+    attributes: { _httk_source_id: "httk-v1:abc", _httk_workflow_declaration_uri: WORKFLOW_URI },
+    relationships: {
+      _httk_has_output: { data: [
+        { type: "files", id: "file-a", meta: { _httk_label: "a" } },
+        { type: "files", id: "file-b", meta: { _httk_label: "b" } },
+      ] },
+    },
+  };
+  const fileAUrl = "https://api.example.test/optimade/amdb/extensions/files/entry/file-a";
+  class PartialTransport {
+    constructor(config) { this.config = config; }
+    async fetchPage({ filter }) {
+      if (this.config.entry_type === "files") {
+        PartialTransport.filesFilter = filter;
+        // Only file-a comes back; file-b is missing from the batch.
+        return { resources: [{ id: "file-a", type: "files", attributes: { name: "a.txt", url: fileAUrl, size: 10 } }] };
+      }
+      return { resources: [twoFileRun] };
+    }
+    async fetchOne(id) { return { resource: { ...twoFileRun, id } }; }
+  }
+  const obj = await material.fetchProvenance(PartialTransport, { base_url: API }, structureWithRun());
+  // ONE batched request covering BOTH ids in a single id-OR filter.
+  assert.equal(PartialTransport.filesFilter, `id="file-a" OR id="file-b"`);
+  const section = material.buildProvenance(obj, MATERIAL_WITH_RUN_ID);
+  // file-a is a link; file-b (missing from the batch) is a non-link span.
+  const links = section.querySelectorAll("a.provenance-produced-file");
+  assert.equal(links.length, 1);
+  assert.equal(links[0].getAttribute("href"), fileAUrl);
+  assert.equal(links[0].title, "file-a");
+  const spans = section.querySelectorAll("span.provenance-produced-entry");
+  assert.deepEqual(spans.map((s) => s.title), ["file-b"]);
 });
 
 function runAwareFetch(structureResource) {

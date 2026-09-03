@@ -263,7 +263,10 @@ def test_coupled_material_reconstructs_run_with_resolvable_edges(tmp_path: Path)
 
         run = _single(store, Run)
         assert run.source_id  # carried over unchanged from the collected run
-        record_id = _single(store, DataRecord).id  # the minted id of the bulk-saved output
+        # DataRecord outputs are stored as the AMDB records-family subclass (served at
+        # _httk_records); the base DataRecord table holds none.
+        assert _all(store, DataRecord) == []
+        record_id = _single(store, material_store.AltermagnetDataRecord).id  # minted id of the bulk-saved output
         file_id = _single(store, FileRecord).id
         assert record_id and file_id
 

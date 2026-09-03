@@ -7,6 +7,7 @@ otherwise, e.g. in a checkout without the workspace ``PYTHONPATH``).
 
 import asyncio
 import json
+import re
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -283,6 +284,116 @@ def test_serves_material_run_strong_link_relationships_and_energy(tmp_path: Path
         opened.database.dispose()
 
 
+def _build_run_backed_store(tmp_path: Path) -> tuple[Any, Any, Path, Path]:
+    """Build and open a prebuilt store whose one coupled run carries a file+record output.
+
+    :param tmp_path: The per-test scratch directory.
+    :return: ``(opened_store, service_app, details_root, runs_root)``.
+    """
+    source = write_source_tables(tmp_path / "tables")
+    details = write_detail_assets(tmp_path / "details")
+    runs = tmp_path / "runs"
+    _write_scf_run(runs, "CrSb")  # couples anyt.am-1-1; writes an OUTCAR (energy) + vasprun (file)
+    target = material_store.build_store(tmp_path / "store.duckdb", data_dir=source, details_dir=details, runs_dir=runs)
+    opened = material_store.open_prebuilt_store(target)
+    assert opened is not None  # a stale/empty store would silently serve empty files/records
+    app = build_service_app(
+        public_base_url="https://api.example.test/optimade/amdb",
+        store=opened.store,
+        details_root=details,
+        runs_root=runs,
+    )
+    return opened, app, details, runs
+
+
+def test_files_and_records_endpoints_serve_content_and_bytes(tmp_path: Path) -> None:
+    """The mounted files/records endpoints serve real content and the byte route streams a file.
+
+    Runs against the prebuilt-store path (the stale-layout fallback would serve empty
+    files/records) and asserts non-empty exact content: the files entry carries the
+    serve-time-rewritten absolute byte-route url plus name/size, the records entry carries
+    the record name and value, and the byte route streams the fixture file byte-exact while
+    404ing unknown ids and refusing a traversal-shaped id.
+    """
+    opened, app, _details, _runs = _build_run_backed_store(tmp_path)
+    try:
+        with TestClient(app, base_url="http://testserver") as live:
+            files = live.get("/v1/files").json()["data"]
+            assert len(files) == 1
+            file_id = files[0]["id"]
+            attrs = files[0]["attributes"]
+            assert attrs["url"] == f"https://api.example.test/optimade/amdb/extensions/files/entry/{file_id}"
+            assert attrs["name"] == "vasprun.xml"
+            assert attrs["size"] == len(b"<modeling/>\n")
+
+            records = live.get("/v1/_httk_records").json()["data"]
+            assert len(records) == 1
+            record_attrs = records[0]["attributes"]
+            assert record_attrs["_httk_custom_record_name"] == "_httk_total_energy"
+            assert record_attrs["_httk_custom_record_value_number"] == -1.0
+            assert json.loads(record_attrs["_httk_custom_record_value_json"]) == -1.0
+
+            served = live.get(f"/extensions/files/entry/{file_id}")
+            assert served.status_code == 200
+            assert served.content == b"<modeling/>\n"
+            assert served.headers["content-disposition"] == 'attachment; filename="vasprun.xml"'
+            assert served.headers["content-type"] == "application/octet-stream"
+            assert served.headers["x-content-type-options"] == "nosniff"
+            assert served.headers["access-control-allow-origin"] == "*"
+
+            assert live.get("/extensions/files/entry/anyt.am.files-1-9999").status_code == 404
+            assert live.get("/extensions/files/entry/..%2f..%2fetc%2fpasswd").status_code == 404
+    finally:
+        opened.database.dispose()
+
+
+def test_five_entry_type_id_forms(tmp_path: Path) -> None:
+    """Every served family mints/carries its pinned ``anyt.am[.<type>]-1-N`` id form.
+
+    Numbers are matched by regex, never pinned exactly, since minted-number stability is
+    not guaranteed.
+    """
+    opened, app, _details, _runs = _build_run_backed_store(tmp_path)
+    try:
+        with TestClient(app, base_url="http://testserver") as live:
+            material = live.get("/v1/structures/anyt.am-1-1").json()["data"]
+            assert re.fullmatch(r"anyt\.am-1-\d+", material["id"])
+            references = material["relationships"]["references"]["data"]
+            assert references and all(re.fullmatch(r"anyt\.am\.refs-1-\d+", ref["id"]) for ref in references)
+
+            run_id = material["relationships"]["_httk_is_artifact"]["data"][0]["id"]
+            assert re.fullmatch(r"anyt\.am\.runs-1-\d+", run_id)
+
+            file_id = live.get("/v1/files").json()["data"][0]["id"]
+            assert re.fullmatch(r"anyt\.am\.files-1-\d+", file_id)
+            record_id = live.get("/v1/_httk_records").json()["data"][0]["id"]
+            assert re.fullmatch(r"anyt\.am\.records-1-\d+", record_id)
+    finally:
+        opened.database.dispose()
+
+
+def test_resolve_locator_path_refuses_escape(tmp_path: Path) -> None:
+    """The byte route's locator guard refuses absolute paths and ``..``/symlink escapes."""
+    from optimade.files import resolve_locator_path
+
+    root = tmp_path / "runs"
+    (root / "task").mkdir(parents=True)
+    real = root / "task" / "vasprun.xml.bz2"
+    real.write_bytes(b"data")
+
+    assert resolve_locator_path("task/vasprun.xml.bz2", root) == real.resolve()
+    assert resolve_locator_path("../secret", root) is None
+    assert resolve_locator_path("task/../../secret", root) is None
+    assert resolve_locator_path("/etc/passwd", root) is None
+    assert resolve_locator_path("task/missing", root) is None
+
+    outside = tmp_path / "outside.txt"
+    outside.write_bytes(b"x")
+    link = root / "task" / "link"
+    link.symlink_to(outside)
+    assert resolve_locator_path("task/link", root) is None
+
+
 def test_store_native_service_is_live_and_does_not_own_caller_store(tmp_path: Path) -> None:
     source = write_source_tables(tmp_path / "tables")
     opened = material_store.open_in_memory_store(source, details_dir=tmp_path / "details")
@@ -481,6 +592,14 @@ def test_httk_alts_routes_serve_composite_alternatives(tmp_path: Path) -> None:
             assert single.status_code == 200, single.text
             assert single.json()["data"]["id"] == "anyt.am-1-1~conventional"
             assert single.json()["data"]["attributes"]["_httk_kind"] == "conventional"
+
+            # The alternative rows carry the main's densely enumerated references: the
+            # reference_ids stamp must reach the alternative-cell derivation, not only
+            # the mains bulk save (regression: alternatives served an empty block).
+            main_refs = _relationship_ids(live.get("/v1/structures/anyt.am-1-1").json()["data"], "references")
+            assert main_refs and all(re.fullmatch(r"anyt\.am\.refs-1-\d+", rid) for _type, rid in main_refs)
+            alt_refs = _relationship_ids(single.json()["data"], "references")
+            assert alt_refs == main_refs
     finally:
         opened.database.dispose()
 

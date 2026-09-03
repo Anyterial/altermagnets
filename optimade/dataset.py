@@ -188,8 +188,8 @@ def _material_properties(record: Any, public_base_url: str) -> dict[str, Any]:
         # page renders its no-symmetry-record placeholder from that state.
         "_anyterial_magndata_variants": variants,
         "_httk_custom_figures": _figure_payload(record, public_base_url),
-        # The live _httk_runs weak-link relationship carries the run identity; this
-        # symmetric scalar is the material-level energy the detail page renders.
+        # The producing run's reverse StrongLink relationships carry the run identity;
+        # this symmetric scalar is the material-level energy the detail page renders.
         # The in-memory/--validate path serves no relationships, so its pages show
         # only this scalar (documented degradation).
         "_httk_custom_total_energy": getattr(record, "total_energy", None),

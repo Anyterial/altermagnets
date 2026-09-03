@@ -60,12 +60,11 @@ from httk.core import (
 )
 from httk.core.data_records import DataRecordEntry
 from httk.core.files import FileEntry
-from httk.core.provenance import Run, RunEntry
+from httk.core.provenance import ProductLink, Run, RunEdge, RunEntry
 from httk.core.register import register_entry_family, register_entry_record
 from httk.core.storage import (
     QueryLiteralError,
     StoredPropertyProjection,
-    WeakLink,
     content_id,
     project_storage_record,
     stored_property,
@@ -124,7 +123,12 @@ logger = report.context_logger(logging.getLogger("httk.altermagnets.material_sto
 #: change is treated as stale (falling back to in-memory seeding) instead of being
 #: silently adopted with missing child tables reading as ``None``. Bump on every
 #: stored-record schema change.
-STORE_LAYOUT_VERSION = 9  # bump: produced_by weak link + _httk_custom_total_energy replace provenance snapshot
+# Bump 10: the producing run's StrongLink edges replace the retired ``produced_by``
+# WeakLink, so provenance is served through the run's reverse ``_httk_is_*`` blocks.
+# Removing the link declaration changes the link fingerprint and RunEdge grows a
+# ``(entry_type, entry_id)`` index; either forces a rebuild, and the fingerprint --
+# not this version row -- is the operative staleness gate for a pre-change store.
+STORE_LAYOUT_VERSION = 10
 RELAXED_STRUCTURE_PRECISION = 5e-4  # Cartesian Å; relaxed-DFT coordinate precision, so symmetry tolerance is realistic (not ~machine epsilon from full-precision CONTCAR digits)
 
 ELEMENT_PATTERN = re.compile(r"[A-Z][a-z]?")
@@ -251,19 +255,12 @@ class MaterialRecord:
 
     __httk_storage__: ClassVar[StorageInfo] = StorageInfo(
         storage_name="altermagnets_material_records",
-        # The one run that produced this material serves as the OPTIMADE
-        # ``_httk_runs`` relationship (live, replacing the old denormalized
-        # provenance snapshot). Every coupled run's structure edge appears on
-        # both the artifact and output side, so one declaration covers it.
-        links=(
-            WeakLink(
-                "produced_by",
-                Run,
-                exposed_relationship=True,
-                role="artifact+output",
-                description="The workflow run that produced this material.",
-            ),
-        ),
+        # Provenance is served through the producing run's StrongLink edges, not a
+        # stored link table: the run's ``relaxed_structure`` edge targets this
+        # material's own served id, so the material serves the derived reverse
+        # ``_httk_is_artifact``/``_httk_is_output`` relationships (see
+        # ``_save_reconstructed_runs``). The material-level ``_httk_custom_total_energy``
+        # scalar is served beside them.
         indexes=(
             ("classification", "screening_rank"),
             ("electronic_type", "screening_rank"),
@@ -1541,7 +1538,12 @@ def _build_coupling(
     :param data_dir: directory holding the screening CSV and the coupling document.
     :param observations: relaxed-structure observations collected from the v1 tree.
     :param details_dir: root of the detail-asset tree, whose per-material JSONs
-        carry the authoritative ``raw_path`` mapping.
+        carry the authoritative ``raw_path`` mapping. The document's
+        ``run_content_id`` column pins the collected run's content identity (the
+        collection-identity pin: ``content_id(item.run)``), so re-collecting the
+        same job stays coupled to the same material; it is deliberately NOT the
+        store-minted run id (the reconstructed run saved by
+        :func:`_save_reconstructed_runs` carries different, resolvable edges).
     :param runs_root: the runs root the observations were collected from, named in
         the diagnostic raised when a document's ``raw_path`` values all miss.
     :param collected: total tasks collected from the tree (before 3a filtering), so a
@@ -2020,30 +2022,143 @@ def _coupled_total_energy(observation: _RunObservation) -> float | None:
     return float(value) if isinstance(value, (int, float)) else None
 
 
-def _link_material_runs(
+def _resolve_edge_id(
+    store: SqlStore, label: str, entry_type: str, entry_id: str, *, material_id: str, memo: dict[tuple[str, str], str]
+) -> str:
+    """Map a collected edge's ``(entry_type, content-id)`` to the store-served id.
+
+    The ``relaxed_structure`` edge resolves to the material's own id (S1: the
+    material IS the served relaxed structure; the standalone structure save carries
+    no served id). Any other structures edge is rejected: this store attributes
+    only the relaxed-structure output to the material, so a foreign structures edge
+    (e.g. a future ``input_structure``) must not silently self-attribute. Record and
+    file outputs saved in the bulk pass are looked up by their content id -- the id
+    their collected edges carry -- to recover the id the store minted for them,
+    memoized so a shared output is fetched once.
+
+    :param store: The finalized store the outputs were bulk-saved into.
+    :param label: The collected edge's relationship label (the output role).
+    :param entry_type: The collected edge's internal (unprefixed) target type.
+    :param entry_id: The collected edge's target id (an output's content id).
+    :param material_id: The coupled material's served id, targeted by the structure edge.
+    :param memo: The per-run ``(entry_type, entry_id) -> minted id`` cache.
+    :return: The store-served id the rewritten edge must carry.
+    :raises ValueError: If the type is unmappable, a structures edge is not the
+        relaxed structure, or the output has no resolvable store id.
+    """
+    if entry_type == AltermagnetStructureEntry.type:
+        if label != "relaxed_structure":
+            raise ValueError(f"structures edge {label!r} is not the relaxed structure; only it maps to the material")
+        return material_id
+    families = {DataRecordEntry.type: DataRecordEntry, FileEntry.type: FileEntry}
+    key = (entry_type, entry_id)
+    if key not in memo:
+        family = families.get(entry_type)
+        if family is None:
+            raise ValueError(f"run edge to unmappable entry type {entry_type!r}")
+        fetched = store.fetch_entry(family, entry_id, eager=True)
+        minted = getattr(fetched, "id", None)
+        if not isinstance(minted, str):
+            raise ValueError(
+                f"{entry_type} output {entry_id!r} has no resolvable store id "
+                "(never stored in the bulk pass, or its content id does not match a stored row)"
+            )
+        memo[key] = minted
+    return memo[key]
+
+
+def _rewrite_edges(
+    store: SqlStore,
+    edges: Iterable[RunEdge],
+    *,
+    material_id: str,
+    memo: dict[tuple[str, str], str],
+) -> tuple[RunEdge, ...]:
+    """Rewrite each collected edge's content-id target to the store-served id."""
+    return tuple(
+        RunEdge(
+            edge.label,
+            edge.entry_type,
+            _resolve_edge_id(store, edge.label, edge.entry_type, edge.entry_id, material_id=material_id, memo=memo),
+        )
+        for edge in edges
+    )
+
+
+def _save_reconstructed_runs(
     store: SqlStore, materials: Iterable[MaterialRecord], coupled: Mapping[str, _RunObservation]
-) -> int:
-    """Assert the ``produced_by`` weak link from each coupled material to its run.
+) -> tuple[int, int]:
+    """Save one store-resolvable replacement :class:`~httk.core.Run` per coupled material.
 
-    Links are refused inside a bulk-ingest context, so this runs after the bulk
-    stream finalizes (beside :func:`_save_alternative_cells`). Only runs whose
-    item was actually saved (a non-``missing_collector`` collection) are linked,
-    and one run backs one material (enforced in :func:`_build_coupling`), so this
-    asserts exactly one link per coupled material.
+    A collected ``item.run``'s edges carry collection-time content ids the store
+    never minted, so they cannot resolve. This constructs a replacement run at save
+    time -- never mutating ``item.run`` or its :class:`_RunObservation` -- whose
+    ``artifacts``/``outputs`` edges carry the store-served ids: the
+    ``relaxed_structure`` edge is retargeted at the material's own id (S1) and the
+    record/file edges at the ids minted for the outputs the bulk pass just saved.
+    ``item.products`` ProductLinks are rewritten through the same map. ``inputs`` are
+    omitted (the collected runs' inputs are not stored). Reconstructing edges is
+    record construction, not post-save mutation, so it is done with an ordinary
+    :meth:`SqlStore.save` after the bulk context finalizes (both are refused inside
+    bulk ingest, and the runs need the outputs' minted ids the bulk pass assigned).
+    One run backs one material (enforced in :func:`_build_coupling`), so exactly one
+    replacement run is saved per coupled, non-degraded material.
 
-    :return: The number of ``(material, run)`` links asserted.
+    :return: The ``(runs, product links)`` saved counts.
     """
     by_id = {material.id: material for material in materials}
-    linked = 0
+    runs = products = 0
     for amdb_id, observation in coupled.items():
         material = by_id.get(amdb_id)
-        run = getattr(observation.item, "run", None)
-        if material is None or run is None or getattr(observation.item, "missing_collector", None) is not None:
+        item = observation.item
+        run = getattr(item, "run", None)
+        if material is None or run is None or getattr(item, "missing_collector", None) is not None:
             continue
-        store.link(material, "produced_by", run)
-        linked += 1
-    logger.info("Linked %d coupled materials to their producing runs", linked)
-    return linked
+        assert material.id is not None  # always set to the amdb id at construction
+        material_id = material.id
+        memo: dict[tuple[str, str], str] = {}
+        store.save(
+            Run(
+                workflow_declaration_uri=run.workflow_declaration_uri,
+                artifacts=_rewrite_edges(store, run.artifacts, material_id=material_id, memo=memo),
+                outputs=_rewrite_edges(store, run.outputs, material_id=material_id, memo=memo),
+                source_id=run.source_id,
+                last_modified=run.last_modified,
+            )
+        )
+        runs += 1
+        for product in item.products:
+            store.save(
+                ProductLink(
+                    product.source_type,
+                    # Every product here sources from the relaxed_structure output
+                    # (the toml ``product_of`` chain), so the structures-edge guard
+                    # in _resolve_edge_id sees that label; the target label is unused
+                    # for the record/file types products actually target.
+                    _resolve_edge_id(
+                        store,
+                        "relaxed_structure",
+                        product.source_type,
+                        product.source_id,
+                        material_id=material_id,
+                        memo=memo,
+                    ),
+                    product.target_type,
+                    _resolve_edge_id(
+                        store,
+                        product.label,
+                        product.target_type,
+                        product.target_id,
+                        material_id=material_id,
+                        memo=memo,
+                    ),
+                    product.label,
+                    product.workflow_declaration_uri,
+                )
+            )
+            products += 1
+    logger.info("Saved %d reconstructed runs and %d product links with store-resolvable edges", runs, products)
+    return runs, products
 
 
 def build_store(
@@ -2106,8 +2221,9 @@ def build_store(
             replace(
                 material,
                 structure=_material_structure_record(coupled[material.id].structure.unwrap()),
-                # Symmetric scalar beside the live _httk_runs weak link asserted
-                # after the bulk context finalizes (_link_material_runs).
+                # Symmetric scalar beside the producing run's reverse StrongLink
+                # relationships, whose store-resolvable edges are reconstructed after
+                # the bulk context finalizes (_save_reconstructed_runs).
                 total_energy=_coupled_total_energy(coupled[material.id]),
             )
             if material.id in coupled
@@ -2195,23 +2311,24 @@ def build_store(
                 # Only coupled runs back the 180 served materials; saving the whole
                 # 645-task tree would flood the OPTIMADE run/record/file families.
                 # One run backs one material (enforced in _build_coupling), so the
-                # coupled items are already distinct.
+                # coupled items are already distinct. Only the outputs are bulk-saved
+                # here (this mints their ids); the runs and product links are rebuilt
+                # with store-resolvable edges and saved post-bulk (they need those ids).
                 for item in [observation.item for observation in coupled.values()]:
                     if getattr(item, "missing_collector", None) is None:
                         for value in item.outputs.values():
                             bulk.save(value)
-                        bulk.save(item.run)
-                        for product in item.products:
-                            bulk.save(product)
             for material in materials:
                 bulk.save(material)
             for doi in dict.fromkeys(doi for material in materials for doi in material.dois):
                 bulk.save(AltermagnetReferenceRecord((rid := _reference_id(doi)), doi, id=rid))
         if not legacy:
-            # Alternatives and weak links are asserted after the mains-only bulk
-            # context finalizes (both are refused inside bulk ingest).
+            # Alternatives and the store-resolvable replacement runs (with their
+            # rewritten product links) are saved after the mains-only bulk context
+            # finalizes: bulk ingest refuses non-mains, and the runs need the outputs'
+            # minted ids the bulk pass just assigned.
             _save_alternative_cells(store, materials)
-            _link_material_runs(store, materials, coupled)
+            _save_reconstructed_runs(store, materials, coupled)
         write_elapsed = time.perf_counter() - write_started
         finalize_started = time.perf_counter()
         created_database.dispose()

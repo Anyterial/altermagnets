@@ -5,6 +5,8 @@ import material_store
 import pytest
 from conftest import write_detail_assets, write_source_tables
 from httk.atomistic import CartesianSiteMoments, Cell, Sites, Species, UnitcellStructure
+from httk.core import DataRecord, FileRecord
+from httk.core.provenance import ProductLink, Run
 from material_store import (
     MaterialRecord,
     _magnetic_alternative_cell,
@@ -179,6 +181,8 @@ def _scf_run(runs: Path, material: str) -> None:
     (step / "POSCAR").write_text(_RUN_POSCAR, encoding="utf-8")
     (inner / "CONTCAR").write_text(_RUN_POSCAR, encoding="utf-8")
     (inner / "OUTCAR").write_text(_RUN_OUTCAR_ENERGY_ONLY, encoding="utf-8")
+    # A file output so the coupled build exercises the ``files`` edge/product path.
+    (inner / "vasprun.xml").write_text("<modeling/>\n", encoding="utf-8")
 
 
 def _materials_by_id(store_path: Path) -> dict[str, MaterialRecord]:
@@ -224,28 +228,76 @@ def _material(store: object, amdb_id: str) -> MaterialRecord:
     return searcher.results(material=variable).first()["material"]
 
 
-def test_coupled_material_links_to_run_and_carries_total_energy(tmp_path: Path) -> None:
-    """A coupled build asserts the produced_by weak link and the total-energy scalar."""
+def _all(store: object, cls: type) -> list:
+    searcher = store.searcher()  # type: ignore[attr-defined]
+    variable = searcher.variable(cls)
+    return [row["record"] for row in searcher.results(record=variable)]
+
+
+def _single(store: object, cls: type):
+    rows = _all(store, cls)
+    assert len(rows) == 1, f"expected exactly one {cls.__name__}, found {len(rows)}"
+    return rows[0]
+
+
+def test_coupled_material_reconstructs_run_with_resolvable_edges(tmp_path: Path) -> None:
+    """The coupled build reconstructs the run with store-resolvable edges and rewrites its products.
+
+    Replaces the retired ``produced_by`` weak link: the run's ``relaxed_structure``
+    edge targets the material's own served id (S1), the record/file edges carry the
+    minted ids of the outputs the bulk pass saved, and ``item.products`` are rewritten
+    through the same id map -- so no collection-time content id survives on any edge.
+    """
     source = write_source_tables(tmp_path / "tables")
     details = write_detail_assets(tmp_path / "details")
     runs = tmp_path / "runs"
-    _scf_run(runs, "CrSb")  # couples anyt.am-1-1; OUTCAR TOTEN is -1.0 eV
+    _scf_run(runs, "CrSb")  # couples anyt.am-1-1; OUTCAR TOTEN is -1.0 eV; also writes a vasprun output
     target = build_store(tmp_path / "store.duckdb", data_dir=source, details_dir=details, runs_dir=runs)
 
     opened = open_prebuilt_store(target)
     assert opened is not None
     try:
-        coupled = _material(opened.store, "anyt.am-1-1")
+        store = opened.store
+        coupled = _material(store, "anyt.am-1-1")
         assert coupled.total_energy == -1.0
-        linked = opened.store.linked(coupled, "produced_by", eager=True)
-        assert len(linked) == 1
-        assert linked[0].source_id  # the collected run carries a non-empty source id
-        # An uncoupled material carries neither the scalar nor a producing run.
-        uncoupled = _material(opened.store, "anyt.am-1-2")
+
+        run = _single(store, Run)
+        assert run.source_id  # carried over unchanged from the collected run
+        record_id = _single(store, DataRecord).id  # the minted id of the bulk-saved output
+        file_id = _single(store, FileRecord).id
+        assert record_id and file_id
+
+        # This workflow returns every output as an artifact too, so both edge sides match.
+        assert run.artifacts == run.outputs
+        by_label = {edge.label: (edge.entry_type, edge.entry_id) for edge in run.outputs}
+        assert by_label["relaxed_structure"] == ("structures", "anyt.am-1-1")
+        assert by_label["total_energy"] == ("records", record_id)
+        assert by_label["vasprun"] == ("files", file_id)
+
+        # The product links are rewritten through the same id map -- no content ids remain.
+        products = {link.label: (link.source_id, link.target_id) for link in _all(store, ProductLink)}
+        assert products["total_energy"] == ("anyt.am-1-1", record_id)
+        assert products["vasprun"] == ("anyt.am-1-1", file_id)
+
+        # An uncoupled material carries neither the scalar nor any run edge targeting it.
+        uncoupled = _material(store, "anyt.am-1-2")
         assert uncoupled.total_energy is None
-        assert opened.store.linked(uncoupled, "produced_by") == ()
+        assert not any(edge.entry_id == "anyt.am-1-2" for edge in run.outputs)
     finally:
         opened.database.dispose()
+
+
+def test_resolve_edge_id_rejects_non_relaxed_structures_edge() -> None:
+    """Only the relaxed_structure output maps to the material; a foreign structures edge raises."""
+    with pytest.raises(ValueError, match="input_structure"):
+        material_store._resolve_edge_id(
+            None,  # type: ignore[arg-type]  # the structures guard fires before the store is touched
+            "input_structure",
+            "structures",
+            "some-content-id",
+            material_id="anyt.am-1-1",
+            memo={},
+        )
 
 
 def _collinear_structure(

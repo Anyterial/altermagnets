@@ -867,6 +867,49 @@ html[data-theme="dark"] .theme-icon {
   align-items: center;
 }
 
+/* Provenance "This run produced" list: compact chips matching the details cards. */
+.provenance-produced {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.provenance-produced-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 6px 12px;
+  background: var(--surface);
+  font-size: 14px;
+}
+
+.provenance-produced-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-soft);
+}
+
+.provenance-produced-link {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.provenance-produced-link.is-current {
+  font-weight: 600;
+}
+
+.provenance-produced-entry {
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
 .symmetry-table-wrap {
   margin-bottom: 2px;
 }

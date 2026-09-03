@@ -509,66 +509,108 @@ function buildVariantCards(variants) {
 // Same-page link to another material's detail view (keeps the current path, swaps ?id=).
 const materialPageHref = (id) => new URL(`?id=${encodeURIComponent(id)}`, document.baseURI).href;
 
-// Build the plain provenance OBJECT the renderer consumes from the structure's
-// LIVE `_httk_runs` relationships: each related run contributes its role + label
-// (from the relationship meta) as an edge, and is fetched through a narrow second
-// transport for its source id and workflow URI; the material-level scalar comes
-// from `_httk_custom_total_energy`. Returns null when there is nothing to show
-// (no runs and no energy). A run-fetch failure degrades to the info already in
-// hand so the section still renders. buildProvenance consumes this object
-// unchanged from the old snapshot path.
+// Human word for a produced entry whose endpoint is NOT mounted, keyed by its
+// served (wire) type. `structures` entries resolve to real material pages; the
+// `_httk_records`/`files` endpoints are not served, so those render as labeled
+// non-link entries (the full id is kept in a title attribute).
+const PRODUCED_KIND_WORDS = { _httk_records: "record", files: "file" };
+
+// The forward-relationship keys a run exposes for what it produced, and the
+// reverse keys a material carries naming its producing run.
+const RUN_FORWARD_KEYS = ["_httk_has_artifact", "_httk_has_output"];
+const MATERIAL_REVERSE_KEYS = ["_httk_is_artifact", "_httk_is_output"];
+
+// Deduplicated list of what a run produced, from its forward StrongLink blocks.
+// The same (type, id) can appear under both the artifact and output roles (an
+// output returned as an artifact) — collapse to one entry, keeping its label.
+function producedEntries(run) {
+  const seen = new Map();
+  RUN_FORWARD_KEYS.forEach((key) => {
+    arrayValue(run.relationships?.[key]?.data).forEach((entry) => {
+      if (!entry || typeof entry.id !== "string" || !entry.id) return;
+      const type = String(entry.type || "");
+      const dedupKey = `${type} ${entry.id}`;
+      if (!seen.has(dedupKey)) seen.set(dedupKey, { type, id: entry.id, label: String(entry.meta?._httk_label || "") });
+    });
+  });
+  return [...seen.values()];
+}
+
+// Locate the producing run resource. Primary lookup: the `_httk_relationships`
+// filter route on `/_httk_runs` selects the run by material id in one request.
+// If that route is unavailable (the in-memory `--validate` service has no
+// `_httk_runs` endpoint) or returns nothing, fall back to the run id the
+// material's own reverse block already named and fetch it directly. Any failure
+// returns null so the section degrades to the energy already in hand.
+async function fetchProducingRun(Transport, config, materialId, reverseRunIds) {
+  const makeTransport = () =>
+    new Transport(
+      { base_url: config.base_url, entry_type: "_httk_runs", response_fields: RUN_RESPONSE_FIELDS, page_size: 1 },
+      { documentBase: document.baseURI },
+    );
+  const filter = `_httk_relationships._httk_has_artifact.id HAS ${JSON.stringify(materialId)}`;
+  try {
+    const page = await makeTransport().fetchPage({ filter });
+    if (page.resources.length) return page.resources[0];
+  } catch (error) {
+    console.error("Run provenance filter lookup failed", error);
+  }
+  try {
+    const fetched = await makeTransport().fetchOne(reverseRunIds[0]);
+    return fetched?.resource || null;
+  } catch (error) {
+    console.error("Run provenance id lookup failed", error);
+    return null;
+  }
+}
+
+// Build the plain provenance OBJECT the renderer consumes, driven by the new
+// StrongLink OPTIMADE relationships. The material's reverse
+// `_httk_is_artifact`/`_httk_is_output` block names its producing run; the run
+// carries the workflow uri, source id, and forward `_httk_has_*` blocks listing
+// what it produced. Total energy comes from the material's served
+// `_httk_custom_total_energy` scalar (the records/files endpoints are not
+// mounted). Returns null when the material was produced by no run and has no
+// energy; a run-lookup failure degrades to the energy already in hand.
 async function fetchProvenance(Transport, config, resource) {
   const attributes = resource.attributes || {};
   const totalEnergy = safeNumber(attributes._httk_custom_total_energy);
-  const edges = arrayValue(resource.relationships?._httk_runs?.data)
-    .filter((entry) => entry && entry.id)
-    .map((entry) => ({
-      role: String(entry.meta?.role || ""),
-      label: String(entry.meta?._httk_label || ""),
-      entryType: "_httk_runs",
-      entryId: String(entry.id),
-      materialId: null,
-    }));
-  let sourceId = null;
-  let workflowUri = null;
-  if (edges.length) {
-    try {
-      const transport = new Transport(
-        { base_url: config.base_url, entry_type: "_httk_runs", response_fields: RUN_RESPONSE_FIELDS, page_size: 1 },
-        { documentBase: document.baseURI },
-      );
-      for (const edge of edges) {
-        const fetched = await transport.fetchOne(edge.entryId);
-        const runAttrs = fetched?.resource?.attributes || {};
-        if (sourceId === null && runAttrs._httk_source_id != null) sourceId = String(runAttrs._httk_source_id);
-        if (workflowUri === null && runAttrs._httk_workflow_declaration_uri != null) {
-          workflowUri = String(runAttrs._httk_workflow_declaration_uri);
-        }
-      }
-    } catch (error) {
-      console.error("Run provenance OPTIMADE request failed", error);
-    }
-  }
-  if (!edges.length && totalEnergy === null) return null;
-  return { sourceId, workflowUri, totalEnergy, edges };
+  const reverseRunIds = [
+    ...new Set(
+      MATERIAL_REVERSE_KEYS.flatMap((key) => arrayValue(resource.relationships?.[key]?.data).map((entry) => entry?.id)).filter(
+        (id) => typeof id === "string" && id,
+      ),
+    ),
+  ];
+  if (!reverseRunIds.length && totalEnergy === null) return null;
+  const run = reverseRunIds.length ? await fetchProducingRun(Transport, config, resource.id, reverseRunIds) : null;
+  const runAttrs = run?.attributes || {};
+  return {
+    workflowUri: runAttrs._httk_workflow_declaration_uri != null ? String(runAttrs._httk_workflow_declaration_uri) : null,
+    sourceId: runAttrs._httk_source_id != null ? String(runAttrs._httk_source_id) : null,
+    totalEnergy,
+    produced: run ? producedEntries(run) : [],
+  };
 }
 
-function buildProvenanceEdges(edges, currentId) {
-  const list = node("ul", "provenance-edges");
-  edges.forEach((edge) => {
-    const li = node("li", "provenance-edge");
-    li.append(node("span", "provenance-edge-label", edge.label || "edge"));
-    if (edge.role) li.append(node("span", "provenance-edge-role", edge.role));
-    li.append(node("span", "provenance-edge-type", edge.entryType));
-    if (edge.entryType === "structures" && edge.materialId) {
-      const current = edge.materialId === currentId;
-      const link = node("a", current ? "provenance-edge-id is-current" : "provenance-edge-id", edge.materialId);
-      link.href = materialPageHref(edge.materialId);
+// The compact "This run produced" list: structures ids are real material-page
+// links (with a "(this material)" marker for the current id); records/files are
+// labeled non-link entries (edge label + a human kind word; full id in a title).
+function buildProducedList(produced, currentId) {
+  const list = node("ul", "provenance-produced");
+  produced.forEach((item) => {
+    const li = node("li", "provenance-produced-item");
+    if (item.label) li.append(node("span", "provenance-produced-label", item.label));
+    if (item.type === "structures") {
+      const current = item.id === currentId;
+      const link = node("a", current ? "provenance-produced-link is-current" : "provenance-produced-link", item.id);
+      link.href = materialPageHref(item.id);
       if (current) link.append(document.createTextNode(" (this material)"));
       li.append(link);
     } else {
-      // Unresolvable content id: show a clearly-styled short hash, never a broken link.
-      li.append(node("code", "provenance-edge-id provenance-edge-hash", `${edge.entryId.slice(0, 12)}\u2026`));
+      const entry = node("span", "provenance-produced-entry", PRODUCED_KIND_WORDS[item.type] || "entry");
+      entry.title = item.id;
+      li.append(entry);
     }
     list.append(li);
   });
@@ -580,7 +622,7 @@ function buildProvenanceEdges(edges, currentId) {
 function buildProvenance(provenance, currentId) {
   if (!provenance) return null;
   const sec = section("Provenance");
-  sec.append(node("p", "section-note", "How this material was produced: the workflow run that generated it, its identifiers, and the entries it consumed and created."));
+  sec.append(node("p", "section-note", "How this material was produced: the workflow run that generated it, its identifiers, and the entries that run produced."));
   const dl = node("dl", "details-grid");
   if (provenance.workflowUri) {
     const value = /^https:\/\//i.test(provenance.workflowUri)
@@ -591,7 +633,10 @@ function buildProvenance(provenance, currentId) {
   if (provenance.sourceId) field(dl, "Run source id", provenance.sourceId, "", "details-wide");
   if (provenance.totalEnergy !== null) field(dl, "Total energy", `$${provenance.totalEnergy.toFixed(6)}\\ \\mathrm{eV}$`);
   if (dl.childNodes.length) sec.append(dl);
-  if (provenance.edges.length) sec.append(buildProvenanceEdges(provenance.edges, currentId));
+  if (provenance.produced.length) {
+    sec.append(node("p", "section-note", "This run produced:"));
+    sec.append(buildProducedList(provenance.produced, currentId));
+  }
   return sec;
 }
 

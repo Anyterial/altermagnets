@@ -194,22 +194,34 @@ def _write_scf_run(runs: Path, material: str) -> None:
     (step / "POSCAR").write_text(_RUN_POSCAR, encoding="utf-8")
     (inner / "CONTCAR").write_text(_RUN_POSCAR, encoding="utf-8")
     (inner / "OUTCAR").write_text(_RUN_OUTCAR, encoding="utf-8")
+    # A file output so the coupled build exercises the ``files`` edge/product path.
+    (inner / "vasprun.xml").write_text("<modeling/>\n", encoding="utf-8")
 
 
-def test_serves_material_run_relationship_and_energy(tmp_path: Path) -> None:
-    """A coupled material serves a live _httk_runs relationship, the run endpoint, and the energy scalar.
+def _relationship_ids(resource: dict[str, Any], key: str) -> list[tuple[str, str]]:
+    block = resource.get("relationships", {}).get(key)
+    if block is None:
+        return []
+    return [(entry["type"], entry["id"]) for entry in block["data"]]
 
-    Drives the P7 serving edge end-to-end through the real ``build_service_app(store=...)``
-    path: the structure's exposed ``produced_by`` weak link renders as a wire-named
-    ``_httk_runs`` relationship, the referenced run resolves at ``/v1/_httk_runs/<id>``
-    with non-null prefixed values (auditing that the AMDB envelope leaves runs
-    unmangled), ``include`` inlines it, and the symmetric ``_httk_custom_total_energy``
-    scalar is served for the coupled material and null for an uncoupled one.
+
+def test_serves_material_run_strong_link_relationships_and_energy(tmp_path: Path) -> None:
+    """A coupled material serves the producing run's reverse StrongLink blocks; the run serves the forward ones.
+
+    Drives the serving edge end-to-end through the real ``build_service_app(store=...)``
+    path with the retired ``produced_by`` weak link replaced by run edges: the
+    structure serves the derived reverse ``_httk_is_artifact``/``_httk_is_output``
+    naming the run, the run resolves at ``/v1/_httk_runs/<id>`` with non-null prefixed
+    values and forward ``_httk_has_*`` blocks whose ids resolve (the structure edge to
+    the material itself, plus the record/file edges), the ``_httk_relationships`` filter
+    route selects the run by material id, and the symmetric ``_httk_custom_total_energy``
+    scalar is served for the coupled material and null (with no reverse block) for an
+    uncoupled one in the SAME coupled build.
     """
     source = write_source_tables(tmp_path / "tables")
     details = write_detail_assets(tmp_path / "details")
     runs = tmp_path / "runs"
-    _write_scf_run(runs, "CrSb")  # couples anyt.am-1-1; OUTCAR TOTEN is -1.0 eV
+    _write_scf_run(runs, "CrSb")  # couples anyt.am-1-1; OUTCAR TOTEN is -1.0 eV; also writes a vasprun output
     target = material_store.build_store(tmp_path / "store.duckdb", data_dir=source, details_dir=details, runs_dir=runs)
     opened = material_store.open_prebuilt_store(target)
     assert opened is not None
@@ -218,18 +230,19 @@ def test_serves_material_run_relationship_and_energy(tmp_path: Path) -> None:
     )
     try:
         with TestClient(app, base_url="http://testserver") as live:
-            # (a) the structure carries the exposed produced_by weak link as a relationship,
-            # plus the symmetric material-level energy scalar.
+            # (a) the coupled structure serves the derived reverse StrongLink blocks
+            # naming the producing run, plus the symmetric material-level energy scalar.
             structure = live.get(
                 "/v1/structures/anyt.am-1-1", params={"response_fields": "_httk_custom_total_energy"}
             ).json()["data"]
             assert structure["attributes"]["_httk_custom_total_energy"] == -1.0
-            related = structure["relationships"]["_httk_runs"]["data"]
-            assert len(related) == 1
-            assert related[0]["type"] == "_httk_runs"
-            assert related[0]["meta"]["role"] == "artifact+output"
-            assert related[0]["meta"]["_httk_label"] == "produced_by"
-            run_id = related[0]["id"]
+            is_artifact = structure["relationships"]["_httk_is_artifact"]["data"]
+            is_output = structure["relationships"]["_httk_is_output"]["data"]
+            assert [(e["type"], e["id"]) for e in is_artifact] == [("_httk_runs", is_artifact[0]["id"])]
+            assert is_artifact[0]["meta"]["role"] == "artifact"
+            assert is_artifact[0]["meta"]["_httk_label"] == "relaxed_structure"
+            run_id = is_artifact[0]["id"]
+            assert [(e["type"], e["id"]) for e in is_output] == [("_httk_runs", run_id)]
 
             # (b) the run resolves at its wire endpoint with non-null prefixed values.
             run = live.get(
@@ -241,18 +254,31 @@ def test_serves_material_run_relationship_and_energy(tmp_path: Path) -> None:
             assert run_attrs["_httk_source_id"]
             assert run_attrs["_httk_workflow_declaration_uri"]
 
-            # (c) include inlines the run resource on the structure endpoint.
-            included = (
-                live.get("/v1/structures/anyt.am-1-1", params={"include": "_httk_runs"}).json().get("included", [])
-            )
-            assert (("_httk_runs", run_id)) in {(item["type"], item["id"]) for item in included}
+            # (c) the run's forward _httk_has_* blocks resolve: the relaxed_structure edge
+            # targets the material itself, plus the record and file edges.
+            run_resource = run.json()["data"]
+            has_output = _relationship_ids(run_resource, "_httk_has_output")
+            has_artifact = _relationship_ids(run_resource, "_httk_has_artifact")
+            assert has_output == has_artifact  # this workflow returns every output as an artifact
+            assert ("structures", "anyt.am-1-1") in has_output
+            assert any(etype == "_httk_records" for etype, _ in has_output)
+            assert any(etype == "files" for etype, _ in has_output)
 
-            # (d) an uncoupled material serves a null energy and no run relationship.
+            # (d) the _httk_relationships filter route selects the run by material id.
+            filtered = live.get(
+                "/v1/_httk_runs",
+                params={"filter": '_httk_relationships._httk_has_artifact.id HAS "anyt.am-1-1"'},
+            )
+            assert filtered.status_code == 200
+            assert [item["id"] for item in filtered.json()["data"]] == [run_id]
+
+            # (e) an uncoupled material in the same build serves a null energy and no reverse block.
             other = live.get(
                 "/v1/structures/anyt.am-1-2", params={"response_fields": "_httk_custom_total_energy"}
             ).json()["data"]
             assert other["attributes"]["_httk_custom_total_energy"] is None
-            assert "_httk_runs" not in other.get("relationships", {})
+            assert _relationship_ids(other, "_httk_is_artifact") == []
+            assert _relationship_ids(other, "_httk_is_output") == []
     finally:
         opened.database.dispose()
 

@@ -17,7 +17,7 @@ import os
 import re
 import tempfile
 import time
-from collections.abc import Callable, Iterable, Mapping, MutableMapping
+from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import cache
 from pathlib import Path
@@ -59,6 +59,7 @@ from httk.core import (
 )
 from httk.core.data_records import RECORDS_DEFINITION_ID
 from httk.core.files import FileEntry
+from httk.core.project.sealing import SealError, SealKey, resolve_seal_keys
 from httk.core.provenance import ProductLink, Run, RunEdge, RunEntry
 from httk.core.register import register_entry_family, register_entry_record
 from httk.core.register.schemas import load_entry_type_definition
@@ -69,7 +70,7 @@ from httk.core.storage import (
     project_storage_record,
     stored_property,
 )
-from httk.store import Backend, EntryIdScheme, SqlStore
+from httk.store import Backend, EntryIdScheme, IdLedger, IdLedgerError, SqlStore
 
 __all__ = [
     "AMDB_DATASET",
@@ -155,6 +156,37 @@ STORE_PATH_ENVIRONMENT = "ALTERMAGNETS_STORE_PATH"
 RUNS_PATH_ENVIRONMENT = "ALTERMAGNETS_RUNS_DIR"
 COUPLING_FILENAME = "amdb_run_content_ids.csv"
 DETAILS_PATH_ENVIRONMENT = "ALTERMAGNETS_DETAILS_DIR"
+
+#: The committed, sealed id ledger next to the source tables. It maps stable
+#: amdb source keys to entry ids so a rebuilt store keeps its ids and content
+#: changes become revisions (see the sealed-id-ledger design).
+LEDGER_FILENAME = "amdb_ids.json"
+
+#: The per-family id bases the ledger mints under. These are the DEPLOYED id
+#: shapes (``anyt.am.structure-1-N`` etc.) and are load-bearing: serving,
+#: alternatives and provenance all assume them, so they are hand-pinned here and
+#: never derived from the family types.
+LEDGER_BASES = {
+    "structures": "anyt.am.structure",
+    "references": "anyt.am.refs",
+    "runs": "anyt.am.runs",
+    "records": "anyt.am.records",
+    "files": "anyt.am.files",
+}
+LEDGER_SERIES = "1"
+
+#: Seal-key refs the build signs the ledger with. ``identity`` is the operator's
+#: default identity (this repo is NOT an httk project, so no ``project`` ref);
+#: the build fails at open if none resolves rather than silently skip sealing.
+LEDGER_SIGNER_REFS: tuple[str, ...] = ("identity",)
+
+#: The signer fingerprint the build pins when opening an existing ledger. When
+#: non-empty, ``IdLedger.open(trusted_keys=...)`` demands this signer (a swapped
+#: seal is rejected); when empty, a merely valid signature is accepted with a
+#: loud warning and git history stands as the witness. DEPLOY NOTE: this is the
+#: fingerprint of the operator identity on the build host; a different operator
+#: must re-pin it to their own ``httk identity`` fingerprint.
+LEDGER_TRUSTED_SIGNERS: tuple[str, ...] = ("sha256:42834362ba07f8849a60fc9784cf0ee928b965299bae6c7172c5307d589ce666",)
 MATERIAL_ID_PATTERN = re.compile(r"^(?:anyt[:.])?(?P<family>am|amdb)-(?P<series>[A-Za-z0-9]+)-(?P<number>\d+)$")
 LEGACY_MATERIAL_ID_PATTERN = re.compile(r"^(?:anyt:)?amdb-(?P<number>\d+)$")
 PLOT_FILENAMES: tuple[tuple[str, str], ...] = (
@@ -654,34 +686,165 @@ def _optimade_definitions() -> dict[str, PropertyDefinition]:
     return definitions
 
 
-def _reference_ids_by_doi(materials: Iterable["AltermagnetScreeningResult"]) -> dict[str, str]:
-    """Densely enumerate ``anyt.am.refs-1-N`` ids for every DOI, in first-seen order.
+def _reference_key(doi: str) -> str:
+    """Return the stable ledger key for a DOI (case-insensitive)."""
+    return f"doi:{doi.lower()}"
 
-    The enumeration walks the materials' DOIs in deployment order (screening rank,
-    then per-material DOI order) and assigns consecutive 1..K numbers. It is the one
-    place the reference ids are minted: the save sites stamp each material's
-    :attr:`AltermagnetScreeningResult.reference_ids` from this map and save the reference rows
-    under the same ids, so serving never re-derives the global order.
+
+def _structure_key(amdb_id: str) -> str:
+    """Return the stable ledger key for a material's structure main."""
+    return f"amdb:{amdb_id}:structure"
+
+
+def _run_key(amdb_id: str) -> str:
+    """Return the stable ledger key for a material's reconstructed run."""
+    return f"amdb:{amdb_id}:run"
+
+
+def _record_key(amdb_id: str, role: str) -> str:
+    """Return the stable ledger key for a run output record (``role`` = output role)."""
+    return f"amdb:{amdb_id}:{role}"
+
+
+def _file_key(amdb_id: str, relpath: str) -> str:
+    """Return the stable ledger key for a run output file (``relpath`` = its locator url)."""
+    return f"amdb:{amdb_id}:file:{relpath}"
+
+
+def _assign_output_id(ledger: IdLedger, amdb_id: str, role: str, value: object) -> str:
+    """Assign the ledger id for one coupled-run output (a file or a data record).
+
+    Files key on their locator url (``amdb:<id>:file:<url>``), everything else on
+    the output role (``amdb:<id>:<role>``); the families are the store-served
+    ``files`` and ``records``.
+
+    :param ledger: The open ledger to allocate from.
+    :param amdb_id: The coupled material's amdb id.
+    :param role: The collected output role (e.g. ``total_energy``, ``vasprun``).
+    :param value: The converted output record whose id is being allocated.
+    :return: The assigned entry id.
+    """
+    if isinstance(value, File):
+        return ledger.assign(_file_key(amdb_id, value.url), "files")
+    return ledger.assign(_record_key(amdb_id, role), "records")
+
+
+def _open_ledger(source_dir: Path, *, trusted_signers: Sequence[str]) -> IdLedger:
+    """Open the committed sealed id ledger, creating it on the first build.
+
+    The build always signs the ledger with :data:`LEDGER_SIGNER_REFS`; a missing
+    signing seed fails here rather than silently skipping the seal. An existing
+    ledger is opened with the pinned *trusted_signers* (a swapped seal is
+    rejected) or, when none are pinned, with a loud warning and git history as the
+    witness.
+
+    :param source_dir: The source-table directory holding :data:`LEDGER_FILENAME`.
+    :param trusted_signers: The pinned trust anchors, or empty to accept any valid signer.
+    :return: The open, locked ledger.
+    :raises SealError: If no signing seed is available.
+    """
+    path = source_dir / LEDGER_FILENAME
+    try:
+        keys: tuple[SealKey, ...] = resolve_seal_keys(LEDGER_SIGNER_REFS, project_root=source_dir).keys
+    except SealError as error:
+        raise SealError(
+            f"cannot seal the id ledger {path}: {error}. Configure an operator identity "
+            "(`httk identity`) so the build can sign the ledger; the build refuses to skip sealing."
+        ) from error
+    if path.exists():
+        # Pass the code-side scheme so a drift between LEDGER_BASES/LEDGER_SERIES and the
+        # committed file is a loud error, not a silent adoption of the stored bases.
+        return IdLedger.open(
+            path, keys=keys, trusted_keys=tuple(trusted_signers), bases=LEDGER_BASES, series=LEDGER_SERIES
+        )
+    return IdLedger.create(path, bases=LEDGER_BASES, series=LEDGER_SERIES, keys=keys)
+
+
+def _reference_ids_by_doi(
+    materials: Iterable["AltermagnetScreeningResult"], ledger: IdLedger | None = None
+) -> dict[str, str]:
+    """Map every DOI to its ``anyt.am.refs-1-N`` id, in first-seen order.
+
+    With a *ledger* the ids come from stable, case-insensitive ``doi:<lowered>``
+    keys, so a DOI keeps its id across rebuilds and two case variants collapse to
+    one id; without one (the in-memory fallback) the ids are densely enumerated in
+    first-seen order exactly as before. It is the one place the reference ids are
+    minted: the save sites stamp each material's
+    :attr:`AltermagnetScreeningResult.reference_ids` from this map and save the
+    reference rows under the same ids, so serving never re-derives the global order.
 
     :param materials: The materials whose DOIs are enumerated, in deployment order.
-    :return: A DOI-to-``anyt.am.refs-1-N`` mapping in first-seen order.
+    :param ledger: The open ledger to allocate from, or ``None`` for dense enumeration.
+    :return: A DOI-to-``anyt.am.refs-1-N`` mapping keyed by every original DOI.
     """
     ordered = dict.fromkeys(doi for material in materials for doi in material.dois)
-    return {doi: f"anyt.am.refs-1-{number}" for number, doi in enumerate(ordered, 1)}
+    if ledger is None:
+        return {doi: f"anyt.am.refs-1-{number}" for number, doi in enumerate(ordered, 1)}
+    return {doi: ledger.assign(_reference_key(doi), "references") for doi in ordered}
+
+
+def _assign_structure_owner(ledger: IdLedger, key: str) -> str:
+    """Return the group id for its owner key, superseding when the key was an alias.
+
+    Detection uses only the public surface: the plain idempotent ``assign`` mints
+    a new key and returns an already-assigned key's id unchanged, and raises only
+    when the key currently holds an *alias* (the family is always ``structures``
+    here, so that is the sole failure). That alias-that-should-assign is the split
+    half of regrouping, re-bound to a fresh id with ``supersede=True``.
+    """
+    try:
+        return ledger.assign(key, "structures")
+    except IdLedgerError:
+        return ledger.assign(key, "structures", supersede=True)
+
+
+def _alias_structure_member(ledger: IdLedger, key: str, group_id: str) -> None:
+    """Alias a non-owner key onto its group id, superseding an assigned key (merge).
+
+    ``lookup`` tells absent/idempotent apart from a re-bind: a key that is absent
+    or already resolves to *group_id* takes the plain idempotent ``alias`` (never
+    ``supersede`` when intent matches state); a key resolving elsewhere is a
+    currently-assigned key merging into this group, re-bound with ``supersede=True``.
+
+    A member that was an *alias* in one shared group and migrates to a *different*
+    shared group across builds (never itself an owner) is out of scope: the ledger's
+    ``supersede`` re-binds an assignment, not an alias, so ``alias`` here raises
+    ``already aliased to X, not Y``. Recover it manually, deliberately, in two
+    append-only steps on the ledger — first ``assign(key, "structures",
+    supersede=True)`` to split the stale alias into a fresh assignment, then
+    ``alias(key, <new group id>, supersede=True)`` to merge that assignment onto the
+    new group — rather than adding coded recovery for a case current data never hits
+    (0 shared groups).
+    """
+    current = ledger.lookup(key)
+    if current is None or current == group_id:
+        ledger.alias(key, group_id)
+    else:
+        ledger.alias(key, group_id, supersede=True)
 
 
 def _structure_mains(
     materials: Iterable["AltermagnetScreeningResult"],
+    ledger: IdLedger | None = None,
 ) -> tuple[dict[str, str], dict[str, UnitcellStructureRecord]]:
     """Enumerate the stamped ``structures`` mains, deduplicated by structure content.
 
-    Walks the results in deployment order (screening rank) and stamps a dense
-    ``anyt.am.structure-1-N`` id on each DISTINCT relaxed structure (keyed by content
-    id), in first-seen order. Results whose relaxed structures are content-identical
-    share one stamped structure main -- the store's content-id dedup requires it (two
-    rows with one content id but different ids conflict) -- and each sharing result
-    carries the SAME canonical stamped instance, so its nested reference dedups onto
-    the main with identical identity-excluded metadata rather than raising a conflict.
+    Results whose relaxed structures are content-identical share one stamped
+    structure main -- the store's content-id dedup requires it (two rows with one
+    content id but different ids conflict) -- and each sharing result carries the
+    SAME canonical stamped instance, so its nested reference dedups onto the main
+    with identical identity-excluded metadata rather than raising a conflict.
+
+    With a *ledger* each group's id is assigned via the SMALLEST ``amdb:<id>:structure``
+    key in the group (deterministic, build-order independent) and the other members'
+    keys are recorded as aliases of it; the key is the amdb id and never depends on
+    whether the bytes came from the coupled run or the details-CONTCAR fallback (a
+    content change is a revision, not a new id). When a later build regroups, the
+    binding is reconciled against ledger state: a member that splits off into its
+    own group supersedes its old alias with a freshly minted id, and a structure
+    that merges into another group supersedes its old assignment with an alias onto
+    the group id (both via the append-only supersession API). Without a ledger (the
+    in-memory fallback) the mains are densely enumerated in first-seen order as before.
     It is the one place the structure ids are minted: the save sites save these mains
     and stamp each result's :attr:`AltermagnetScreeningResult.structure_id` /
     ``structure`` field, and the provenance retarget / alternatives re-parent through
@@ -689,26 +852,41 @@ def _structure_mains(
     re-deriving the global order.
 
     :param materials: The results whose structures are enumerated, in deployment order.
+    :param ledger: The open ledger to allocate from, or ``None`` for dense enumeration.
     :return: The ``result id``-to-``structure id`` map and the stamped structure mains
         keyed by structure id.
     """
-    by_content: dict[str, UnitcellStructureRecord] = {}
-    id_by_material: dict[str, str] = {}
-    number = 0
+    groups: dict[str, list[tuple[str, UnitcellStructureRecord]]] = {}
+    order: list[str] = []
     for material in materials:
         structure = material.structure
         if structure is None:
             continue
         assert material.id is not None  # always set to the amdb id at construction
         key = content_id(structure)
-        main = by_content.get(key)
-        if main is None:
-            number += 1
-            main = replace(structure, id=f"anyt.am.structure-1-{number}")
-            by_content[key] = main
-        assert main.id is not None  # just stamped
-        id_by_material[material.id] = main.id
-    return id_by_material, {cast(str, main.id): main for main in by_content.values()}
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append((material.id, structure))
+    id_by_material: dict[str, str] = {}
+    mains: dict[str, UnitcellStructureRecord] = {}
+    for number, key in enumerate(order, 1):
+        members = groups[key]
+        if ledger is None:
+            structure_id = f"anyt.am.structure-1-{number}"
+            main = replace(members[0][1], id=structure_id)
+        else:
+            owner = min(amdb_id for amdb_id, _ in members)
+            structure_id = _assign_structure_owner(ledger, _structure_key(owner))
+            owner_structure = next(structure for amdb_id, structure in members if amdb_id == owner)
+            main = replace(owner_structure, id=structure_id)
+            for amdb_id, _ in members:
+                if amdb_id != owner:
+                    _alias_structure_member(ledger, _structure_key(amdb_id), structure_id)
+        mains[structure_id] = main
+        for amdb_id, _ in members:
+            id_by_material[amdb_id] = structure_id
+    return id_by_material, mains
 
 
 def _stamp_material(
@@ -1319,10 +1497,6 @@ def _material_figures(details_root: Path, material_id: str) -> tuple[MaterialFig
     return tuple(figures)
 
 
-def _default_material_id(index: int) -> str:
-    return f"anyt.am-{AMDB_DATASET}-{index}"
-
-
 def _parse_float(value: str) -> float | None:
     text = (value or "").strip()
     if not text or text in {".", "?"}:
@@ -1569,7 +1743,11 @@ def build_material_records(
     seen_material_ids: set[str] = set()
 
     for index, row in enumerate(screening_rows, start=1):
-        material_id = (row.get(AMDB_ID_COLUMN) or "").strip() or _default_material_id(index)
+        material_id = (row.get(AMDB_ID_COLUMN) or "").strip()
+        if not material_id:
+            # A positional fallback id was a latent collision risk and cannot anchor a
+            # stable ledger key; every screening row must carry an explicit AMDBId.
+            raise ValueError(f"screening row {index} has no {AMDB_ID_COLUMN}; every row must carry an explicit amdb id")
         if material_id in seen_material_ids:
             raise ValueError(f"duplicate canonical material ID {material_id!r} in screening row {index}")
         seen_material_ids.add(material_id)
@@ -2338,6 +2516,7 @@ def _save_reconstructed_runs(
     materials: Iterable[AltermagnetScreeningResult],
     coupled: Mapping[str, _RunObservation],
     structure_id_by_material: Mapping[str, str],
+    ledger: IdLedger,
 ) -> tuple[int, int]:
     """Save one store-resolvable replacement :class:`~httk.core.Run` per coupled material.
 
@@ -2388,6 +2567,7 @@ def _save_reconstructed_runs(
                 outputs=_rewrite_edges(store, run.outputs, structure_id=structure_id, memo=memo),
                 source_id=run.source_id,
                 last_modified=run.last_modified,
+                id=ledger.assign(_run_key(result_id), "runs"),
             )
         )
         runs += 1
@@ -2433,6 +2613,7 @@ def build_store(
     runs_dir: str | os.PathLike[str] | None = None,
     legacy: bool = False,
     refresh_coupling: bool = False,
+    trusted_signers: Sequence[str] | None = None,
     timings: MutableMapping[str, float] | None = None,
 ) -> Path:
     """Build a fresh store next to ``target`` and atomically replace it.
@@ -2440,10 +2621,18 @@ def build_store(
     The caller never sees a partially written target: the DuckDB connection is
     disposed before :func:`os.replace` commits the completed temporary file.
 
+    A non-legacy build allocates every structure, reference, run, record and file
+    id from the committed sealed id ledger (``data/tables/amdb_ids.json``), so the
+    ids are stable across rebuilds; the ledger is signed with the operator identity
+    and, on later builds, opened with *trusted_signers* (defaulting to the pinned
+    :data:`LEDGER_TRUSTED_SIGNERS`; pass an empty sequence to accept any valid
+    signer with a warning). The build refuses to run without a signing seed.
+
     When ``timings`` is supplied it is populated with the wall-clock seconds of
     the ``load`` (source parsing), ``write`` (the bulk-ingest context) and
     ``finalize`` (dispose plus atomic replace) phases, and the ``total``.
     """
+    pinned_signers = LEDGER_TRUSTED_SIGNERS if trusted_signers is None else trusted_signers
     total_started = time.perf_counter()
     resolved_target = resolve_store_path(target)
     source_dir = resolve_data_dir(data_dir)
@@ -2555,25 +2744,32 @@ def build_store(
     temporary_path = Path(temporary_name)
     temporary_path.unlink()
     database: Backend | None = None
+    ledger: IdLedger | None = None
     try:
+        # The sealed ledger allocates every structure/reference/run/record/file id from
+        # stable amdb source keys, so the store keeps its ids across rebuilds. It is not
+        # used by the legacy raw-storage build (no id-managed families).
+        if not legacy:
+            ledger = _open_ledger(source_dir, trusted_signers=pinned_signers)
         created_database = Backend.duckdb(temporary_path)
         database = created_database
         store = SqlStore(
             created_database,
             entry_records={} if legacy else _entry_records_layout(),
-            # Mints entry ids (anyt.am[.type]-1-N) for run/data/file rows saved
-            # without one; material and reference entries carry their public ids
-            # explicitly (materials anyt.am-1-N, references anyt.am.refs-1-N).
-            entry_ids=EntryIdScheme("anyt.am", "1", type_in_base=True),
+            # No id-minting scheme: every id-managed family carries an explicit ledger id
+            # (materials anyt.am-1-N and references/structures/runs/records/files from the
+            # ledger); a save that reaches the store without one is a loud ValueError, not
+            # a silent fallthrough to store minting.
+            entry_ids=None,
         )
-        reference_id_by_doi = _reference_ids_by_doi(materials)
+        reference_id_by_doi = _reference_ids_by_doi(materials, ledger)
         # The stamped structure mains (deduped by content) and the result->structure id
-        # map, in deployment order. Legacy stores configure no families (raw storage), so
-        # they keep the nested-structure-only layout and stamp no structure ids/mains.
+        # map. Legacy stores configure no families (raw storage), so they keep the
+        # nested-structure-only layout and stamp no structure ids/mains.
         structure_id_by_material: dict[str, str] = {}
         structure_mains: dict[str, UnitcellStructureRecord] = {}
         if not legacy:
-            structure_id_by_material, structure_mains = _structure_mains(materials)
+            structure_id_by_material, structure_mains = _structure_mains(materials, ledger)
         # Stamp the densely enumerated reference ids AND structure id on the list ONCE, and
         # repoint each result's ``structure`` reference at its canonical stamped main, so
         # both the bulk save and the alternative-cell derivation / provenance retarget
@@ -2594,19 +2790,31 @@ def build_store(
                 # 645-task tree would flood the OPTIMADE run/record/file families.
                 # One run backs one material (enforced in _build_coupling), so the
                 # coupled items are already distinct. Only the outputs are bulk-saved
-                # here (this mints their ids); the runs and product links are rebuilt
-                # with store-resolvable edges and saved post-bulk (they need those ids).
-                for item in [observation.item for observation in coupled.values()]:
-                    if getattr(item, "missing_collector", None) is None:
-                        for value in item.outputs.values():
-                            # The relaxed-structure output is served as the stamped
-                            # structure main (from the material's final, possibly
-                            # details-fallback structure), not as a separate id=None
-                            # structures row that would collide with it. Its run edge
-                            # retargets through the structure-id map, not this output.
-                            if getattr(value, "type", None) == AltermagnetStructureEntry.type:
-                                continue
-                            bulk.save(_as_records_family(value))
+                # here (each stamped with its explicit ledger id, keyed by amdb id and
+                # output role/locator); the runs and product links are rebuilt with
+                # store-resolvable edges and saved post-bulk (they need those ids).
+                assert ledger is not None  # non-legacy always opens the ledger
+                for amdb_id, observation in coupled.items():
+                    item = observation.item
+                    if getattr(item, "missing_collector", None) is not None:
+                        continue
+                    for role, value in item.outputs.items():
+                        # The relaxed-structure output is served as the stamped
+                        # structure main (from the material's final, possibly
+                        # details-fallback structure), not as a separate id=None
+                        # structures row that would collide with it. Its run edge
+                        # retargets through the structure-id map, not this output.
+                        if getattr(value, "type", None) == AltermagnetStructureEntry.type:
+                            continue
+                        converted = _as_records_family(value)
+                        entry_id = _assign_output_id(ledger, amdb_id, role, converted)
+                        # ponytail: content-identical outputs across amdb ids get distinct
+                        # ledger ids, and the bulk merger compares the id metadata of a
+                        # content-dedup hit and RAISES EntryMetadataConflictError, so such a
+                        # collision fails the build loudly rather than silently picking a
+                        # winner. Upgrade to smallest-key ownership + alias (as for
+                        # structures) if two materials ever legitimately share an output.
+                        bulk.save(replace(cast(Any, converted), id=entry_id))
                 # Structure mains (stamped ids, deduped by content) saved BEFORE the result
                 # rows, so each result's nested reference dedups by content id onto its
                 # canonical stamped structure main (identical identity-excluded metadata).
@@ -2614,17 +2822,27 @@ def build_store(
                     bulk.save(main)
             for material in materials:
                 bulk.save(material)
-            for doi, rid in reference_id_by_doi.items():
+            # One row per reference id: two DOIs that differ only in case collapse onto
+            # one ledger id, so save the row once (keyed by id) to avoid a same-id,
+            # different-content conflict. Dense (in-memory) ids are distinct, so this is
+            # a no-op there.
+            for rid, doi in {rid: doi for doi, rid in reference_id_by_doi.items()}.items():
                 bulk.save(AltermagnetReferenceRecord(rid, doi, id=rid))
         if not legacy:
             # Alternatives and the store-resolvable replacement runs (with their
             # rewritten product links) are saved after the mains-only bulk context
             # finalizes: bulk ingest refuses non-mains, and the runs need the outputs'
-            # minted ids the bulk pass just assigned.
+            # ids the bulk pass just saved.
             _save_alternative_cells(store, materials, structure_id_by_material)
-            _save_reconstructed_runs(store, materials, coupled, structure_id_by_material)
+            assert ledger is not None  # non-legacy always opens the ledger
+            _save_reconstructed_runs(store, materials, coupled, structure_id_by_material, ledger)
         write_elapsed = time.perf_counter() - write_started
         finalize_started = time.perf_counter()
+        # Reseal the ledger (no-op when nothing was assigned) BEFORE committing the
+        # store: an id recorded in the store but not the ledger would re-mint on the
+        # next build, so the ledger must be durable first.
+        if ledger is not None:
+            ledger.close()
         created_database.dispose()
         database = None
         os.replace(temporary_path, resolved_target)
@@ -2632,6 +2850,10 @@ def build_store(
     except BaseException:
         if database is not None:
             database.dispose()
+        # Release the ledger lock (and persist any assigns already made -- an
+        # append-only allocator keeps orphaned ids across a failed build).
+        if ledger is not None:
+            ledger.close()
         temporary_path.unlink(missing_ok=True)
         raise
     if timings is not None:

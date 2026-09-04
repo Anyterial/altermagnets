@@ -8,6 +8,7 @@ thereafter the column is transition-verification-only and the ids are pure looku
 
 import csv
 import json
+import sqlite3
 from pathlib import Path
 
 import duckdb
@@ -39,10 +40,32 @@ def _served_id_to_formula(store_path: Path) -> dict[str, str]:
         connection.close()
 
 
-def _ledger_records(tables: Path, *, family: str | None = None) -> list[dict[str, object]]:
-    document = json.loads((tables / material_store.LEDGER_FILENAME).read_text(encoding="utf-8"))
-    records = document["records"]
-    return [r for r in records if family is None or r.get("family") == family]
+def _ledger_records(tables: Path, *, family: str | None = None) -> list[dict[str, str]]:
+    connection = sqlite3.connect(tables / material_store.LEDGER_FILENAME)
+    try:
+        rows = connection.execute("SELECT key, family, id, alias_of, supersedes FROM records ORDER BY seq").fetchall()
+    finally:
+        connection.close()
+    records: list[dict[str, str]] = []
+    for key, fam, entry_id, alias_of, supersedes in rows:
+        if alias_of is not None:
+            record = {"key": key, "alias_of": alias_of}
+        else:
+            record = {"key": key, "family": fam, "id": entry_id}
+        if supersedes is not None:
+            record["supersedes"] = supersedes
+        records.append(record)
+    return records if family is None else [r for r in records if r.get("family") == family]
+
+
+def _ledger_bases(tables: Path) -> dict[str, str]:
+    """Return the ledger's live per-family bases from its latest segment's signed subject."""
+    connection = sqlite3.connect(tables / material_store.LEDGER_FILENAME)
+    try:
+        subject = connection.execute("SELECT subject FROM segments ORDER BY segment DESC LIMIT 1").fetchone()[0]
+    finally:
+        connection.close()
+    return json.loads(subject)["bases"]
 
 
 def _build(tmp_path: Path, tables: Path) -> Path:
@@ -103,11 +126,10 @@ def test_second_build_leaves_ledger_byte_identical(tmp_path: Path) -> None:
 
 def test_superset_open_adds_results_family_to_a_five_family_ledger(tmp_path: Path) -> None:
     tables = write_source_tables(tmp_path / "tables", material_count=3)
-    before = _five_family_ledger(tables)
-    assert "results" not in json.loads(before.decode())["subject"]["bases"]
+    _five_family_ledger(tables)
+    assert "results" not in _ledger_bases(tables)
     _build(tmp_path, tables)
-    document = json.loads((tables / material_store.LEDGER_FILENAME).read_text(encoding="utf-8"))
-    assert document["subject"]["bases"]["results"] == "anyt.am"
+    assert _ledger_bases(tables)["results"] == "anyt.am"
     assert len(_ledger_records(tables, family="results")) == 3
 
 

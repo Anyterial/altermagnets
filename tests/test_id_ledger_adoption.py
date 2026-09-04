@@ -7,8 +7,8 @@ in-build verification. They require a configured operator identity so the build
 can sign the ledger (the build refuses to run unsigned).
 """
 
-import json
 import logging
+import sqlite3
 from pathlib import Path
 
 import duckdb
@@ -202,15 +202,32 @@ def test_shared_structure_records_one_id_and_an_alias(tmp_path: Path) -> None:
         owner_id = id_map["anyt.am-1-2"]  # the SMALLER key owns (sorted, build-order independent)
         assert ledger.lookup(_structure_key("anyt.am-1-2")) == owner_id
         assert ledger.lookup(_structure_key("anyt.am-1-5")) == owner_id
-    document = json.loads((tmp_path / material_store.LEDGER_FILENAME).read_text())
-    assigns = [r for r in document["records"] if "alias_of" in r]
+    assigns = [r for r in _ledger_records(tmp_path) if "alias_of" in r]
     assert assigns == [{"key": _structure_key("anyt.am-1-5"), "alias_of": owner_id}]
 
 
-def _records_for(tmp_path: Path, key: str) -> list[dict[str, object]]:
+def _ledger_records(tmp_path: Path) -> list[dict[str, str]]:
+    """Return the ledger's append-ordered records read straight from the sqlite container."""
+    connection = sqlite3.connect(tmp_path / material_store.LEDGER_FILENAME)
+    try:
+        rows = connection.execute("SELECT key, family, id, alias_of, supersedes FROM records ORDER BY seq").fetchall()
+    finally:
+        connection.close()
+    records: list[dict[str, str]] = []
+    for key, family, entry_id, alias_of, supersedes in rows:
+        if alias_of is not None:
+            record = {"key": key, "alias_of": alias_of}
+        else:
+            record = {"key": key, "family": family, "id": entry_id}
+        if supersedes is not None:
+            record["supersedes"] = supersedes
+        records.append(record)
+    return records
+
+
+def _records_for(tmp_path: Path, key: str) -> list[dict[str, str]]:
     """Return the ledger's append-ordered records for one key (newest last)."""
-    document = json.loads((tmp_path / material_store.LEDGER_FILENAME).read_text())
-    return [record for record in document["records"] if record["key"] == key]
+    return [record for record in _ledger_records(tmp_path) if record["key"] == key]
 
 
 def test_shared_structure_split_supersedes_the_departed_member(tmp_path: Path) -> None:
@@ -280,8 +297,7 @@ def test_doi_case_variants_collapse_to_one_reference_id(tmp_path: Path) -> None:
             ledger,
         )
         assert mapping["10.1000/AbC"] == mapping["10.1000/abc"]
-    document = json.loads((tmp_path / material_store.LEDGER_FILENAME).read_text())
-    references = [r for r in document["records"] if r.get("family") == "references"]
+    references = [r for r in _ledger_records(tmp_path) if r.get("family") == "references"]
     assert len(references) == 1
     assert references[0]["key"] == "doi:10.1000/abc"
 
@@ -346,10 +362,17 @@ def test_reopen_logs_the_signer_as_an_audit_record_and_refuses_a_tampered_ledger
     message = next(record.getMessage() for record in caplog.records if "audit record" in record.getMessage())
     assert _local_signer_fingerprint(tables) in message
 
-    # Tamper: flip a byte in the committed ledger. The signature no longer matches
-    # its own content, so the reopen refuses (integrity self-check, always on).
+    # Tamper: rewrite one stored record id. The reconstructed segment body no longer
+    # matches its signed digest, so the reopen refuses (integrity self-check, always on).
     ledger_path = tables / material_store.LEDGER_FILENAME
-    text = ledger_path.read_text(encoding="utf-8")
-    ledger_path.write_text(text.replace("anyt.am.structure", "anyt.am.structured", 1), encoding="utf-8")
+    connection = sqlite3.connect(ledger_path)
+    try:
+        connection.execute(
+            "UPDATE records SET id = 'anyt.am.structure-1-999999' "
+            "WHERE seq = (SELECT MIN(seq) FROM records WHERE family = 'structures')"
+        )
+        connection.commit()
+    finally:
+        connection.close()
     with pytest.raises(IdLedgerError, match="signature does not verify|restore"):
         build_store(tmp_path / "s3.duckdb", data_dir=tables, tables_dir=tables, details_dir=details, runs_dir=runs)

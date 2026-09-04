@@ -165,7 +165,7 @@ TABLES_PATH_ENVIRONMENT = "ALTERMAGNETS_TABLES_DIR"
 #: screening CSVs under ``data/tables/``. The ledger maps stable amdb source keys
 #: to entry ids so a rebuilt store keeps its ids and content changes become
 #: revisions (see the sealed-id-ledger design).
-LEDGER_FILENAME = "amdb_ids.json"
+LEDGER_FILENAME = "amdb_ids.sqlite"
 
 #: The per-family id bases the ledger mints under. These are the DEPLOYED id
 #: shapes (``anyt.am.structure-1-N`` etc.) and are load-bearing: serving,
@@ -791,7 +791,7 @@ def _seed_result_ids(ledger: IdLedger, screening_rows: list[dict[str, str]]) -> 
         assigned = ledger.assign(key, "results")
         expected = f"anyt.am-1-{index}"
         # Pure minting after full validation, so this only trips on a code bug; the
-        # documented recovery is `git restore tables/amdb_ids.json`.
+        # documented recovery is `git restore tables/amdb_ids.sqlite`.
         assert assigned == expected, f"results seeding row {index} minted {assigned!r}, expected {expected!r}"
 
 
@@ -2767,7 +2767,7 @@ def build_store(
     disposed before :func:`os.replace` commits the completed temporary file.
 
     A non-legacy build allocates every result, structure, reference, run, record and
-    file id from the committed sealed id ledger (``tables/amdb_ids.json``), so the
+    file id from the committed sealed id ledger (``tables/amdb_ids.sqlite``), so the
     ids are stable across rebuilds; the ledger is opened FIRST (before source loading
     and coupling) and the ``results`` family that mints the served material ids
     ``anyt.am-1-N`` is seeded once, in screening-row order, from the rows' magndata

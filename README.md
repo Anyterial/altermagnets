@@ -59,7 +59,7 @@ directory. `ALTERMAGNETS_DETAILS_DIR` (or the builder's `--details-dir`)
 selects the generated detail-asset tree.
 
 The mounted source tables under `data/tables/` are intentionally untracked; the
-two curation files — the sealed id ledger `tables/amdb_ids.json` and the coupling
+two curation files — the sealed id ledger `tables/amdb_ids.sqlite` and the coupling
 document `tables/amdb_run_content_ids.csv` — are git-tracked under the repo's
 `tables/` directory instead. `ALTERMAGNETS_TABLES_DIR` (or the builder's
 `--tables-dir`) selects a different curation directory. The ledger is

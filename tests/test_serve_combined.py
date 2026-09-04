@@ -25,7 +25,7 @@ if str(ROOT) not in sys.path:
 
 import serve_combined
 from httk.serve.web import create_asgi_app as create_web_asgi_app
-from optimade import RESULT_TYPE, combined
+from serve import RESULT_TYPE, combined
 
 
 def _widget_configuration(document: str) -> dict[str, object]:

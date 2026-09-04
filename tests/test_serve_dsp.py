@@ -15,8 +15,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import serve_combined
-from optimade import build_dsp_app
-from optimade.dsp import IANA_MEDIA_TYPE_HTML, OPTIMADE_SPEC_IRI, WEBSITE_STANDARD_IRI
+from serve import build_dsp_app
+from serve.dsp import IANA_MEDIA_TYPE_HTML, OPTIMADE_SPEC_IRI, WEBSITE_STANDARD_IRI
 
 HTTPS_ORIGIN = "https://altermagnets.anyterial.se"
 CATALOG_REQUEST = {

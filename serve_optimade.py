@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """Serve the altermagnets dataset over OPTIMADE.
 
-A thin CLI over the :mod:`optimade` package: it serves the prebuilt store's
+A thin CLI over the :mod:`serve` package: it serves the prebuilt store's
 ``structures`` and ``references`` families through the generic *httk-serve*
 OPTIMADE engine, or (with ``--validate``) validates every assembled record.
 """
 
 import argparse
 import sys
+from pathlib import Path
 
 from httk.core import report
 from httk.serve.web.runtime.devserver import run_dev_server
-from optimade import DEFAULT_PUBLIC_BASE_URL, build_providers, build_service_app, run_validation
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "server"))
+from serve import DEFAULT_PUBLIC_BASE_URL, build_providers, build_service_app, run_validation
 
 
 def main(argv: list[str] | None = None) -> int:

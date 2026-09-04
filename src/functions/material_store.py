@@ -366,7 +366,7 @@ class AltermagnetScreeningResult:
     # material->structure-id map. The stored route serves the ``structures`` block
     # natively off the typed ``structure`` reference (E3), so this scalar is no longer
     # a served property; it drives the build and the in-memory dataset provider's
-    # ``structures`` relationship (``optimade/dataset.py``).
+    # ``structures`` relationship (``server/serve/dataset.py``).
     structure_id: str | None = None
     # Entry-id fields per the store contract; id is always set to the amdb
     # public id at construction, immutable_id is minted by the store.
@@ -973,7 +973,7 @@ def _list_scalar_query(field: str, *, literals: Mapping[object, object] | None =
 def _provider_property(record: object, name: str) -> object:
     # This compatibility projector is pure and does not enumerate the store.
     # A root-relative base is made absolute by the thin service adapter.
-    from optimade.dataset import _material_properties
+    from serve.dataset import _material_properties
 
     return _material_properties(cast(AltermagnetScreeningResult, record), "")[name]
 

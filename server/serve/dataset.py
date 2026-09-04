@@ -13,7 +13,7 @@ from httk.store import DataRecordEntryProvider, FileEntryProvider, ReferenceEntr
 
 from .files import figure_file_is_servable
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 logger = report.context_logger(logging.getLogger("httk.altermagnets.serve_optimade"), "altermagnets")
 

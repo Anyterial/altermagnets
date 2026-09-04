@@ -8,18 +8,19 @@ from typing import Any
 
 _ROOT = Path(__file__).resolve().parents[2]
 _FUNCTIONS_ROOT = _ROOT / "src" / "functions"
+_SERVER_ROOT = _ROOT / "server"
 
 
 def _ensure_site_imports() -> None:
-    """Make the repo-root ``optimade`` package and ``src/functions`` importable.
+    """Make the ``serve`` package (under ``server/``) and ``src/functions`` importable.
 
     Widgets are executed with only ``src/widgets`` on ``sys.path`` (the loader
     removes its temporary entries after module import), so the service package
     and its ``material_store`` dependency are not reachable by default. Mirror
-    ``optimade/__init__.py``'s own self-insertion so the accessor works in serve,
+    ``server/serve/__init__.py``'s own self-insertion so the accessor works in serve,
     publish, and direct-import test contexts alike.
     """
-    for path in (_FUNCTIONS_ROOT, _ROOT):
+    for path in (_FUNCTIONS_ROOT, _SERVER_ROOT):
         text = str(path)
         if text not in sys.path:
             sys.path.insert(0, text)
@@ -28,12 +29,12 @@ def _ensure_site_imports() -> None:
 def result_entry_type() -> str:
     """Return the AMDB main entity's served (wire) entry type.
 
-    Resolved lazily (the ``optimade`` package is only importable once
+    Resolved lazily (the ``serve`` package is only importable once
     :func:`_ensure_site_imports` has run) so widget modules can name the
     screening-result endpoint without a load-time dependency on the service.
     """
     _ensure_site_imports()
-    from optimade.adapter import RESULT_TYPE
+    from serve.adapter import RESULT_TYPE
 
     return RESULT_TYPE
 
@@ -55,7 +56,7 @@ def served_field_definitions() -> dict[str, dict[str, Any]]:
     _ensure_site_imports()
     import material_store
     from httk.serve.optimade.schema.served import build_served_schema
-    from optimade.adapter import RESULT_TYPE, SORTABLE_PROPERTIES, _public_store_schema
+    from serve.adapter import RESULT_TYPE, SORTABLE_PROPERTIES, _public_store_schema
 
     schema = build_served_schema(
         {

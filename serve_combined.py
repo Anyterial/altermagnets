@@ -1,12 +1,16 @@
 """Serve the dynamic altermagnet site and its OPTIMADE services together.
 
-A thin CLI over :func:`optimade.create_combined_app`.
+A thin CLI over :func:`serve.create_combined_app`.
 """
 
 import argparse
+import sys
+from pathlib import Path
 
 from httk.serve.web.runtime.devserver import run_dev_server
-from optimade import create_combined_app
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "server"))
+from serve import create_combined_app
 
 
 def main(argv: list[str] | None = None) -> int:

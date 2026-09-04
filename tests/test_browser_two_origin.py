@@ -18,7 +18,7 @@ import publish_static
 import pytest
 from conftest import write_detail_assets, write_source_tables
 from httk.serve import ASGIAppMount, compose_asgi_apps
-from optimade import build_providers, build_service_app
+from serve import build_providers, build_service_app
 
 BROWSER_REQUIRED = os.environ.get("ALTERMAGNETS_BROWSER_REQUIRED") == "1"
 
@@ -317,7 +317,7 @@ def _column_floats(rows, index: int) -> list[float]:
 
 def test_header_sort_link_roundtrip(two_origins: Origins, page: Page) -> None:
     # Column 4 (_anyterial_max_spin_splitting) is advertised sortable server-side
-    # (optimade/adapter.py SORTABLE_PROPERTIES). Column 0 (_anyterial_formula,
+    # (server/serve/adapter.py SORTABLE_PROPERTIES). Column 0 (_anyterial_formula,
     # "Material") is now sortable too, so it has a sort link. Every one of the
     # nine displayed columns (src/widgets/search_table.py) is now server-side
     # sortable, so there is no remaining non-sortable column to assert the negative on.

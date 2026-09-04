@@ -29,8 +29,8 @@ sys.path.insert(0, str(ROOT))
 
 import material_store
 from conftest import write_detail_assets, write_source_tables
-from optimade import adapter, build_providers, build_service_app, run_validation, service
-from optimade import dataset as dataset_module
+from serve import adapter, build_providers, build_service_app, run_validation, service
+from serve import dataset as dataset_module
 from starlette.testclient import TestClient
 
 #: The AMDB main entity wire type (the primary search + science endpoint). The screened
@@ -406,7 +406,7 @@ def test_five_entry_type_id_forms(tmp_path: Path) -> None:
 
 def test_resolve_locator_path_refuses_escape(tmp_path: Path) -> None:
     """The byte route's locator guard refuses absolute paths and ``..``/symlink escapes."""
-    from optimade.files import resolve_locator_path
+    from serve.files import resolve_locator_path
 
     root = tmp_path / "runs"
     (root / "task").mkdir(parents=True)

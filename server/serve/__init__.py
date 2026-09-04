@@ -3,13 +3,14 @@
 This package holds the store-envelope policy, dataset assembly, figure-byte
 machinery, service factory, validation, and combined-site composition that the
 ``serve_optimade`` and ``serve_combined`` entry scripts drive. It self-inserts
-``src/functions`` on ``sys.path`` so ``import optimade`` is self-sufficient.
+``src/functions`` on ``sys.path`` so ``from serve import ...`` is self-sufficient
+once the repo's ``server/`` directory is on ``sys.path``.
 """
 
 import sys
 from pathlib import Path
 
-_FUNCTIONS_ROOT = Path(__file__).resolve().parents[1] / "src" / "functions"
+_FUNCTIONS_ROOT = Path(__file__).resolve().parents[2] / "src" / "functions"
 if str(_FUNCTIONS_ROOT) not in sys.path:
     sys.path.insert(0, str(_FUNCTIONS_ROOT))
 

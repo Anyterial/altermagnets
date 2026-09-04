@@ -8,8 +8,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 FUNCTIONS = ROOT / "src" / "functions"
-if str(FUNCTIONS) not in sys.path:
-    sys.path.insert(0, str(FUNCTIONS))
+SERVER = ROOT / "server"
+for _path in (FUNCTIONS, SERVER):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
 from material_store import build_store
 

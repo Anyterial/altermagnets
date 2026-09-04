@@ -23,7 +23,7 @@ from .service import (
 
 logger = report.context_logger(logging.getLogger("httk.altermagnets.combined"), "combined")
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULT_COMBINED_PUBLIC_BASE_URL = "http://127.0.0.1:8080"
 INDEX_PATH = "/optimade/index"

@@ -13,6 +13,7 @@ from material_store import (
     build_store,
     default_runs_dir,
     default_store_path,
+    default_tables_dir,
     resolve_data_dir,
     resolve_details_dir,
 )
@@ -30,7 +31,16 @@ def _arguments() -> argparse.Namespace:
         "--data-dir",
         type=Path,
         default=None,
-        help="directory containing the three source CSVs (default: ALTERMAGNETS_DATA_DIR, then data/tables)",
+        help="directory containing the three mounted source CSVs (default: ALTERMAGNETS_DATA_DIR, then data/tables)",
+    )
+    parser.add_argument(
+        "--tables-dir",
+        type=Path,
+        default=None,
+        help=(
+            "committed curation directory holding the sealed id ledger and coupling document "
+            f"(default: ALTERMAGNETS_TABLES_DIR, then {default_tables_dir()})"
+        ),
     )
     parser.add_argument(
         "--details-dir",
@@ -77,6 +87,7 @@ def main() -> int:
     target = build_store(
         arguments.target,
         data_dir=arguments.data_dir,
+        tables_dir=arguments.tables_dir,
         details_dir=arguments.details_dir,
         runs_dir=arguments.runs_dir,
         legacy=arguments.legacy,

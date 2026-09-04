@@ -1,6 +1,7 @@
 import bz2
 import csv
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -13,7 +14,17 @@ for _path in (FUNCTIONS, SERVER):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
+import material_store
 from material_store import build_store
+
+# Structural guard: no store-building test may fall through to the production
+# tables/ ledger. resolve_tables_dir raises if a non-legacy build reaches it without
+# an explicit tables_dir (or ALTERMAGNETS_TABLES_DIR), so every such test must pass a
+# tmp fixture dir. Set here because conftest is imported only under pytest. Also drop
+# any exported ALTERMAGNETS_TABLES_DIR so it cannot silently bypass the guard (that env
+# var is consulted before the guard in resolve_tables_dir).
+os.environ.pop(material_store.TABLES_PATH_ENVIRONMENT, None)
+material_store._GUARD_DEFAULT_TABLES_DIR = True
 
 _SYMMETRY_FIELDS = (
     "Filename",

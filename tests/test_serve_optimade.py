@@ -227,7 +227,7 @@ def test_serves_material_run_strong_link_relationships_and_energy(tmp_path: Path
     details = write_detail_assets(tmp_path / "details")
     runs = tmp_path / "runs"
     _write_scf_run(runs, "CrSb")  # couples anyt.am-1-1; OUTCAR TOTEN is -1.0 eV; also writes a vasprun output
-    target = material_store.build_store(tmp_path / "store.duckdb", data_dir=source, details_dir=details, runs_dir=runs)
+    target = material_store.build_store(tmp_path / "store.duckdb", data_dir=source, tables_dir=source, details_dir=details, runs_dir=runs)
     opened = material_store.open_prebuilt_store(target)
     assert opened is not None
     app = build_service_app(
@@ -308,7 +308,7 @@ def _build_run_backed_store(tmp_path: Path) -> tuple[Any, Any, Path, Path]:
     details = write_detail_assets(tmp_path / "details")
     runs = tmp_path / "runs"
     _write_scf_run(runs, "CrSb")  # couples anyt.am-1-1; writes an OUTCAR (energy) + vasprun (file)
-    target = material_store.build_store(tmp_path / "store.duckdb", data_dir=source, details_dir=details, runs_dir=runs)
+    target = material_store.build_store(tmp_path / "store.duckdb", data_dir=source, tables_dir=source, details_dir=details, runs_dir=runs)
     opened = material_store.open_prebuilt_store(target)
     assert opened is not None  # a stale/empty store would silently serve empty files/records
     app = build_service_app(
@@ -602,7 +602,7 @@ def test_httk_alts_routes_serve_composite_alternatives(tmp_path: Path) -> None:
     source = write_source_tables(tmp_path / "tables")
     details = write_detail_assets(tmp_path / "details")
     store_path = material_store.build_store(
-        tmp_path / "store.duckdb", data_dir=source, details_dir=details, runs_dir=tmp_path / "runs"
+        tmp_path / "store.duckdb", data_dir=source, tables_dir=source, details_dir=details, runs_dir=tmp_path / "runs"
     )
     opened = material_store.open_prebuilt_store(store_path)
     assert opened is not None
@@ -792,6 +792,7 @@ def test_structures_nsites_depth1_filter_e2e(tmp_path: Path) -> None:
         material_store.build_store(
             tmp_path / "store.duckdb",
             data_dir=write_source_tables(tmp_path / "tables2"),
+            tables_dir=tmp_path / "tables2",
             details_dir=write_detail_assets(tmp_path / "details2"),
         )
     )

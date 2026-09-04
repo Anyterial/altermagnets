@@ -154,9 +154,9 @@ def _result(material_id: str, structure: object | None, *, dois: tuple[str, ...]
 def test_double_build_keeps_every_served_id_identical(tmp_path: Path) -> None:
     """THE HEADLINE: a from-scratch rebuild consuming the ledger serves identical ids everywhere."""
     tables, details, runs = _fixture_tree(tmp_path)
-    first = build_store(tmp_path / "s1.duckdb", data_dir=tables, details_dir=details, runs_dir=runs)
+    first = build_store(tmp_path / "s1.duckdb", data_dir=tables, tables_dir=tables, details_dir=details, runs_dir=runs)
     ledger_after_first = (tables / material_store.LEDGER_FILENAME).read_bytes()
-    second = build_store(tmp_path / "s2.duckdb", data_dir=tables, details_dir=details, runs_dir=runs)
+    second = build_store(tmp_path / "s2.duckdb", data_dir=tables, tables_dir=tables, details_dir=details, runs_dir=runs)
 
     ids_first = _served_ids(first)
     ids_second = _served_ids(second)
@@ -171,7 +171,7 @@ def test_double_build_keeps_every_served_id_identical(tmp_path: Path) -> None:
 def test_record_value_change_keeps_the_same_id(tmp_path: Path) -> None:
     """Changing a record's VALUE between builds keeps its id: content becomes a revision."""
     tables, details, runs = _fixture_tree(tmp_path)
-    first = build_store(tmp_path / "s1.duckdb", data_dir=tables, details_dir=details, runs_dir=runs)
+    first = build_store(tmp_path / "s1.duckdb", data_dir=tables, tables_dir=tables, details_dir=details, runs_dir=runs)
     connection = duckdb.connect(str(first), read_only=True)
     try:
         before = connection.execute("select id, value_number from altermagnets_data_records").fetchall()
@@ -181,7 +181,7 @@ def test_record_value_change_keeps_the_same_id(tmp_path: Path) -> None:
 
     _write_scf_run(runs, "CrSb", energy=-2.5)  # same structure (CONTCAR), different total energy
     second = build_store(
-        tmp_path / "s2.duckdb", data_dir=tables, details_dir=details, runs_dir=runs, refresh_coupling=True
+        tmp_path / "s2.duckdb", data_dir=tables, tables_dir=tables, details_dir=details, runs_dir=runs, refresh_coupling=True
     )
     connection = duckdb.connect(str(second), read_only=True)
     try:
@@ -295,7 +295,7 @@ def test_open_rejects_a_bases_map_that_drifts_from_the_committed_file(tmp_path: 
         pass  # create the committed-format ledger
     keys = resolve_seal_keys(material_store.LEDGER_SIGNER_REFS, project_root=tmp_path).keys
     drifted = {**material_store.LEDGER_BASES, "structures": "anyt.am.drifted"}
-    with pytest.raises(IdLedgerError, match="base map"):
+    with pytest.raises(IdLedgerError, match="not the expected"):
         IdLedger.open(
             tmp_path / material_store.LEDGER_FILENAME,
             keys=keys,
@@ -314,7 +314,7 @@ def test_row_without_amdb_id_is_an_error(tmp_path: Path) -> None:
     screening.write_text("\n".join(text) + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="AMDBId"):
         build_store(
-            tmp_path / "store.duckdb", data_dir=tables, details_dir=tmp_path / "details", runs_dir=tmp_path / "no-runs"
+            tmp_path / "store.duckdb", data_dir=tables, tables_dir=tables, details_dir=tmp_path / "details", runs_dir=tmp_path / "no-runs"
         )
 
 
@@ -339,10 +339,10 @@ def test_reopen_logs_the_signer_as_an_audit_record_and_refuses_a_tampered_ledger
     """
 
     tables, details, runs = _fixture_tree(tmp_path)
-    build_store(tmp_path / "s1.duckdb", data_dir=tables, details_dir=details, runs_dir=runs)
+    build_store(tmp_path / "s1.duckdb", data_dir=tables, tables_dir=tables, details_dir=details, runs_dir=runs)
     # Reopening logs the actual signer's fingerprint as the manual-audit surface.
     with caplog.at_level(logging.INFO, logger="httk.store.id_ledger"):
-        build_store(tmp_path / "s2.duckdb", data_dir=tables, details_dir=details, runs_dir=runs)
+        build_store(tmp_path / "s2.duckdb", data_dir=tables, tables_dir=tables, details_dir=details, runs_dir=runs)
     message = next(record.getMessage() for record in caplog.records if "audit record" in record.getMessage())
     assert _local_signer_fingerprint(tables) in message
 
@@ -352,4 +352,4 @@ def test_reopen_logs_the_signer_as_an_audit_record_and_refuses_a_tampered_ledger
     text = ledger_path.read_text(encoding="utf-8")
     ledger_path.write_text(text.replace("anyt.am.structure", "anyt.am.structured", 1), encoding="utf-8")
     with pytest.raises(IdLedgerError, match="signature does not verify|restore"):
-        build_store(tmp_path / "s3.duckdb", data_dir=tables, details_dir=details, runs_dir=runs)
+        build_store(tmp_path / "s3.duckdb", data_dir=tables, tables_dir=tables, details_dir=details, runs_dir=runs)

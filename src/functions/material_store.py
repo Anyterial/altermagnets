@@ -101,6 +101,7 @@ __all__ = [
     "default_details_dir",
     "default_runs_dir",
     "default_store_path",
+    "default_tables_dir",
     "details_dir_for_material",
     "details_raw_path",
     "load_material_structure",
@@ -114,6 +115,7 @@ __all__ = [
     "resolve_details_dir",
     "resolve_runs_dir",
     "resolve_store_path",
+    "resolve_tables_dir",
 ]
 
 # Site diagnostics ride the unified httk reporting channel (httk.core.report):
@@ -156,22 +158,29 @@ STORE_PATH_ENVIRONMENT = "ALTERMAGNETS_STORE_PATH"
 RUNS_PATH_ENVIRONMENT = "ALTERMAGNETS_RUNS_DIR"
 COUPLING_FILENAME = "amdb_run_content_ids.csv"
 DETAILS_PATH_ENVIRONMENT = "ALTERMAGNETS_DETAILS_DIR"
+TABLES_PATH_ENVIRONMENT = "ALTERMAGNETS_TABLES_DIR"
 
-#: The committed, sealed id ledger next to the source tables. It maps stable
-#: amdb source keys to entry ids so a rebuilt store keeps its ids and content
-#: changes become revisions (see the sealed-id-ledger design).
+#: The committed, sealed id ledger and coupling document live under the repo's
+#: ``tables/`` directory (curation, git-tracked), split from the mounted, untracked
+#: screening CSVs under ``data/tables/``. The ledger maps stable amdb source keys
+#: to entry ids so a rebuilt store keeps its ids and content changes become
+#: revisions (see the sealed-id-ledger design).
 LEDGER_FILENAME = "amdb_ids.json"
 
 #: The per-family id bases the ledger mints under. These are the DEPLOYED id
 #: shapes (``anyt.am.structure-1-N`` etc.) and are load-bearing: serving,
 #: alternatives and provenance all assume them, so they are hand-pinned here and
 #: never derived from the family types.
+#: ``results`` mints the served material ids ``anyt.am-1-N`` (base ``anyt.am``,
+#: distinct from the ``anyt.am.<type>`` bases and not a duplicate value); it is the
+#: family the one-time seeding populates from the screening rows' magndata keys.
 LEDGER_BASES = {
     "structures": "anyt.am.structure",
     "references": "anyt.am.refs",
     "runs": "anyt.am.runs",
     "records": "anyt.am.records",
     "files": "anyt.am.files",
+    "results": "anyt.am",
 }
 LEDGER_SERIES = "1"
 
@@ -723,7 +732,89 @@ def _assign_output_id(ledger: IdLedger, amdb_id: str, role: str, value: object) 
     return ledger.assign(_record_key(amdb_id, role), "records")
 
 
-def _open_ledger(source_dir: Path) -> IdLedger:
+def _normalize_magndata_cell(cell: str) -> str:
+    """Normalize a screening row's ``MAGNDATA ID`` cell into a stable key token.
+
+    A cell may list several MAGNDATA identifiers (comma-separated); the tokens are
+    stripped, sorted, and rejoined with ``,`` so the key is order-independent. The
+    result is the identity of the served material: editing the cell is an identity
+    change, re-bound only through the ledger's explicit supersession ceremony, never
+    silently re-minted.
+    """
+    return ",".join(sorted(token.strip() for token in cell.split(",") if token.strip()))
+
+
+def _result_key(cell: str) -> str:
+    """Return the stable ledger key (family ``results``) for a screening magndata cell."""
+    return f"magndata:{_normalize_magndata_cell(cell)}"
+
+
+def _seed_result_ids(ledger: IdLedger, screening_rows: list[dict[str, str]]) -> None:
+    """One-time, pre-validated seeding of the ``results`` family (irreversible by convention).
+
+    Called only when the results family is empty (the screening rows' magndata keys
+    are all unassigned). The ENTIRE screening table is validated BEFORE the first
+    assign, so a per-row mismatch can never leave a partially seeded ledger: the
+    build's failure handler reseals whatever was assigned, so nothing may be assigned
+    until the whole table is known good.
+
+    Validation: every ``MAGNDATA ID`` cell non-empty; the normalized keys unique; the
+    ``AMDBId`` column dense ``anyt.am-1-1``..``-N`` in row order; and every key still
+    unassigned (the results family holds zero entries). Only then are N ids minted in
+    row order, each asserted to equal that row's ``AMDBId``. After this build the
+    ``AMDBId`` column is never read for identity again.
+
+    :param ledger: The open ledger whose freshly added ``results`` family is seeded.
+    :param screening_rows: The screening CSV rows in file order.
+    :raises ValueError: If any validation fails; the ledger is left untouched.
+    """
+    keys = [_result_key(row.get("MAGNDATA ID", "")) for row in screening_rows]
+    for index, (row, key) in enumerate(zip(screening_rows, keys, strict=True), start=1):
+        if _normalize_magndata_cell(row.get("MAGNDATA ID", "")) == "":
+            raise ValueError(f"screening row {index} has an empty MAGNDATA ID; the results ledger needs a magndata key")
+    if len(set(keys)) != len(keys):
+        seen: set[str] = set()
+        duplicate = next(key for key in keys if key in seen or seen.add(key))  # type: ignore[func-returns-value]
+        raise ValueError(f"screening magndata key {duplicate!r} is not unique; cannot seed the results ledger")
+    for index, row in enumerate(screening_rows, start=1):
+        expected = f"anyt.am-1-{index}"
+        found = (row.get(AMDB_ID_COLUMN) or "").strip()
+        if found != expected:
+            raise ValueError(
+                f"screening row {index}: {AMDB_ID_COLUMN} {found!r} is not the expected dense id {expected!r}; "
+                "the one-time results seeding requires a dense anyt.am-1-1..-N AMDBId column in row order"
+            )
+    for key in keys:
+        if ledger.lookup(key) is not None:
+            raise ValueError(f"results ledger already binds {key!r}; refusing to re-seed a non-empty results family")
+    for index, key in enumerate(keys, start=1):
+        assigned = ledger.assign(key, "results")
+        expected = f"anyt.am-1-{index}"
+        # Pure minting after full validation, so this only trips on a code bug; the
+        # documented recovery is `git restore tables/amdb_ids.json`.
+        assert assigned == expected, f"results seeding row {index} minted {assigned!r}, expected {expected!r}"
+
+
+def _result_ids(ledger: IdLedger, screening_rows: list[dict[str, str]]) -> dict[str, str]:
+    """Resolve every screening row's ``results`` id from the ledger, seeding on first build.
+
+    Keyed by the normalized magndata cell (:func:`_result_key`). On the first build
+    the results family is empty (none of these keys is assigned) and the pre-validated
+    one-time seeding runs; thereafter the ids are pure idempotent lookups. A future CSV
+    that grows past the seeded set mints the new rows' keys normally (idempotent assign,
+    no AMDBId assertion), matching the fallback's positional-when-absent behaviour.
+
+    :param ledger: The open ledger (its ``results`` family added via superset-open).
+    :param screening_rows: The screening CSV rows in file order.
+    :return: A ``magndata key`` -> ``anyt.am-1-N`` map covering every screening row.
+    """
+    keys = [_result_key(row.get("MAGNDATA ID", "")) for row in screening_rows]
+    if not any(ledger.lookup(key) is not None for key in keys):
+        _seed_result_ids(ledger, screening_rows)
+    return {key: ledger.assign(key, "results") for key in keys}
+
+
+def _open_ledger(tables_dir: Path) -> IdLedger:
     """Open the committed sealed id ledger, creating it on the first build.
 
     The build always signs the ledger with :data:`LEDGER_SIGNER_REFS`; a missing
@@ -732,13 +823,13 @@ def _open_ledger(source_dir: Path) -> IdLedger:
     pinned signer (the integrity self-check still refuses a tampered file), and
     ``IdLedger.open`` logs who signed it. Git history is the tamper witness.
 
-    :param source_dir: The source-table directory holding :data:`LEDGER_FILENAME`.
+    :param tables_dir: The committed curation directory holding :data:`LEDGER_FILENAME`.
     :return: The open, locked ledger.
     :raises SealError: If no signing seed is available.
     """
-    path = source_dir / LEDGER_FILENAME
+    path = tables_dir / LEDGER_FILENAME
     try:
-        keys: tuple[SealKey, ...] = resolve_seal_keys(LEDGER_SIGNER_REFS, project_root=source_dir).keys
+        keys: tuple[SealKey, ...] = resolve_seal_keys(LEDGER_SIGNER_REFS, project_root=tables_dir).keys
     except SealError as error:
         raise SealError(
             f"cannot seal the id ledger {path}: {error}. Configure an operator identity "
@@ -746,7 +837,10 @@ def _open_ledger(source_dir: Path) -> IdLedger:
         ) from error
     if path.exists():
         # Pass the code-side scheme so a drift between LEDGER_BASES/LEDGER_SERIES and the
-        # committed file is a loud error, not a silent adoption of the stored bases.
+        # committed file is a loud error. bases= is reconciled as a SUPERSET: a family
+        # in LEDGER_BASES absent from the stored map (the "results" family on the first
+        # build after the split) is added and stamped at reseal; a changed/removed
+        # stored family still errors.
         return IdLedger.open(path, keys=keys, bases=LEDGER_BASES, series=LEDGER_SERIES)
     return IdLedger.create(path, bases=LEDGER_BASES, series=LEDGER_SERIES, keys=keys)
 
@@ -1158,6 +1252,16 @@ def default_data_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "data" / "tables"
 
 
+def default_tables_dir() -> Path:
+    """The committed curation directory (sealed id ledger + coupling document).
+
+    Split from :func:`default_data_dir`: the two curation files are git-tracked
+    under the repo's ``tables/``, while the screening CSVs are mounted, untracked,
+    under ``data/tables/``.
+    """
+    return Path(__file__).resolve().parents[2] / "tables"
+
+
 def default_details_dir() -> Path:
     """The conventional generated-detail asset directory."""
     return Path(__file__).resolve().parents[2] / "data" / "details"
@@ -1186,6 +1290,27 @@ def resolve_data_dir(value: str | os.PathLike[str] | None = None) -> Path:
     if override:
         return Path(override).expanduser().resolve()
     return default_data_dir()
+
+
+#: Test guard: :mod:`conftest` sets this ``True`` so a store-building test can
+#: never fall through to the production ``tables/`` ledger. Production code and the
+#: build tool leave it ``False`` and use :func:`default_tables_dir` normally.
+_GUARD_DEFAULT_TABLES_DIR = False
+
+
+def resolve_tables_dir(value: str | os.PathLike[str] | None = None) -> Path:
+    """Resolve the committed curation directory (ledger + coupling document)."""
+    if value is not None:
+        return Path(value).expanduser().resolve()
+    override = os.environ.get(TABLES_PATH_ENVIRONMENT, "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    if _GUARD_DEFAULT_TABLES_DIR:
+        raise RuntimeError(
+            "resolve_tables_dir fell through to the production tables/ ledger under pytest; "
+            "a store-building test must pass an explicit tables_dir (a tmp fixture)"
+        )
+    return default_tables_dir()
 
 
 def resolve_details_dir(value: str | os.PathLike[str] | None = None) -> Path:
@@ -1560,7 +1685,11 @@ def _source_table_paths(data_dir: Path) -> tuple[Path, Path, Path]:
 
 
 def _load_source_materials(
-    data_dir: Path, *, details_dir: Path, legacy_structures: bool = True
+    data_dir: Path,
+    *,
+    details_dir: Path,
+    legacy_structures: bool = True,
+    result_ids: Mapping[str, str] | None = None,
 ) -> tuple[AltermagnetScreeningResult, ...]:
     screening_path, collinear_path, noncollinear_path = _source_table_paths(data_dir)
     return build_material_records(
@@ -1569,6 +1698,7 @@ def _load_source_materials(
         _load_csv_rows(noncollinear_path),
         details_dir=details_dir,
         load_details_structures=legacy_structures,
+        result_ids=result_ids,
     )
 
 
@@ -1712,8 +1842,15 @@ def build_material_records(
     *,
     details_dir: Path | None = None,
     load_details_structures: bool = True,
+    result_ids: Mapping[str, str] | None = None,
 ) -> tuple[AltermagnetScreeningResult, ...]:
-    """Normalize the three current CSVs into the persistent object graph."""
+    """Normalize the three current CSVs into the persistent object graph.
+
+    With *result_ids* (the ledger build) each row's served id is the ``results``
+    family id looked up by its normalized magndata key; the ``AMDBId`` column is not
+    read for identity. Without it (the in-memory fallback) the id is the ``AMDBId``
+    column when present, else a positional ``anyt.am-1-<row>`` (dev-only divergence).
+    """
     grouped_variants: dict[str, list[SymmetryVariant]] = {}
     for magndata_id, variant in sorted(
         summarize_symmetry_rows(collinear_rows, source_kind="collinear")
@@ -1734,11 +1871,17 @@ def build_material_records(
     seen_material_ids: set[str] = set()
 
     for index, row in enumerate(screening_rows, start=1):
-        material_id = (row.get(AMDB_ID_COLUMN) or "").strip()
-        if not material_id:
-            # A positional fallback id was a latent collision risk and cannot anchor a
-            # stable ledger key; every screening row must carry an explicit AMDBId.
-            raise ValueError(f"screening row {index} has no {AMDB_ID_COLUMN}; every row must carry an explicit amdb id")
+        if result_ids is not None:
+            # The ledger build: the served id is the results-family id keyed by the
+            # row's normalized magndata cell. A missing key means an empty MAGNDATA ID
+            # (the seeding gate rejects those), so surface it rather than KeyError-ing.
+            key = _result_key(row.get("MAGNDATA ID", ""))
+            material_id = result_ids.get(key, "")
+            if not material_id:
+                raise ValueError(f"screening row {index} has no results-ledger id for magndata key {key!r}")
+        else:
+            # The in-memory fallback: AMDBId when present, else a positional id.
+            material_id = (row.get(AMDB_ID_COLUMN) or "").strip() or f"anyt.am-1-{index}"
         if material_id in seen_material_ids:
             raise ValueError(f"duplicate canonical material ID {material_id!r} in screening row {index}")
         seen_material_ids.add(material_id)
@@ -1922,13 +2065,15 @@ def _build_coupling(
     observations: tuple[_RunObservation, ...],
     *,
     details_dir: Path,
+    tables_dir: Path | None = None,
     runs_root: Path | None = None,
     collected: int = 0,
     refresh_coupling: bool = False,
+    result_ids: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, _RunObservation], dict[str, int]]:
     """Build and verify the deterministic AMDB-to-v1 coupling document.
 
-    :param data_dir: directory holding the screening CSV and the coupling document.
+    :param data_dir: directory holding the mounted screening CSV.
     :param observations: relaxed-structure observations collected from the v1 tree.
     :param details_dir: root of the detail-asset tree, whose per-material JSONs
         carry the authoritative ``raw_path`` mapping. The document's
@@ -1937,27 +2082,36 @@ def _build_coupling(
         same job stays coupled to the same material; it is deliberately NOT the
         store-minted run id (the reconstructed run saved by
         :func:`_save_reconstructed_runs` carries different, resolvable edges).
+    :param tables_dir: committed curation directory holding the coupling document;
+        defaults to *data_dir* (the isolated-unit-test layout where both co-locate).
     :param runs_root: the runs root the observations were collected from, named in
         the diagnostic raised when a document's ``raw_path`` values all miss.
     :param collected: total tasks collected from the tree (before 3a filtering), so a
         wrong runs root (many collected, none usable) is told apart from an empty tree.
     :param refresh_coupling: rewrite derived content-ids (and fill/promote from the
         details ``raw_path``) instead of raising on a stale pin.
+    :param result_ids: the ledger's ``magndata key`` -> ``anyt.am-1-N`` map. When
+        given (the production build) each screening row's amdb id is the ledger id
+        for its magndata key, never the ``AMDBId`` column; without it (the isolated
+        unit tests) the ``AMDBId`` column supplies the id.
     :returns: the ``AMDBId``-keyed coupled observations and the status counts.
     """
     screening = _load_csv_rows(data_dir / SCREENING_RESULTS_FILENAME, delimiter=";")
     source_materials: dict[str, str] = {}
     materials_to_amdb: dict[str, list[str]] = {}
     for source_row in screening:
-        amdb_id = (source_row.get(AMDB_ID_COLUMN) or "").strip()
         material = (source_row.get("Material") or "").strip()
+        if result_ids is not None:
+            amdb_id = result_ids.get(_result_key(source_row.get("MAGNDATA ID", "")), "")
+        else:
+            amdb_id = (source_row.get(AMDB_ID_COLUMN) or "").strip()
         if not amdb_id or not material:
             raise ValueError(f"{data_dir / SCREENING_RESULTS_FILENAME}: missing AMDBId or Material")
         if amdb_id in source_materials:
             raise ValueError(f"duplicate canonical material ID '{amdb_id}'")
         source_materials[amdb_id] = material
         materials_to_amdb.setdefault(material, []).append(amdb_id)
-    coupling_path = data_dir / COUPLING_FILENAME
+    coupling_path = (tables_dir if tables_dir is not None else data_dir) / COUPLING_FILENAME
     previous = _load_csv_rows(coupling_path, delimiter=";") if coupling_path.is_file() else []
     # raw_path is optional in older documents; every other column is fixed. Tolerate
     # a missing raw_path column, but reject unexpected extra columns so a curator's
@@ -2600,6 +2754,7 @@ def build_store(
     target: str | os.PathLike[str] | None = None,
     *,
     data_dir: str | os.PathLike[str] | None = None,
+    tables_dir: str | os.PathLike[str] | None = None,
     details_dir: str | os.PathLike[str] | None = None,
     runs_dir: str | os.PathLike[str] | None = None,
     legacy: bool = False,
@@ -2611,12 +2766,16 @@ def build_store(
     The caller never sees a partially written target: the DuckDB connection is
     disposed before :func:`os.replace` commits the completed temporary file.
 
-    A non-legacy build allocates every structure, reference, run, record and file
-    id from the committed sealed id ledger (``data/tables/amdb_ids.json``), so the
-    ids are stable across rebuilds; the ledger is signed with the operator identity
-    as an audit record (``IdLedger.open`` logs who signed each reopened ledger and
-    refuses a tampered one; git history is the tamper witness). The build refuses
-    to run without a signing seed.
+    A non-legacy build allocates every result, structure, reference, run, record and
+    file id from the committed sealed id ledger (``tables/amdb_ids.json``), so the
+    ids are stable across rebuilds; the ledger is opened FIRST (before source loading
+    and coupling) and the ``results`` family that mints the served material ids
+    ``anyt.am-1-N`` is seeded once, in screening-row order, from the rows' magndata
+    keys. The screening CSVs read from *data_dir* (mounted, untracked); the ledger and
+    coupling document read/write under *tables_dir* (committed curation). The ledger is
+    signed with the operator identity as an audit record (``IdLedger.open`` logs who
+    signed each reopened ledger and refuses a tampered one; git history is the tamper
+    witness). The build refuses to run without a signing seed.
 
     When ``timings`` is supplied it is populated with the wall-clock seconds of
     the ``load`` (source parsing), ``write`` (the bulk-ingest context) and
@@ -2625,6 +2784,7 @@ def build_store(
     total_started = time.perf_counter()
     resolved_target = resolve_store_path(target)
     source_dir = resolve_data_dir(data_dir)
+    resolved_tables_dir = None if legacy else resolve_tables_dir(tables_dir)
     resolved_details_dir = resolve_details_dir(details_dir)
     resolved_runs_dir = resolve_runs_dir(runs_dir)
     load_started = time.perf_counter()
@@ -2632,114 +2792,142 @@ def build_store(
     observations: tuple[_RunObservation, ...] = ()
     coupled: dict[str, _RunObservation] = {}
     coupling_counts: dict[str, int] = {}
-    if not legacy:
-        from httk.workflow.compat.v1 import collect_finished_tree
-
-        if resolved_runs_dir.is_dir():
-            items = list(
-                collect_finished_tree(
-                    resolved_runs_dir,
-                    workflow_dir=Path(__file__).resolve().parents[2] / "workflows" / "relax_and_scf_httk_v1",
-                )
-            )
-        else:
-            logger.warning("No v1 runs directory at %s; building the partial tabular store", resolved_runs_dir)
-        observations = _run_observations(items)
-        coupled, coupling_counts = _build_coupling(
-            source_dir,
-            observations,
-            details_dir=resolved_details_dir,
-            runs_root=resolved_runs_dir,
-            collected=len(items),
-            refresh_coupling=refresh_coupling,
-        )
-    materials = _load_source_materials(
-        source_dir,
-        details_dir=resolved_details_dir,
-        legacy_structures=legacy,
-    )
-    if coupled:
-        materials = tuple(
-            replace(
-                material,
-                structure=_material_structure_record(coupled[material.id].structure.unwrap()),
-                # Symmetric scalar beside the producing run's reverse StrongLink
-                # relationships, whose store-resolvable edges are reconstructed after
-                # the bulk context finalizes (_save_reconstructed_runs).
-                total_energy=_coupled_total_energy(coupled[material.id]),
-            )
-            if material.id in coupled
-            else material
-            for material in materials
-        )
-    if not legacy:
-        # Safety net: the non-legacy build must be at least as complete as the
-        # legacy build for BOTH structure presence and site moments. A coupled run
-        # whose OUTCAR magnetization is degraded yields a moment-free structure;
-        # fall back to the details CONTCAR+MAGN, which the legacy build trusts.
-        no_structure = 0
-        lost_moments = 0
-
-        def _with_details_fallback(material: AltermagnetScreeningResult) -> AltermagnetScreeningResult:
-            nonlocal no_structure, lost_moments
-            current = material.structure
-            if current is not None and current.site_moments is not None:
-                return material
-            assert material.id is not None  # always set to the amdb id at construction
-            details_structure = load_material_structure(resolved_details_dir, material.id)
-            if details_structure is None:
-                return material
-            if current is None:
-                no_structure += 1
-                logger.debug("Details CONTCAR fallback (no structure) for %s", material.id)
-                return replace(material, structure=_material_structure_record(details_structure))
-            if details_structure.site_moments is None:
-                # The details build lacks moments too; nothing to recover.
-                return material
-            lost_moments += 1
-            logger.debug("Details CONTCAR fallback (missing moments) for %s", material.id)
-            return replace(material, structure=_material_structure_record(details_structure))
-
-        materials = tuple(_with_details_fallback(material) for material in materials)
-        if no_structure:
-            logger.info("Applied details CONTCAR fallback for %d materials without a structure", no_structure)
-        if lost_moments:
-            logger.warning(
-                "Recovered site moments from details for %d coupled runs with degraded OUTCAR magnetization",
-                lost_moments,
-            )
-        with_structures = sum(1 for material in materials if material.structure is not None)
-        logger.info(
-            "Store contains %d material records, %d with structures (after coupling and fallback)",
-            len(materials),
-            with_structures,
-        )
-    load_elapsed = time.perf_counter() - load_started
-    logger.info(
-        "Collected %d v1 tasks, %d yielded a relaxed structure, %d coupled to materials, coupling rows %s",
-        len(items),
-        len(observations),
-        len(coupled),
-        coupling_counts,
-    )
-
-    resolved_target.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{resolved_target.name}.",
-        suffix=".tmp",
-        dir=resolved_target.parent,
-    )
-    os.close(descriptor)
-    temporary_path = Path(temporary_name)
-    temporary_path.unlink()
     database: Backend | None = None
     ledger: IdLedger | None = None
+    temporary_path: Path | None = None
     try:
-        # The sealed ledger allocates every structure/reference/run/record/file id from
-        # stable amdb source keys, so the store keeps its ids across rebuilds. It is not
-        # used by the legacy raw-storage build (no id-managed families).
+        # The sealed ledger allocates every result/structure/reference/run/record/file id
+        # from stable amdb source keys, so the store keeps its ids across rebuilds. It is
+        # opened FIRST so the results-family seeding (one-time) and the per-row result-id
+        # resolution happen before coupling and source loading -- both of which derive
+        # amdb ids from the ledger, not the screening CSV's AMDBId column. The legacy
+        # raw-storage build has no id-managed families and never opens the ledger.
+        result_ids: dict[str, str] | None = None
         if not legacy:
-            ledger = _open_ledger(source_dir)
+            assert resolved_tables_dir is not None  # non-legacy always resolves the tables dir
+            ledger_path = resolved_tables_dir / LEDGER_FILENAME
+            # Snapshot the ledger as it stands BEFORE the build touches it. The one-time
+            # results seeding pre-validates the whole screening table before its first
+            # assign, but opening the ledger already extends its base map (the added
+            # ``results`` family), which a reseal would stamp. So on a seeding abort the
+            # pre-seed bytes are restored (or a freshly created ledger removed): the
+            # seeding is all-or-nothing and a failed seed leaves the committed file
+            # byte-identical. A failure AFTER a successful seed follows the normal
+            # append-only persistence (the complete seed is durable).
+            ledger_before = ledger_path.read_bytes() if ledger_path.exists() else None
+            ledger = _open_ledger(resolved_tables_dir)
+            try:
+                result_ids = _result_ids(ledger, _load_csv_rows(source_dir / SCREENING_RESULTS_FILENAME, delimiter=";"))
+            except BaseException:
+                ledger.close()  # releases the lock; may reseal the added base map
+                ledger = None
+                if ledger_before is None:
+                    ledger_path.unlink(missing_ok=True)
+                else:
+                    ledger_path.write_bytes(ledger_before)
+                raise
+            from httk.workflow.compat.v1 import collect_finished_tree
+
+            if resolved_runs_dir.is_dir():
+                items = list(
+                    collect_finished_tree(
+                        resolved_runs_dir,
+                        workflow_dir=Path(__file__).resolve().parents[2] / "workflows" / "relax_and_scf_httk_v1",
+                    )
+                )
+            else:
+                logger.warning("No v1 runs directory at %s; building the partial tabular store", resolved_runs_dir)
+            observations = _run_observations(items)
+            coupled, coupling_counts = _build_coupling(
+                source_dir,
+                observations,
+                details_dir=resolved_details_dir,
+                tables_dir=resolved_tables_dir,
+                runs_root=resolved_runs_dir,
+                collected=len(items),
+                refresh_coupling=refresh_coupling,
+                result_ids=result_ids,
+            )
+        materials = _load_source_materials(
+            source_dir,
+            details_dir=resolved_details_dir,
+            legacy_structures=legacy,
+            result_ids=result_ids,
+        )
+        if coupled:
+            materials = tuple(
+                replace(
+                    material,
+                    structure=_material_structure_record(coupled[material.id].structure.unwrap()),
+                    # Symmetric scalar beside the producing run's reverse StrongLink
+                    # relationships, whose store-resolvable edges are reconstructed after
+                    # the bulk context finalizes (_save_reconstructed_runs).
+                    total_energy=_coupled_total_energy(coupled[material.id]),
+                )
+                if material.id in coupled
+                else material
+                for material in materials
+            )
+        if not legacy:
+            # Safety net: the non-legacy build must be at least as complete as the
+            # legacy build for BOTH structure presence and site moments. A coupled run
+            # whose OUTCAR magnetization is degraded yields a moment-free structure;
+            # fall back to the details CONTCAR+MAGN, which the legacy build trusts.
+            no_structure = 0
+            lost_moments = 0
+
+            def _with_details_fallback(material: AltermagnetScreeningResult) -> AltermagnetScreeningResult:
+                nonlocal no_structure, lost_moments
+                current = material.structure
+                if current is not None and current.site_moments is not None:
+                    return material
+                assert material.id is not None  # always set to the amdb id at construction
+                details_structure = load_material_structure(resolved_details_dir, material.id)
+                if details_structure is None:
+                    return material
+                if current is None:
+                    no_structure += 1
+                    logger.debug("Details CONTCAR fallback (no structure) for %s", material.id)
+                    return replace(material, structure=_material_structure_record(details_structure))
+                if details_structure.site_moments is None:
+                    # The details build lacks moments too; nothing to recover.
+                    return material
+                lost_moments += 1
+                logger.debug("Details CONTCAR fallback (missing moments) for %s", material.id)
+                return replace(material, structure=_material_structure_record(details_structure))
+
+            materials = tuple(_with_details_fallback(material) for material in materials)
+            if no_structure:
+                logger.info("Applied details CONTCAR fallback for %d materials without a structure", no_structure)
+            if lost_moments:
+                logger.warning(
+                    "Recovered site moments from details for %d coupled runs with degraded OUTCAR magnetization",
+                    lost_moments,
+                )
+            with_structures = sum(1 for material in materials if material.structure is not None)
+            logger.info(
+                "Store contains %d material records, %d with structures (after coupling and fallback)",
+                len(materials),
+                with_structures,
+            )
+        load_elapsed = time.perf_counter() - load_started
+        logger.info(
+            "Collected %d v1 tasks, %d yielded a relaxed structure, %d coupled to materials, coupling rows %s",
+            len(items),
+            len(observations),
+            len(coupled),
+            coupling_counts,
+        )
+
+        resolved_target.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{resolved_target.name}.",
+            suffix=".tmp",
+            dir=resolved_target.parent,
+        )
+        os.close(descriptor)
+        temporary_path = Path(temporary_name)
+        temporary_path.unlink()
         created_database = Backend.duckdb(temporary_path)
         database = created_database
         store = SqlStore(
@@ -2840,10 +3028,13 @@ def build_store(
         if database is not None:
             database.dispose()
         # Release the ledger lock (and persist any assigns already made -- an
-        # append-only allocator keeps orphaned ids across a failed build).
+        # append-only allocator keeps orphaned ids across a failed build; the results
+        # seeding is all-or-nothing before the first assign, so this never seals a
+        # partial seed).
         if ledger is not None:
             ledger.close()
-        temporary_path.unlink(missing_ok=True)
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
         raise
     if timings is not None:
         timings["load"] = load_elapsed

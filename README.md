@@ -58,10 +58,23 @@ use a different runtime store path; the same variable (or
 directory. `ALTERMAGNETS_DETAILS_DIR` (or the builder's `--details-dir`)
 selects the generated detail-asset tree.
 
+The mounted source tables under `data/tables/` are intentionally untracked; the
+two curation files — the sealed id ledger `tables/amdb_ids.json` and the coupling
+document `tables/amdb_run_content_ids.csv` — are git-tracked under the repo's
+`tables/` directory instead. `ALTERMAGNETS_TABLES_DIR` (or the builder's
+`--tables-dir`) selects a different curation directory. The ledger is
+authoritative for every served id: the material ids `anyt.am-1-N` come from its
+`results` family, keyed by each screening row's normalized MAGNDATA cell (a
+comma-separated cell is split, stripped, sorted, and rejoined), and the
+structure/reference/run/record/file ids from their respective families. The build
+opens the ledger first, seeds the `results` family once (in screening-row order,
+each id asserted against that row's `AMDBId` column), and thereafter reads
+`AMDBId` only as that transition check — never for identity.
+
 The default (non-legacy) build ingests the finished httk v1 run tree under
 `data/raw_httk_v1/` (all ten project directories) and attaches each material's
 relaxed structure from its own run. The mapping is authoritative, not guessed:
-`data/tables/amdb_run_content_ids.csv` (semicolon-delimited) records one row per
+`tables/amdb_run_content_ids.csv` (semicolon-delimited) records one row per
 coupling with columns
 `AMDBId;run_material;raw_path;structure_content_id;run_content_id;status`.
 `raw_path` is the run task directory as a POSIX path relative to the runs root

@@ -1,9 +1,9 @@
 /tools
-!/data/
-/data/*
-!/data/tables/
-/data/tables/*
-!/data/tables/amdb_run_content_ids.csv
+# The mounted screening data (CSVs + .description files, generated shards) is
+# untracked; only the two curation files under tables/ are committed.
+/data/
+# The ledger's exclusive lock is transient; the sealed ledger itself is tracked.
+/tables/*.lock
 /public
 *~
 \#*\#

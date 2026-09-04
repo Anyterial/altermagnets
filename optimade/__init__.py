@@ -13,11 +13,11 @@ _FUNCTIONS_ROOT = Path(__file__).resolve().parents[1] / "src" / "functions"
 if str(_FUNCTIONS_ROOT) not in sys.path:
     sys.path.insert(0, str(_FUNCTIONS_ROOT))
 
-from .adapter import SORTABLE_PROPERTIES, AltermagnetStoreAdapter
+from .adapter import RESULT_TYPE, SORTABLE_PROPERTIES, AltermagnetStoreAdapter
 from .combined import create_combined_app
 from .dataset import (
     DEFAULT_PUBLIC_BASE_URL,
-    AltermagnetStructureProvider,
+    AltermagnetScreeningResultProvider,
     build_dataset,
     build_providers,
     load_schema_definitions,
@@ -43,9 +43,10 @@ __all__ = [
     "DEFAULT_PUBLIC_BASE_URL",
     "INDEX_DESCRIPTION",
     "INDEX_NAME",
+    "RESULT_TYPE",
     "SORTABLE_PROPERTIES",
+    "AltermagnetScreeningResultProvider",
     "AltermagnetStoreAdapter",
-    "AltermagnetStructureProvider",
     "build_dataset",
     "build_dsp_app",
     "build_providers",

@@ -4,11 +4,14 @@ import os
 from html import escape
 from pathlib import Path
 
-from _internal import first_line, safe_json, served_structure_definitions
+from _internal import first_line, result_entry_type, safe_json, served_field_definitions
 from httk.serve.web.widgets import WidgetAsset, WidgetRenderResult, optimade_protocol_asset, optimade_protocol_href
 
+#: The science/figure/energy fields the detail page reads off the RESULT resource. The
+#: five CrysViz structural fields are no longer requested here: they live on the slim
+#: ``structures`` record and ride in via ``include=structures`` (see ``INCLUDE`` below),
+#: so requesting them on the result endpoint would fail its /info advertisement.
 RESPONSE_FIELDS = (
-    "chemical_formula_reduced",
     "_anyterial_formula",
     "_anyterial_elements",
     "_anyterial_space_group",
@@ -27,12 +30,12 @@ RESPONSE_FIELDS = (
     "_anyterial_magndata_variants",
     "_httk_custom_figures",
     "_httk_custom_total_energy",
-    "lattice_vectors",
-    "cartesian_site_positions",
-    "species",
-    "species_at_sites",
-    "_httk_site_moments",
 )
+
+#: The related resources inlined on the single-entry request: ``structures`` carries the
+#: CrysViz payload (its five structural fields come back as the include's default
+#: response set); ``references`` carries the DOI blocks.
+INCLUDE = ("structures", "references")
 
 
 def render(context, **props):
@@ -42,7 +45,7 @@ def render(context, **props):
     crysviz_base_url = os.environ.get("ALTERMAGNETS_CRYSVIZ_BASE_URL", "https://crysviz.org/index.html")
     widget_id = escape(context.widget_id, quote=True)
     config_id = escape(f"site-material-detail-{context.widget_id}-config", quote=True)
-    definitions = served_structure_definitions()
+    definitions = served_field_definitions()
     field_info = {
         name: {"description": description}
         for name in RESPONSE_FIELDS
@@ -51,9 +54,10 @@ def render(context, **props):
     config = {
         "base_url": base_url,
         "crysviz_base_url": crysviz_base_url,
-        "entry_type": "structures",
+        "entry_type": result_entry_type(),
         "id_query": "id",
         "response_fields": list(RESPONSE_FIELDS),
+        "include": list(INCLUDE),
         "widget_id": context.widget_id,
         "field_info": field_info,
     }

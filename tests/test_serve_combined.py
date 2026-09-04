@@ -25,7 +25,7 @@ if str(ROOT) not in sys.path:
 
 import serve_combined
 from httk.serve.web import create_asgi_app as create_web_asgi_app
-from optimade import combined
+from optimade import RESULT_TYPE, combined
 
 
 def _widget_configuration(document: str) -> dict[str, object]:
@@ -57,7 +57,7 @@ def test_combined_discovery_mounts_index_and_amdb_and_paginates() -> None:
     assert home.status_code == search.status_code == 200
     configuration = _widget_configuration(search.text)
     assert configuration["base_url"] == "/optimade/amdb"
-    assert configuration["entry_type"] == "structures"
+    assert configuration["entry_type"] == RESULT_TYPE
     assert configuration["filter_query"] == "filter"
     assert configuration["sort_query"] == "sort"
     assert configuration["sort_aliases"]["screening_rank"] == "_anyterial_screening_rank"
@@ -211,7 +211,7 @@ def test_combined_figure_route_and_nested_public_base() -> None:
 
     with TestClient(app, base_url="http://testserver") as client:
         response = client.get(
-            "/optimade/amdb/v1/structures",
+            "/optimade/amdb/v1/_anyterial_altermagnet_screening_result",
             params={
                 "filter": 'id = "anyt.am-1-1"',
                 "response_fields": "_httk_custom_figures",

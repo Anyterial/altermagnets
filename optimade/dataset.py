@@ -8,7 +8,7 @@ from typing import Any
 
 import material_store
 from httk.atomistic import StructureEntryProvider
-from httk.core import PropertyDefinition, RelatedEntry, report
+from httk.core import EntryProvider, EntryTypeDefinition, PropertyDefinition, RelatedEntry, report
 from httk.store import DataRecordEntryProvider, FileEntryProvider, ReferenceEntryProvider
 
 from .files import figure_file_is_servable
@@ -62,21 +62,29 @@ SCREENING_PHASE_LABELS = {
 _RETAINED_STORES: list[Any] = []
 
 
-class AltermagnetStructureProvider(StructureEntryProvider):
-    """A ``structures`` provider that also links each material to its reference entries."""
+class AltermagnetScreeningResultProvider(EntryProvider):
+    """Serve the AMDB main entity (screening results) through the neutral provider contract.
+
+    Used by the ``--validate`` path: it advertises the served
+    ``_anyterial_altermagnet_screening_result`` definition and its science/figure/energy
+    property values, plus each result's ``structures``/``references`` relationships (for
+    the provider-backed serving path). The crystal structure is a separate provider.
+    """
 
     def __init__(
         self,
-        entries: Mapping[str, Any],
-        *,
-        extra_definitions: Mapping[str, PropertyDefinition],
         properties: Mapping[str, Mapping[str, Any]],
+        *,
         relationships: Mapping[str, Mapping[str, tuple[str, ...]]],
     ) -> None:
-        super().__init__(entries, extra_definitions=extra_definitions, properties=properties)
-        # httk-core states relationships as a flat tuple of RelatedEntry per
-        # entry id; grouping by related type is the serving layer's job.
-        self._material_relationships = {
+        self._definition = material_store.AltermagnetScreeningResultEntry.entry_type_definition().served_form()
+        self._entry_type = self._definition.name
+        self._properties = {str(entry_id): dict(values) for entry_id, values in properties.items()}
+        # The served science/figure/energy property names actually produced.
+        self._property_names = sorted({name for values in self._properties.values() for name in values})
+        # httk-core states relationships as a flat tuple of RelatedEntry per entry id;
+        # grouping by related type is the serving layer's job.
+        self._result_relationships = {
             str(entry_id): tuple(
                 RelatedEntry(entry_type=related, id=related_id)
                 for related, ids in related_map.items()
@@ -85,10 +93,29 @@ class AltermagnetStructureProvider(StructureEntryProvider):
             for entry_id, related_map in relationships.items()
         }
 
+    def _check(self, entry_type: str) -> None:
+        if entry_type != self._entry_type:
+            raise KeyError(f"AltermagnetScreeningResultProvider serves only {self._entry_type!r}.")
+
+    def entry_types(self) -> Mapping[str, EntryTypeDefinition]:
+        return {self._entry_type: self._definition}
+
+    def property_keys(self, entry_type: str) -> Mapping[str, str]:
+        self._check(entry_type)
+        keys = {name: name for name in ("id", "type", "immutable_id", "last_modified")}
+        keys.update({name: name for name in self._property_names})
+        return keys
+
+    def records(self, entry_type: str) -> Iterable[Mapping[str, Any]]:
+        self._check(entry_type)
+        return [
+            {"id": entry_id, "type": self._entry_type, "immutable_id": None, "last_modified": None, **values}
+            for entry_id, values in self._properties.items()
+        ]
+
     def relationships(self, entry_type: str) -> Mapping[str, tuple[RelatedEntry, ...]]:
-        if entry_type != "structures":
-            return {}
-        return self._material_relationships
+        self._check(entry_type)
+        return self._result_relationships
 
 
 def load_schema_definitions() -> dict[str, PropertyDefinition]:
@@ -220,7 +247,8 @@ def build_dataset(
     dict[str, dict[str, tuple[str, ...]]],
     dict[str, dict[str, Any]],
 ]:
-    """Assemble the structures, per-material properties, relationships, and references."""
+    """Assemble the slim structures (by structure id), per-result science properties,
+    each result's structures/references relationships, and the references."""
     data_dir = material_store.resolve_data_dir()
     details_dir = material_store.resolve_details_dir()
     public_base_url = public_base_url.rstrip("/")
@@ -234,13 +262,14 @@ def build_dataset(
         owned_store = {"materials_database": opened.database}
         try:
             searcher = opened.store.searcher()
-            material = searcher.variable(material_store.MaterialRecord)
+            material = searcher.variable(material_store.AltermagnetScreeningResult)
             for result in searcher.results(material=material):
                 record = result["material"]
                 material_records[record.id] = record
+                # Structures are keyed by their stamped id (deduped across results).
                 structure = material_store.material_structure(record)
-                if structure is not None:
-                    stored_structures[record.id] = structure
+                if structure is not None and record.structure_id is not None:
+                    stored_structures[record.structure_id] = structure
             # The runs' file/record outputs (present only in a prebuilt store built with
             # the runs tree) so validation can cover the mounted files/records endpoints.
             if files_out is not None:
@@ -282,25 +311,28 @@ def build_dataset(
                 reference_id_by_doi[doi] = reference_id
                 references[reference_id] = {"doi": doi}
 
-    structures: dict[str, Any] = {}
     properties: dict[str, dict[str, Any]] = {}
     relationships: dict[str, dict[str, tuple[str, ...]]] = {}
 
     for material_id, record in material_records.items():
         properties[material_id] = _material_properties(record, public_base_url)
-        structures[material_id] = stored_structures.get(material_id)
 
+        related: dict[str, tuple[str, ...]] = {}
+        if record.structure_id is not None:
+            related["structures"] = (record.structure_id,)
         reference_ids: list[str] = []
         for doi in record.dois:
             matched = reference_id_by_doi.get(doi)
             if matched is not None and matched not in reference_ids:
                 reference_ids.append(matched)
         if reference_ids:
-            relationships[material_id] = {"references": tuple(reference_ids)}
+            related["references"] = tuple(reference_ids)
+        if related:
+            relationships[material_id] = related
 
     if records_out is not None:
         records_out.update(material_records)
-    return structures, properties, relationships, references
+    return stored_structures, properties, relationships, references
 
 
 def build_providers(
@@ -324,13 +356,11 @@ def build_providers(
         files_out=files,
         data_records_out=data_records,
     )
-    structure_provider = AltermagnetStructureProvider(
-        structures,
-        extra_definitions=load_schema_definitions(),
-        properties=properties,
-        relationships=relationships,
-    )
-    providers: list[Any] = [structure_provider, ReferenceEntryProvider(references)]
+    # The AMDB main entity (science + figures + energy, with structures/references
+    # relationships) and the slim standard structures it references, served separately.
+    result_provider = AltermagnetScreeningResultProvider(properties, relationships=relationships)
+    structure_provider = StructureEntryProvider(structures)
+    providers: list[Any] = [result_provider, structure_provider, ReferenceEntryProvider(references)]
     # Only a runs-backed prebuilt store holds files/records; skip empty providers so a
     # store without them validates rather than tripping the "no records served" guard.
     if files:

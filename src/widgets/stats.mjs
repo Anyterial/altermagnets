@@ -11,7 +11,9 @@ async function count(baseUrl, filter) {
   // base_url may be root-relative (e.g. "/optimade/amdb"), which is not a valid URL base on its
   // own; resolve it against the page first so the endpoint follows the current origin.
   const base = new URL(`${baseUrl.replace(/\/$/, "")}/`, document.baseURI);
-  const endpoint = new URL("v1/structures", base);
+  // The counts key on screening-science filters, so they run against the AMDB main
+  // entity (the screening-result endpoint), not the slim standard structures type.
+  const endpoint = new URL("v1/_anyterial_altermagnet_screening_result", base);
   endpoint.searchParams.set("page_limit", "1");
   endpoint.searchParams.set("response_fields", "id");
   if (filter) endpoint.searchParams.set("filter", filter);

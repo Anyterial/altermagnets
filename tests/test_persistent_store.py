@@ -4,7 +4,7 @@ from conftest import write_detail_assets, write_source_tables
 from httk.core import File
 from httk.store import Backend
 from material_store import (
-    MaterialRecord,
+    AltermagnetScreeningResult,
     build_material_records,
     build_store,
     open_material_store,
@@ -17,7 +17,7 @@ def test_persistent_build_reconstructs_ordered_links_and_variants(material_store
     assert opened is not None
     try:
         searcher = opened.store.searcher()
-        material = searcher.variable(MaterialRecord)
+        material = searcher.variable(AltermagnetScreeningResult)
         searcher.add(material.id == "anyt.am-1-1")
         record = searcher.results(material=material).one()["material"]
         assert [link.ordinal for link in record.magndata_links] == [1, 2]
@@ -118,7 +118,7 @@ def test_runtime_falls_back_when_persistent_store_has_the_old_schema(tmp_path: P
     try:
         assert opened.mode == "memory"
         searcher = opened.store.searcher()
-        material = searcher.variable(MaterialRecord)
+        material = searcher.variable(AltermagnetScreeningResult)
         searcher.add(material.id == "anyt.am-1-1")
         record = searcher.results(material=material).first()
         assert record is not None

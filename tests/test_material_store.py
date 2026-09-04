@@ -8,7 +8,7 @@ from httk.atomistic import CartesianSiteMoments, Cell, Sites, Species, UnitcellS
 from httk.core import DataRecord, FileRecord
 from httk.core.provenance import ProductLink, Run
 from material_store import (
-    MaterialRecord,
+    AltermagnetScreeningResult,
     _magnetic_alternative_cell,
     build_store,
     load_material_structure,
@@ -74,7 +74,7 @@ def test_material_structure_round_trips_through_store(tmp_path: Path) -> None:
     assert opened is not None
     try:
         searcher = opened.store.searcher()
-        material = searcher.variable(MaterialRecord)
+        material = searcher.variable(AltermagnetScreeningResult)
         record = searcher.results(material=material).first()
         assert record is not None
         actual = material_structure(record["material"])
@@ -114,21 +114,26 @@ def test_build_stores_conventional_and_primitive_alternatives(tmp_path: Path) ->
     opened = open_prebuilt_store(store_path)
     assert opened is not None
     try:
+        from httk.atomistic.storage.records import UnitcellStructureRecord
 
         def immutable_ids(*, only_main_alt: bool) -> set[str]:
+            # Alternatives now re-parent to the slim structures family, not the result.
             searcher = opened.store.searcher(only_main_alt=only_main_alt)
-            material = searcher.variable(MaterialRecord)
-            return {record["material"].immutable_id for record in searcher.results(material=material)}
+            structure = searcher.variable(UnitcellStructureRecord)
+            return {record["structure"].immutable_id for record in searcher.results(structure=structure)}
 
         mains = immutable_ids(only_main_alt=True)
         every = immutable_ids(only_main_alt=False)
-        # Default (mains-only) queries hide the alternatives; asking for them reveals more.
-        assert mains == immutable_ids(only_main_alt=True) == {"anyt.am-1-1~1", "anyt.am-1-2~1", "anyt.am-1-3~1"}
+        # The fixture reuses one CONTCAR: mat1 (with moments) and the shared mat2/mat3
+        # (moment-free) collapse to two distinct structure mains by content-id dedup.
+        assert mains == immutable_ids(only_main_alt=True) == {"anyt.am.structure-1-1~1", "anyt.am.structure-1-2~1"}
         alternatives = every - mains
-        # Not silently alternatives-free: the fixture cells derive both kinds.
+        # Not silently alternatives-free: the fixture cells derive both kinds per structure.
         assert alternatives, "build stored no alternative cell records"
         assert alternatives == {
-            f"anyt.am-1-{number}~{kind}~1" for number in (1, 2, 3) for kind in ("conventional", "primitive")
+            f"anyt.am.structure-1-{number}~{kind}~1"
+            for number in (1, 2)
+            for kind in ("conventional", "primitive")
         }
     finally:
         opened.database.dispose()
@@ -185,12 +190,12 @@ def _scf_run(runs: Path, material: str) -> None:
     (inner / "vasprun.xml").write_text("<modeling/>\n", encoding="utf-8")
 
 
-def _materials_by_id(store_path: Path) -> dict[str, MaterialRecord]:
+def _materials_by_id(store_path: Path) -> dict[str, AltermagnetScreeningResult]:
     opened = open_prebuilt_store(store_path)
     assert opened is not None
     try:
         searcher = opened.store.searcher()
-        variable = searcher.variable(MaterialRecord)
+        variable = searcher.variable(AltermagnetScreeningResult)
         return {row["material"].id: row["material"] for row in searcher.results(material=variable)}
     finally:
         opened.database.dispose()
@@ -221,9 +226,9 @@ def test_build_saves_only_coupled_runs_and_recovers_moments(tmp_path: Path) -> N
     assert material_structure(materials["anyt.am-1-2"]) is not None
 
 
-def _material(store: object, amdb_id: str) -> MaterialRecord:
+def _material(store: object, amdb_id: str) -> AltermagnetScreeningResult:
     searcher = store.searcher()  # type: ignore[attr-defined]
-    variable = searcher.variable(MaterialRecord)
+    variable = searcher.variable(AltermagnetScreeningResult)
     searcher.add(variable.id == amdb_id)
     return searcher.results(material=variable).first()["material"]
 
@@ -269,18 +274,25 @@ def test_coupled_material_reconstructs_run_with_resolvable_edges(tmp_path: Path)
         record_id = _single(store, material_store.AltermagnetDataRecord).id  # minted id of the bulk-saved output
         file_id = _single(store, FileRecord).id
         assert record_id and file_id
+        structure_id = coupled.structure_id
+        assert structure_id is not None
 
-        # This workflow returns every output as an artifact too, so both edge sides match.
-        assert run.artifacts == run.outputs
-        by_label = {edge.label: (edge.entry_type, edge.entry_id) for edge in run.outputs}
-        assert by_label["relaxed_structure"] == ("structures", "anyt.am-1-1")
-        assert by_label["total_energy"] == ("records", record_id)
-        assert by_label["vasprun"] == ("files", file_id)
+        # The run's outputs carry the relaxed structure (retargeted at its stamped id) plus
+        # the record/file edges; the artifacts add the fresh has_artifact edge to the result.
+        by_output = {edge.label: (edge.entry_type, edge.entry_id) for edge in run.outputs}
+        assert by_output["relaxed_structure"] == ("structures", structure_id)
+        assert by_output["total_energy"] == ("records", record_id)
+        assert by_output["vasprun"] == ("files", file_id)
+        assert "screening_result" not in by_output
+        by_artifact = {edge.label: (edge.entry_type, edge.entry_id) for edge in run.artifacts}
+        assert by_artifact["screening_result"] == ("altermagnet_screening_result", "anyt.am-1-1")
+        # Every output is also an artifact (this workflow), plus the appended result edge.
+        assert set(run.outputs) < set(run.artifacts)
 
         # The product links are rewritten through the same id map -- no content ids remain.
         products = {link.label: (link.source_id, link.target_id) for link in _all(store, ProductLink)}
-        assert products["total_energy"] == ("anyt.am-1-1", record_id)
-        assert products["vasprun"] == ("anyt.am-1-1", file_id)
+        assert products["total_energy"] == (structure_id, record_id)
+        assert products["vasprun"] == (structure_id, file_id)
 
         # An uncoupled material carries neither the scalar nor any run edge targeting it.
         uncoupled = _material(store, "anyt.am-1-2")
@@ -298,7 +310,7 @@ def test_resolve_edge_id_rejects_non_relaxed_structures_edge() -> None:
             "input_structure",
             "structures",
             "some-content-id",
-            material_id="anyt.am-1-1",
+            structure_id="anyt.am.structure-1-1",
             memo={},
         )
 
@@ -403,7 +415,7 @@ class _RecordingStore:
 
 def test_save_alternative_cells_uses_magnetic_fallback(tmp_path: Path) -> None:
     pytest.importorskip("spglib")
-    # A real MaterialRecord (from the fixture build) whose structure is swapped for the
+    # A real AltermagnetScreeningResult (from the fixture build) whose structure is swapped for the
     # 4-site +/- chain: its nuclear conventional/primitive derivations both refuse, so the
     # magnetic fallback must supply both kinds with nothing skipped.
     source = write_source_tables(tmp_path / "tables")
@@ -418,8 +430,10 @@ def test_save_alternative_cells_uses_magnetic_fallback(tmp_path: Path) -> None:
     material = replace(base, structure=material_store._material_structure_record(chain), id="anyt.am-1-fold")
 
     store = _RecordingStore()
-    derived, skipped = material_store._save_alternative_cells(store, [material])  # type: ignore[arg-type]
+    structure_ids = {"anyt.am-1-fold": "anyt.am.structure-1-1"}
+    derived, skipped = material_store._save_alternative_cells(store, [material], structure_ids)  # type: ignore[arg-type]
 
     assert (derived, skipped) == (2, 0)
     assert sorted(kind for _, kind in store.saved) == ["conventional", "primitive"]
-    assert all(alternative_of == "anyt.am-1-fold" for alternative_of, _ in store.saved)
+    # Alternatives re-parent to the structure main (its stamped id), not the result id.
+    assert all(alternative_of == "anyt.am.structure-1-1" for alternative_of, _ in store.saved)

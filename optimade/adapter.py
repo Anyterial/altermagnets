@@ -9,8 +9,13 @@ from httk.serve.optimade import adapter_from_stores
 from httk.serve.optimade.model import ResultRow
 from httk.store.backend.sql import StoredEntrySource
 
+#: The AMDB main entity's served (wire) entry type. The screening science, sorting,
+#: public-id remap, and envelope injection all key on it now that ``structures`` is a
+#: slim standard type (its ``served_form()`` name -- see ``AltermagnetScreeningResultEntry``).
+RESULT_TYPE = "_anyterial_altermagnet_screening_result"
+
 SORTABLE_PROPERTIES = {
-    "structures": (
+    RESULT_TYPE: (
         "id",
         "_anyterial_formula",
         "_anyterial_classification",
@@ -119,13 +124,16 @@ class AltermagnetStoreAdapter:
     def __init__(self, store: Any, public_base_url: str) -> None:
         self._adapter = adapter_from_stores(
             (
+                # The AMDB main entity (primary search endpoint) and the slim standard
+                # structures family it references (needed so include=structures resolves).
+                StoredEntrySource(store, material_store.AltermagnetScreeningResultEntry, "amdb-screening-results"),
                 StoredEntrySource(store, material_store.AltermagnetStructureEntry, "amdb-structures"),
                 StoredEntrySource(store, material_store.AltermagnetReferenceEntry, "amdb-references"),
-                # Serves the producing runs at _httk_runs so a structure serves the
-                # runs' derived reverse StrongLink relationships (_httk_is_artifact/
-                # _httk_is_output) and the runs serve their forward _httk_has_* edges.
-                # The id/filter/sort remaps below are structures/references-scoped, so
-                # runs pass through this envelope unmangled (audited).
+                # Serves the producing runs at _httk_runs so the screening result serves
+                # the run's appended reverse _httk_is_artifact relationship (and the slim
+                # structure serves the relaxed_structure reverse blocks), and the runs
+                # serve their forward _httk_has_* edges. The id/filter/sort remaps below
+                # are result/references-scoped, so runs/structures pass through unmangled.
                 StoredEntrySource(store, material_store.RunEntry, "amdb-runs"),
                 # The records and files families the runs' edges point at. Both serve
                 # raw store-minted ids (anyt.am.records-1-N / anyt.am.files-1-N) with no
@@ -159,7 +167,7 @@ class AltermagnetStoreAdapter:
             debug: bool = False,
         ) -> _LiveResults:
             entry_type = entries[0] if len(entries) == 1 else ""
-            remapped = entry_type in {"structures", "references"}
+            remapped = entry_type in {RESULT_TYPE, "references"}
             # On the revisions/alternatives routes the engine synthesizes its own
             # id/_httk_id filters and the backend returns composite <id>~<kind> (or
             # per-revision) ids; leave those untouched so the public-id remap does
@@ -169,7 +177,11 @@ class AltermagnetStoreAdapter:
             fields = list(response_fields)
             if remapped and _PUBLIC_ID not in fields:
                 fields.append(_PUBLIC_ID)
-            if entry_type == "structures" and _REFERENCE_IDS not in fields:
+            # The screening result carries the private reference-id projection used
+            # to inject its references relationship block (references are id-string
+            # linked, not a Related field, so the federation cannot serve them; the
+            # structures block IS served natively off the typed structure reference).
+            if entry_type == RESULT_TYPE and _REFERENCE_IDS not in fields:
                 fields.append(_REFERENCE_IDS)
             store_sort = tuple(
                 (_PUBLIC_ID if name == "id" and id_remapped else name, descending) for name, descending in (sort or ())
@@ -207,7 +219,11 @@ class AltermagnetStoreAdapter:
                     # the widget's www-origin fetch resolves against the api origin).
                     values["url"] = f"{self._public_base_url}/extensions/files/entry/{values['id']}"
                 relationships = dict(row.relationships)
-                if entry_type == "structures" and isinstance(reference_ids, list) and reference_ids:
+                if entry_type == RESULT_TYPE and isinstance(reference_ids, list) and reference_ids:
+                    # Envelope-inject only the references block: references are id-string
+                    # linked (no Related field), so the federation cannot serve them. The
+                    # structures block is served natively off the typed structure reference
+                    # (E3), so row.relationships already carries it.
                     relationships["references"] = [{"id": value} for value in reference_ids]
                 rows.append(ResultRow(values, relationships, dict(row.property_metadata)))
             return _LiveResults(source, rows)

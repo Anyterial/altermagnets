@@ -41,7 +41,6 @@ from httk.atomistic.storage.records import (
     SpeciesRecord,
     UnitcellStructureRecord,
 )
-from httk.atomistic.storage.stored_properties import unitcell_structure_properties
 from httk.core import (
     DataRecord,
     EntryTypeDefinition,
@@ -84,11 +83,12 @@ __all__ = [
     "AltermagnetDataRecordEntry",
     "AltermagnetReferenceEntry",
     "AltermagnetReferenceRecord",
+    "AltermagnetScreeningResult",
+    "AltermagnetScreeningResultEntry",
     "AltermagnetStructureEntry",
     "MagndataRecord",
     "MaterialFigure",
     "MaterialMagndataLink",
-    "MaterialRecord",
     "OpenedMaterialStore",
     "PlotFile",
     "StoreLayout",
@@ -133,10 +133,16 @@ logger = report.context_logger(logging.getLogger("httk.altermagnets.material_sto
 # not this version row -- is the operative staleness gate for a pre-change store.
 # Bump 11: the id scheme flips to ``anyt.am``/series ``1`` (materials ``anyt.am-1-N``,
 # minted types ``anyt.am.<type>-1-N``, references densely enumerated ``anyt.am.refs-1-N``),
-# ``MaterialRecord`` gains the stored ``reference_ids`` serving its references block, and
+# ``AltermagnetScreeningResult`` gains the stored ``reference_ids`` serving its references block, and
 # the ``_httk_records`` family is served through the extended ``AltermagnetDataRecord``.
 # The fingerprint does not see id changes, so this version row is the forcing gate.
-STORE_LAYOUT_VERSION = 11
+# Bump 12: the two-record split. ``AltermagnetScreeningResult`` (served
+# ``_anyterial_altermagnet_screening_result``, ids ``anyt.am-1-N``) owns the science and
+# references a slim standard ``structures`` main (``UnitcellStructureRecord``, stamped ids
+# ``anyt.am.structure-1-N``) that now carries the structural properties, alternatives, and
+# the ``relaxed_structure`` provenance edge; the result gains the stored ``structure_id``
+# serving its ``structures`` relationship block plus an appended ``has_artifact`` run edge.
+STORE_LAYOUT_VERSION = 12
 RELAXED_STRUCTURE_PRECISION = 5e-4  # Cartesian Å; relaxed-DFT coordinate precision, so symmetry tolerance is realistic (not ~machine epsilon from full-precision CONTCAR digits)
 
 ELEMENT_PATTERN = re.compile(r"[A-Z][a-z]?")
@@ -258,17 +264,22 @@ class MaterialFigure:
 
 
 @dataclass(frozen=True)
-class MaterialRecord:
-    """One screened material and its ordered MAGNDATA relationships."""
+class AltermagnetScreeningResult:
+    """The AMDB main entity: one screened material's screening science and figures.
+
+    Served under the provider-specific ``_anyterial_altermagnet_screening_result``
+    entry type. It owns the science, figures, total energy, MAGNDATA variants, DOIs,
+    and the primary ids (``anyt.am-1-N``); the screened crystal structure is a
+    separate standard ``structures`` main referenced through :attr:`structure`.
+    """
 
     __httk_storage__: ClassVar[StorageInfo] = StorageInfo(
-        storage_name="altermagnets_material_records",
+        storage_name="altermagnets_screening_results",
         # Provenance is served through the producing run's StrongLink edges, not a
-        # stored link table: the run's ``relaxed_structure`` edge targets this
-        # material's own served id, so the material serves the derived reverse
-        # ``_httk_is_artifact``/``_httk_is_output`` relationships (see
-        # ``_save_reconstructed_runs``). The material-level ``_httk_custom_total_energy``
-        # scalar is served beside them.
+        # stored link table: the run carries an appended ``has_artifact`` edge to this
+        # result's own served id, so the result serves the derived reverse
+        # ``_httk_is_artifact`` relationship (see ``_save_reconstructed_runs``). The
+        # result-level ``_httk_custom_total_energy`` scalar is served beside it.
         indexes=(
             ("classification", "screening_rank"),
             ("electronic_type", "screening_rank"),
@@ -304,6 +315,11 @@ class MaterialRecord:
     icsd_ids: tuple[str, ...]
     dois: tuple[str, ...]
     search_text: str
+    # The screened crystal structure, demoted to a separate standard ``structures``
+    # main (``UnitcellStructureRecord``) and referenced here. The store auto-registers
+    # the depth-1 ``structures.id HAS`` filter handler off this typed reference field;
+    # the build carries the SAME structure instance (id=None) that content-id dedup
+    # unifies with the stamped structure main saved just before this result row.
     structure: UnitcellStructureRecord | None = None
     # The coupled run's total-energy DataRecord value, served symmetrically as the
     # material-level ``_httk_custom_total_energy`` scalar beside the live run link.
@@ -313,6 +329,13 @@ class MaterialRecord:
     # deployment's DOI order). Serving reads them straight off the row, so the
     # doi->relationship->include chain resolves without re-deriving the global order.
     reference_ids: tuple[str, ...] = ()
+    # The stamped ``anyt.am.structure-1-N`` id of this result's structure main (or
+    # ``None`` when it has no structure), stamped at build/seed time from the
+    # material->structure-id map. The stored route serves the ``structures`` block
+    # natively off the typed ``structure`` reference (E3), so this scalar is no longer
+    # a served property; it drives the build and the in-memory dataset provider's
+    # ``structures`` relationship (``optimade/dataset.py``).
+    structure_id: str | None = None
     # Entry-id fields per the store contract; id is always set to the amdb
     # public id at construction, immutable_id is minted by the store.
     id: Annotated[str | None, IdentitySkip(), Indexed()] = field(default=None, compare=False)
@@ -361,16 +384,59 @@ class AltermagnetReferenceRecord:
     immutable_id: Annotated[str | None, IdentitySkip(), Unique()] = field(default=None, compare=False)
 
 
-class AltermagnetStructureEntry:
-    """The store-native, Anyterial-extended OPTIMADE structures family."""
+ANYTERIAL_ENTRYTYPES_DIR = Path(__file__).resolve().parents[2] / (
+    "dependencies/submodules/anyterial-schemas/defs/v0.1/entrytypes"
+)
+#: The IRI base covering EVERY published Anyterial definition (properties AND entry
+#: types), re-registered for the ``_anyterial_`` prefix so ``served_form()`` prefixes
+#: the ``altermagnet_screening_result`` entry-type name whose ``$id`` lives under
+#: ``.../defs/v0.1/entrytypes/`` (the narrower ``.../properties`` base does not cover
+#: it). Additive re-registration keeps the ``.../properties`` synthesis base intact.
+ANYTERIAL_DEFS_ID_BASE = "https://schemas.anyterial.se/defs/"
+#: The vendored entry-type definition IRI of the AMDB main entity.
+ALTERMAGNET_SCREENING_RESULT_DEFINITION_ID = (
+    "https://schemas.anyterial.se/defs/v0.1/entrytypes/altermagnet_screening_result"
+)
 
-    type = "structures"
-    definition_id = "https://schemas.optimade.org/defs/v1.3/entrytypes/optimade/structures"
+
+#: The store-native slim standard OPTIMADE ``structures`` family. Demoted from the AMDB
+#: main entity to a standard ``structures`` type, it serves only the standard structural
+#: properties (including the CrysViz detail fields and ``_httk_site_moments``) of the
+#: screened crystal, projected directly off the ``UnitcellStructureRecord`` main; the
+#: screening science moved to :class:`AltermagnetScreeningResultEntry`. It IS httk-atomistic's
+#: ``StructureEntry`` (aliased for clarity, not re-registered): ``UnitcellStructureRecord`` is
+#: already globally registered under that family, so a distinct wrapper would double-register it.
+AltermagnetStructureEntry = StructureEntry
+
+
+class AltermagnetScreeningResultEntry:
+    """The AMDB provider-specific main entity family (screening results).
+
+    The vendored entry-type definition (a minimal id/type/immutable_id/last_modified
+    document, authored in ``anyterial-schemas-source`` and regenerated through the
+    OPTIMADE meta-schema gate) is loaded via
+    :meth:`EntryTypeDefinition.from_optimade` and extended with the served science,
+    figure, energy, and private relationship-id property definitions. Its ``$id``
+    lives under the re-registered ``_anyterial_`` base, so ``served_form()`` names it
+    ``_anyterial_altermagnet_screening_result`` on the wire.
+    """
+
+    type = "altermagnet_screening_result"
+    definition_id = ALTERMAGNET_SCREENING_RESULT_DEFINITION_ID
 
     @classmethod
     def entry_type_definition(cls) -> EntryTypeDefinition:
-        """Return the atomistic structure definition plus Anyterial properties."""
-        return StructureEntry.entry_type_definition().extended(_optimade_definitions())
+        """Return the vendored entry type extended with the served AMDB properties."""
+        path = ANYTERIAL_ENTRYTYPES_DIR / "altermagnet_screening_result.json"
+        if not path.is_file():
+            raise RuntimeError(
+                f"Entry-type definition file {path} is missing; regenerate it in "
+                "anyterial-schemas-source (`make`) and vendor it via `make update_schemas`."
+            )
+        base = EntryTypeDefinition.from_optimade(cls.type, json.loads(path.read_text(encoding="utf-8")))
+        # The science/figure/energy/private-id definitions, minus the standard
+        # structural properties (those serve on the structures family now).
+        return base.extended(_optimade_definitions())
 
 
 class AltermagnetReferenceEntry:
@@ -564,6 +630,11 @@ def _private_reference_ids_definition() -> PropertyDefinition:
 def _optimade_definitions() -> dict[str, PropertyDefinition]:
     """Load the curated AMDB definitions used by both stored schema and docs tests."""
     register_definition_prefix("_anyterial_", ANYTERIAL_DEFS_BASE)
+    # Additive re-registration (the ``_httk_`` pattern): recognizes the entry-type
+    # ``$id`` under ``.../defs/`` so ``served_form()`` prefixes the screening-result
+    # entry-type name to ``_anyterial_altermagnet_screening_result``. Without it the
+    # federation would serve the UNPREFIXED internal type name.
+    register_definition_prefix("_anyterial_", ANYTERIAL_DEFS_ID_BASE)
     definitions: dict[str, PropertyDefinition] = {}
     for base, paths in ((ANYTERIAL_DEFS_DIR, ANYTERIAL_DEFINITION_PATHS), (HTTK_DEFS_DIR, HTTK_DEFINITION_PATHS)):
         for served_name, relative_path in paths.items():
@@ -583,13 +654,13 @@ def _optimade_definitions() -> dict[str, PropertyDefinition]:
     return definitions
 
 
-def _reference_ids_by_doi(materials: Iterable["MaterialRecord"]) -> dict[str, str]:
+def _reference_ids_by_doi(materials: Iterable["AltermagnetScreeningResult"]) -> dict[str, str]:
     """Densely enumerate ``anyt.am.refs-1-N`` ids for every DOI, in first-seen order.
 
     The enumeration walks the materials' DOIs in deployment order (screening rank,
     then per-material DOI order) and assigns consecutive 1..K numbers. It is the one
     place the reference ids are minted: the save sites stamp each material's
-    :attr:`MaterialRecord.reference_ids` from this map and save the reference rows
+    :attr:`AltermagnetScreeningResult.reference_ids` from this map and save the reference rows
     under the same ids, so serving never re-derives the global order.
 
     :param materials: The materials whose DOIs are enumerated, in deployment order.
@@ -599,40 +670,65 @@ def _reference_ids_by_doi(materials: Iterable["MaterialRecord"]) -> dict[str, st
     return {doi: f"anyt.am.refs-1-{number}" for number, doi in enumerate(ordered, 1)}
 
 
-class _NestedQueryContext:
-    """Re-root a neutral query context at one stored reference field."""
+def _structure_mains(
+    materials: Iterable["AltermagnetScreeningResult"],
+) -> tuple[dict[str, str], dict[str, UnitcellStructureRecord]]:
+    """Enumerate the stamped ``structures`` mains, deduplicated by structure content.
 
-    def __init__(self, root: Any, scope: Any) -> None:
-        self._root = root
-        self._scope = scope
+    Walks the results in deployment order (screening rank) and stamps a dense
+    ``anyt.am.structure-1-N`` id on each DISTINCT relaxed structure (keyed by content
+    id), in first-seen order. Results whose relaxed structures are content-identical
+    share one stamped structure main -- the store's content-id dedup requires it (two
+    rows with one content id but different ids conflict) -- and each sharing result
+    carries the SAME canonical stamped instance, so its nested reference dedups onto
+    the main with identical identity-excluded metadata rather than raising a conflict.
+    It is the one place the structure ids are minted: the save sites save these mains
+    and stamp each result's :attr:`AltermagnetScreeningResult.structure_id` /
+    ``structure`` field, and the provenance retarget / alternatives re-parent through
+    the returned map, so serving injects the ``structures`` relationship without
+    re-deriving the global order.
 
-    def field(self, name: str) -> Any:
-        return self._scope.field(name)
+    :param materials: The results whose structures are enumerated, in deployment order.
+    :return: The ``result id``-to-``structure id`` map and the stamped structure mains
+        keyed by structure id.
+    """
+    by_content: dict[str, UnitcellStructureRecord] = {}
+    id_by_material: dict[str, str] = {}
+    number = 0
+    for material in materials:
+        structure = material.structure
+        if structure is None:
+            continue
+        assert material.id is not None  # always set to the amdb id at construction
+        key = content_id(structure)
+        main = by_content.get(key)
+        if main is None:
+            number += 1
+            main = replace(structure, id=f"anyt.am.structure-1-{number}")
+            by_content[key] = main
+        assert main.id is not None  # just stamped
+        id_by_material[material.id] = main.id
+    return id_by_material, {cast(str, main.id): main for main in by_content.values()}
 
-    def scope(self, name: str) -> Any:
-        return self._scope.scope(name)
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._root, name)
+def _stamp_material(
+    material: "AltermagnetScreeningResult",
+    reference_id_by_doi: Mapping[str, str],
+    structure_id_by_material: Mapping[str, str],
+    structure_mains: Mapping[str, UnitcellStructureRecord],
+) -> "AltermagnetScreeningResult":
+    """Stamp a result's reference ids, structure id, and canonical structure main once.
 
-
-def _nested_structure_projection(projection: StoredPropertyProjection) -> StoredPropertyProjection:
-    def response(record: object) -> object:
-        material = cast(MaterialRecord, record)
-        return None if material.structure is None else projection.response(material.structure)
-
-    def query(context: Any, operator: str, literal: object) -> Any:
-        assert projection.query is not None
-        return projection.query(cast(Any, _NestedQueryContext(context, context.scope("structure"))), operator, literal)
-
-    def sort(context: Any) -> Any:
-        assert projection.sort is not None
-        return projection.sort(cast(Any, _NestedQueryContext(context, context.scope("structure"))))
-
-    return StoredPropertyProjection(
-        response=response,
-        query=query if projection.query is not None else None,
-        sort=sort if projection.sort is not None else None,
+    Repointing ``structure`` at the canonical stamped main lets the result's nested
+    reference dedup onto the already-saved structure main with identical metadata.
+    """
+    assert material.id is not None  # always set to the amdb id at construction
+    structure_id = structure_id_by_material.get(material.id)
+    return replace(
+        material,
+        reference_ids=tuple(reference_id_by_doi[doi] for doi in material.dois),
+        structure_id=structure_id,
+        structure=material.structure if structure_id is None else structure_mains.get(structure_id, material.structure),
     )
 
 
@@ -701,7 +797,7 @@ def _provider_property(record: object, name: str) -> object:
     # A root-relative base is made absolute by the thin service adapter.
     from optimade.dataset import _material_properties
 
-    return _material_properties(cast(MaterialRecord, record), "")[name]
+    return _material_properties(cast(AltermagnetScreeningResult, record), "")[name]
 
 
 def _provider_response(property_name: str) -> Callable[[object], object]:
@@ -730,13 +826,13 @@ def _fraction_literal_to_percent(value: object) -> object:
 
 
 def _material_public_id(record: object) -> str:
-    public_id = cast(MaterialRecord, record).id
+    public_id = cast(AltermagnetScreeningResult, record).id
     assert public_id is not None  # always set to the amdb id at construction
     return public_id
 
 
 def _material_reference_ids(record: object) -> list[str]:
-    return list(cast(MaterialRecord, record).reference_ids)
+    return list(cast(AltermagnetScreeningResult, record).reference_ids)
 
 
 def _reference_doi(record: object) -> str:
@@ -748,9 +844,10 @@ def _reference_public_id(record: object) -> str:
 
 
 def _material_projections() -> dict[str, StoredPropertyProjection]:
-    projections = {
-        name: _nested_structure_projection(projection) for name, projection in unitcell_structure_properties().items()
-    }
+    # The screening result serves only the AMDB science; the standard structural
+    # properties (formerly nested onto ``structure`` here) now serve directly off the
+    # ``UnitcellStructureRecord`` structures main.
+    projections: dict[str, StoredPropertyProjection] = {}
     direct: dict[str, tuple[str, bool]] = {
         "_anyterial_formula": ("formula", True),
         "_anyterial_space_group": ("space_group", True),
@@ -807,7 +904,7 @@ def _material_projections() -> dict[str, StoredPropertyProjection]:
     ):
         projections[name] = StoredPropertyProjection(response=_provider_response(name))
     # The served list is sorted via its scalar mirror stored column (see
-    # MaterialRecord.magndata_sort_key); there is no queryable list column here.
+    # AltermagnetScreeningResult.magndata_sort_key); there is no queryable list column here.
     projections["_httk_magndata_ids"] = StoredPropertyProjection(
         response=_provider_response("_httk_magndata_ids"),
         sort=_field_sort("magndata_sort_key"),
@@ -821,7 +918,7 @@ def _material_projections() -> dict[str, StoredPropertyProjection]:
     return projections
 
 
-cast(Any, MaterialRecord).__httk_stored_properties__ = _material_projections()
+cast(Any, AltermagnetScreeningResult).__httk_stored_properties__ = _material_projections()
 cast(Any, AltermagnetReferenceRecord).__httk_stored_properties__ = {
     "doi": StoredPropertyProjection(
         response=_reference_doi,
@@ -842,15 +939,17 @@ cast(Any, AltermagnetDataRecord).__httk_stored_properties__ = {
 }
 
 register_entry_family(
-    name="altermagnets-structures",
-    family=f"{__name__}:AltermagnetStructureEntry",
-    definition_id=AltermagnetStructureEntry.definition_id,
+    name="altermagnets-screening-results",
+    family=f"{__name__}:AltermagnetScreeningResultEntry",
+    definition_id=AltermagnetScreeningResultEntry.definition_id,
 )
 register_entry_record(
-    name="altermagnets-structure",
-    family="altermagnets-structures",
-    record=f"{__name__}:MaterialRecord",
+    name="altermagnets-screening-result",
+    family="altermagnets-screening-results",
+    record=f"{__name__}:AltermagnetScreeningResult",
 )
+# The slim ``structures`` family reuses httk-atomistic's already-registered
+# ``StructureEntry``/``UnitcellStructureRecord`` (aliased above); no local registration.
 register_entry_family(
     name="altermagnets-references",
     family=f"{__name__}:AltermagnetReferenceEntry",
@@ -1164,7 +1263,7 @@ def _material_structure_record(structure: UnitcellStructure) -> UnitcellStructur
     return UnitcellStructureRecord(**projected)  # type: ignore[arg-type]
 
 
-def material_structure(record: MaterialRecord) -> UnitcellStructure | None:
+def material_structure(record: AltermagnetScreeningResult) -> UnitcellStructure | None:
     """Reconstruct the live structure stored on a material record."""
 
     # This site holds a record by construction; the kind hint selects the record
@@ -1297,7 +1396,7 @@ def _source_table_paths(data_dir: Path) -> tuple[Path, Path, Path]:
 
 def _load_source_materials(
     data_dir: Path, *, details_dir: Path, legacy_structures: bool = True
-) -> tuple[MaterialRecord, ...]:
+) -> tuple[AltermagnetScreeningResult, ...]:
     screening_path, collinear_path, noncollinear_path = _source_table_paths(data_dir)
     return build_material_records(
         _load_csv_rows(screening_path, delimiter=";"),
@@ -1448,7 +1547,7 @@ def build_material_records(
     *,
     details_dir: Path | None = None,
     load_details_structures: bool = True,
-) -> tuple[MaterialRecord, ...]:
+) -> tuple[AltermagnetScreeningResult, ...]:
     """Normalize the three current CSVs into the persistent object graph."""
     grouped_variants: dict[str, list[SymmetryVariant]] = {}
     for magndata_id, variant in sorted(
@@ -1466,7 +1565,7 @@ def build_material_records(
     magndata_records = {
         identifier: MagndataRecord(identifier, tuple(variants)) for identifier, variants in grouped_variants.items()
     }
-    materials: list[MaterialRecord] = []
+    materials: list[AltermagnetScreeningResult] = []
     seen_material_ids: set[str] = set()
 
     for index, row in enumerate(screening_rows, start=1):
@@ -1519,7 +1618,7 @@ def build_material_records(
             else load_material_structure(details_dir, material_id)
         )
         materials.append(
-            MaterialRecord(
+            AltermagnetScreeningResult(
                 id=material_id,
                 screening_rank=index,
                 formula=formula,
@@ -1956,7 +2055,8 @@ def _build_coupling(
 def _entry_records_layout() -> dict[type, type | tuple[type, ...]]:
     """Mirror workflow ``--into`` with the altermagnets structure families."""
     return {
-        AltermagnetStructureEntry: MaterialRecord,
+        AltermagnetScreeningResultEntry: AltermagnetScreeningResult,
+        AltermagnetStructureEntry: UnitcellStructureRecord,
         AltermagnetReferenceEntry: AltermagnetReferenceRecord,
         RunEntry: Run,
         # The AMDB records family (internal type still ``records``) serves per-record
@@ -2078,13 +2178,18 @@ _ALTERNATIVE_CELLS: tuple[tuple[str, Callable[[UnitcellStructure], Any]], ...] =
 )
 
 
-def _save_alternative_cells(store: SqlStore, materials: Iterable[MaterialRecord]) -> tuple[int, int]:
-    """Derive and store the conventional/primitive alternatives of each material.
+def _save_alternative_cells(
+    store: SqlStore,
+    materials: Iterable[AltermagnetScreeningResult],
+    structure_id_by_material: Mapping[str, str],
+) -> tuple[int, int]:
+    """Derive and store the conventional/primitive alternatives of each structure.
 
     Bulk ingest is mains-only, so alternatives are saved with ordinary
-    :meth:`SqlStore.save` after the bulk context finalizes: each shares its
-    main's public id, carries the same scalar metadata, and gets its own
-    lineage under an immutable ``<id>~<kind>~<n>``. The exact nuclear-symmetry
+    :meth:`SqlStore.save` after the bulk context finalizes: each is a slim standard
+    ``UnitcellStructureRecord`` re-parented to its screened structure main
+    (``alternative_of=<structure id>``) and gets its own lineage under an immutable
+    ``<id>~<kind>~<n>``. The exact nuclear-symmetry
     derivation raises :class:`ValueError` for the whole moment-related refusal
     family -- both a magnetic supercell (the magnetic order breaks a nuclear
     translation) and a site-moment correspondence failure. The fallback catches
@@ -2098,11 +2203,17 @@ def _save_alternative_cells(store: SqlStore, materials: Iterable[MaterialRecord]
     :return: The ``(derived, skipped)`` counts across every material and kind.
     """
     derived = skipped = 0
+    seen: set[str] = set()
     for material in materials:
         structure = material_structure(material)
         if structure is None:
             continue
         assert material.id is not None  # always set to the amdb id at construction
+        structure_id = structure_id_by_material.get(material.id)
+        # Content-identical structures share one stamped main; derive its alternatives once.
+        if structure_id is None or structure_id in seen:
+            continue
+        seen.add(structure_id)
         for kind, derive in _ALTERNATIVE_CELLS:
             derived_from_magnetic = False
             try:
@@ -2126,8 +2237,8 @@ def _save_alternative_cells(store: SqlStore, materials: Iterable[MaterialRecord]
                     continue
                 derived_from_magnetic = True
             store.save(
-                replace(material, structure=_material_structure_record(cell)),
-                alternative_of=material.id,
+                _material_structure_record(cell),
+                alternative_of=structure_id,
                 alternative_kind=kind,
             )
             derived += 1
@@ -2150,24 +2261,26 @@ def _coupled_total_energy(observation: _RunObservation) -> float | None:
 
 
 def _resolve_edge_id(
-    store: SqlStore, label: str, entry_type: str, entry_id: str, *, material_id: str, memo: dict[tuple[str, str], str]
+    store: SqlStore, label: str, entry_type: str, entry_id: str, *, structure_id: str, memo: dict[tuple[str, str], str]
 ) -> str:
     """Map a collected edge's ``(entry_type, content-id)`` to the store-served id.
 
-    The ``relaxed_structure`` edge resolves to the material's own id (S1: the
-    material IS the served relaxed structure; the standalone structure save carries
-    no served id). Any other structures edge is rejected: this store attributes
-    only the relaxed-structure output to the material, so a foreign structures edge
-    (e.g. a future ``input_structure``) must not silently self-attribute. Record and
-    file outputs saved in the bulk pass are looked up by their content id -- the id
-    their collected edges carry -- to recover the id the store minted for them,
-    memoized so a shared output is fetched once.
+    The ``relaxed_structure`` edge resolves to the screened structure main's stamped
+    id (the structure IS the served relaxed structure now that the science moved to
+    the screening result). It is taken from the build's material->structure-id MAP --
+    never a content-id fetch: the details-CONTCAR fallback materials have a structure
+    content id that differs from the collected run's relaxed structure id, so a fetch
+    would silently miss for every fallback material. Any other structures edge is
+    rejected (a foreign structures edge, e.g. a future ``input_structure``, must not
+    silently self-attribute). Record and file outputs saved in the bulk pass are
+    looked up by their content id -- the id their collected edges carry -- to recover
+    the id the store minted for them, memoized so a shared output is fetched once.
 
     :param store: The finalized store the outputs were bulk-saved into.
     :param label: The collected edge's relationship label (the output role).
     :param entry_type: The collected edge's internal (unprefixed) target type.
     :param entry_id: The collected edge's target id (an output's content id).
-    :param material_id: The coupled material's served id, targeted by the structure edge.
+    :param structure_id: The coupled material's stamped structure id, targeted by the structure edge.
     :param memo: The per-run ``(entry_type, entry_id) -> minted id`` cache.
     :return: The store-served id the rewritten edge must carry.
     :raises ValueError: If the type is unmappable, a structures edge is not the
@@ -2175,8 +2288,8 @@ def _resolve_edge_id(
     """
     if entry_type == AltermagnetStructureEntry.type:
         if label != "relaxed_structure":
-            raise ValueError(f"structures edge {label!r} is not the relaxed structure; only it maps to the material")
-        return material_id
+            raise ValueError(f"structures edge {label!r} is not the relaxed structure; only it maps to the structure")
+        return structure_id
     # The collected record edge still carries the internal ``records`` type; the AMDB
     # records family serves it, so its content id resolves against the converted rows.
     families = {AltermagnetDataRecordEntry.type: AltermagnetDataRecordEntry, FileEntry.type: FileEntry}
@@ -2200,7 +2313,7 @@ def _rewrite_edges(
     store: SqlStore,
     edges: Iterable[RunEdge],
     *,
-    material_id: str,
+    structure_id: str,
     memo: dict[tuple[str, str], str],
 ) -> tuple[RunEdge, ...]:
     """Rewrite each collected edge's content-id target to the store-served id."""
@@ -2208,14 +2321,23 @@ def _rewrite_edges(
         RunEdge(
             edge.label,
             edge.entry_type,
-            _resolve_edge_id(store, edge.label, edge.entry_type, edge.entry_id, material_id=material_id, memo=memo),
+            _resolve_edge_id(store, edge.label, edge.entry_type, edge.entry_id, structure_id=structure_id, memo=memo),
         )
         for edge in edges
     )
 
 
+#: The appended run->result artifact edge's label (no collected counterpart), so the
+#: screening result serves the reverse ``_httk_is_artifact`` block and the run's forward
+#: ``_httk_has_artifact`` lists it (the material-page provenance lookup).
+_RESULT_ARTIFACT_LABEL = "screening_result"
+
+
 def _save_reconstructed_runs(
-    store: SqlStore, materials: Iterable[MaterialRecord], coupled: Mapping[str, _RunObservation]
+    store: SqlStore,
+    materials: Iterable[AltermagnetScreeningResult],
+    coupled: Mapping[str, _RunObservation],
+    structure_id_by_material: Mapping[str, str],
 ) -> tuple[int, int]:
     """Save one store-resolvable replacement :class:`~httk.core.Run` per coupled material.
 
@@ -2223,15 +2345,19 @@ def _save_reconstructed_runs(
     never minted, so they cannot resolve. This constructs a replacement run at save
     time -- never mutating ``item.run`` or its :class:`_RunObservation` -- whose
     ``artifacts``/``outputs`` edges carry the store-served ids: the
-    ``relaxed_structure`` edge is retargeted at the material's own id (S1) and the
-    record/file edges at the ids minted for the outputs the bulk pass just saved.
-    ``item.products`` ProductLinks are rewritten through the same map. ``inputs`` are
-    omitted (the collected runs' inputs are not stored). Reconstructing edges is
-    record construction, not post-save mutation, so it is done with an ordinary
-    :meth:`SqlStore.save` after the bulk context finalizes (both are refused inside
-    bulk ingest, and the runs need the outputs' minted ids the bulk pass assigned).
-    One run backs one material (enforced in :func:`_build_coupling`), so exactly one
-    replacement run is saved per coupled, non-degraded material.
+    ``relaxed_structure`` edge is retargeted at the screened structure main's stamped
+    id (through the material->structure-id map) and the record/file edges at the ids
+    minted for the outputs the bulk pass just saved. A FRESH ``has_artifact`` edge to
+    the screening RESULT is appended (no collected counterpart) so the result serves
+    the reverse ``_httk_is_artifact`` relationship and the run's forward
+    ``_httk_has_artifact`` lists it. ``item.products`` ProductLinks are rewritten
+    through the same map. ``inputs`` are omitted (the collected runs' inputs are not
+    stored). Reconstructing edges is record construction, not post-save mutation, so
+    it is done with an ordinary :meth:`SqlStore.save` after the bulk context finalizes
+    (both are refused inside bulk ingest, and the runs need the outputs' minted ids the
+    bulk pass assigned). One run backs one material (enforced in
+    :func:`_build_coupling`), so exactly one replacement run is saved per coupled,
+    non-degraded material.
 
     :return: The ``(runs, product links)`` saved counts.
     """
@@ -2244,13 +2370,22 @@ def _save_reconstructed_runs(
         if material is None or run is None or getattr(item, "missing_collector", None) is not None:
             continue
         assert material.id is not None  # always set to the amdb id at construction
-        material_id = material.id
+        result_id = material.id
+        structure_id = structure_id_by_material.get(result_id)
+        if structure_id is None:
+            # A coupled run always yields a relaxed structure, so the coupled material
+            # carries one; guard the pathological degraded case rather than mis-target.
+            logger.warning("Skipping run reconstruction for %s: no stamped structure id", result_id)
+            continue
         memo: dict[tuple[str, str], str] = {}
+        # The run's relaxed_structure edges retarget to the structure; the result gets
+        # a fresh has_artifact edge (internal result type, no collected counterpart).
+        result_edge = RunEdge(_RESULT_ARTIFACT_LABEL, AltermagnetScreeningResultEntry.type, result_id)
         store.save(
             Run(
                 workflow_declaration_uri=run.workflow_declaration_uri,
-                artifacts=_rewrite_edges(store, run.artifacts, material_id=material_id, memo=memo),
-                outputs=_rewrite_edges(store, run.outputs, material_id=material_id, memo=memo),
+                artifacts=(*_rewrite_edges(store, run.artifacts, structure_id=structure_id, memo=memo), result_edge),
+                outputs=_rewrite_edges(store, run.outputs, structure_id=structure_id, memo=memo),
                 source_id=run.source_id,
                 last_modified=run.last_modified,
             )
@@ -2269,7 +2404,7 @@ def _save_reconstructed_runs(
                         "relaxed_structure",
                         product.source_type,
                         product.source_id,
-                        material_id=material_id,
+                        structure_id=structure_id,
                         memo=memo,
                     ),
                     product.target_type,
@@ -2278,7 +2413,7 @@ def _save_reconstructed_runs(
                         product.label,
                         product.target_type,
                         product.target_id,
-                        material_id=material_id,
+                        structure_id=structure_id,
                         memo=memo,
                     ),
                     product.label,
@@ -2367,7 +2502,7 @@ def build_store(
         no_structure = 0
         lost_moments = 0
 
-        def _with_details_fallback(material: MaterialRecord) -> MaterialRecord:
+        def _with_details_fallback(material: AltermagnetScreeningResult) -> AltermagnetScreeningResult:
             nonlocal no_structure, lost_moments
             current = material.structure
             if current is not None and current.site_moments is not None:
@@ -2432,11 +2567,20 @@ def build_store(
             entry_ids=EntryIdScheme("anyt.am", "1", type_in_base=True),
         )
         reference_id_by_doi = _reference_ids_by_doi(materials)
-        # Stamp the densely enumerated reference ids on the list ONCE so both the
-        # bulk save and the alternative-cell derivation (which replace()s off these
-        # materials) carry them; otherwise alternatives would serve empty references.
+        # The stamped structure mains (deduped by content) and the result->structure id
+        # map, in deployment order. Legacy stores configure no families (raw storage), so
+        # they keep the nested-structure-only layout and stamp no structure ids/mains.
+        structure_id_by_material: dict[str, str] = {}
+        structure_mains: dict[str, UnitcellStructureRecord] = {}
+        if not legacy:
+            structure_id_by_material, structure_mains = _structure_mains(materials)
+        # Stamp the densely enumerated reference ids AND structure id on the list ONCE, and
+        # repoint each result's ``structure`` reference at its canonical stamped main, so
+        # both the bulk save and the alternative-cell derivation / provenance retarget
+        # (which replace()/read off these materials) carry them; otherwise alternatives
+        # would serve empty references and results an empty structure relationship.
         materials = tuple(
-            replace(material, reference_ids=tuple(reference_id_by_doi[doi] for doi in material.dois))
+            _stamp_material(material, reference_id_by_doi, structure_id_by_material, structure_mains)
             for material in materials
         )
         # Bulk ingestion creates the tables index-less and builds the indexes
@@ -2455,7 +2599,19 @@ def build_store(
                 for item in [observation.item for observation in coupled.values()]:
                     if getattr(item, "missing_collector", None) is None:
                         for value in item.outputs.values():
+                            # The relaxed-structure output is served as the stamped
+                            # structure main (from the material's final, possibly
+                            # details-fallback structure), not as a separate id=None
+                            # structures row that would collide with it. Its run edge
+                            # retargets through the structure-id map, not this output.
+                            if getattr(value, "type", None) == AltermagnetStructureEntry.type:
+                                continue
                             bulk.save(_as_records_family(value))
+                # Structure mains (stamped ids, deduped by content) saved BEFORE the result
+                # rows, so each result's nested reference dedups by content id onto its
+                # canonical stamped structure main (identical identity-excluded metadata).
+                for main in structure_mains.values():
+                    bulk.save(main)
             for material in materials:
                 bulk.save(material)
             for doi, rid in reference_id_by_doi.items():
@@ -2465,8 +2621,8 @@ def build_store(
             # rewritten product links) are saved after the mains-only bulk context
             # finalizes: bulk ingest refuses non-mains, and the runs need the outputs'
             # minted ids the bulk pass just assigned.
-            _save_alternative_cells(store, materials)
-            _save_reconstructed_runs(store, materials, coupled)
+            _save_alternative_cells(store, materials, structure_id_by_material)
+            _save_reconstructed_runs(store, materials, coupled, structure_id_by_material)
         write_elapsed = time.perf_counter() - write_started
         finalize_started = time.perf_counter()
         created_database.dispose()
@@ -2526,7 +2682,7 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
             opened_database.dispose()
             return None
         searcher = store.searcher()
-        material = searcher.variable(MaterialRecord)
+        material = searcher.variable(AltermagnetScreeningResult)
         material_count = searcher.count()
         if material_count <= 0:
             logger.info("Prebuilt store %s holds no materials; rebuild with `make build_store`", store_path)
@@ -2584,10 +2740,20 @@ def open_in_memory_store(
             entry_ids=EntryIdScheme("anyt.am", "1", type_in_base=True),
         )
         reference_id_by_doi = _reference_ids_by_doi(materials)
-        # Bulk ingestion creates the tables and their indexes itself.
+        structure_id_by_material, structure_mains = _structure_mains(materials)
+        materials = tuple(
+            _stamp_material(material, reference_id_by_doi, structure_id_by_material, structure_mains)
+            for material in materials
+        )
+        # Bulk ingestion creates the tables and their indexes itself. Structure mains
+        # (stamped ids, deduped by content) are seeded BEFORE the results so each result's
+        # nested reference dedups by content id onto its canonical stamped structure main;
+        # without them the injected ``structures`` relationship would serve empty.
         with store.bulk_ingest() as bulk:
+            for main in structure_mains.values():
+                bulk.save(main)
             for material in materials:
-                bulk.save(replace(material, reference_ids=tuple(reference_id_by_doi[doi] for doi in material.dois)))
+                bulk.save(material)
             for doi, rid in reference_id_by_doi.items():
                 bulk.save(AltermagnetReferenceRecord(rid, doi, id=rid))
         return OpenedMaterialStore(

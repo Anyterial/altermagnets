@@ -25,26 +25,47 @@ def _ensure_site_imports() -> None:
             sys.path.insert(0, text)
 
 
-@lru_cache(maxsize=1)
-def served_structure_definitions() -> dict[str, dict[str, Any]]:
-    """Return the ``structures`` property definitions the AMDB service serves.
+def result_entry_type() -> str:
+    """Return the AMDB main entity's served (wire) entry type.
 
-    Reuses the service's own schema-building code path: the store-native
-    :class:`AltermagnetStructureEntry` definition, the service's sortable set,
-    and its public-schema projection (which hides the storage-only public-id and
-    reference-id properties). The result is the ``{served_name: definition}``
-    mapping the ``optimade_fields`` widget expects, evaluated once and cached.
+    Resolved lazily (the ``optimade`` package is only importable once
+    :func:`_ensure_site_imports` has run) so widget modules can name the
+    screening-result endpoint without a load-time dependency on the service.
+    """
+    _ensure_site_imports()
+    from optimade.adapter import RESULT_TYPE
+
+    return RESULT_TYPE
+
+
+@lru_cache(maxsize=1)
+def served_field_definitions() -> dict[str, dict[str, Any]]:
+    """Return the property definitions the AMDB service serves, merged across both types.
+
+    Reuses the service's own schema-building code path over the two served
+    entry types: the AMDB main entity (:class:`AltermagnetScreeningResultEntry`,
+    which owns the screening science, figures and energy) and the slim standard
+    :class:`AltermagnetStructureEntry` (which owns the CrysViz structural fields
+    and ``_httk_site_moments``). The service's sortable set and its public-schema
+    projection (which hides the storage-only public-id, reference-id and
+    structure-id properties) are applied, then the two ``{served_name:
+    definition}`` mappings are flattened into one — the shared identity keys
+    (``id``/``type``/…) are byte-identical across types. Evaluated once, cached.
     """
     _ensure_site_imports()
     import material_store
     from httk.serve.optimade.schema.served import build_served_schema
-    from optimade.adapter import SORTABLE_PROPERTIES, _public_store_schema
+    from optimade.adapter import RESULT_TYPE, SORTABLE_PROPERTIES, _public_store_schema
 
     schema = build_served_schema(
-        {"structures": material_store.AltermagnetStructureEntry.entry_type_definition()},
+        {
+            RESULT_TYPE: material_store.AltermagnetScreeningResultEntry.entry_type_definition(),
+            "structures": material_store.AltermagnetStructureEntry.entry_type_definition(),
+        },
         sortable=SORTABLE_PROPERTIES,
     )
-    return _public_store_schema(schema).property_definitions["structures"]
+    definitions = _public_store_schema(schema).property_definitions
+    return {**definitions[RESULT_TYPE], **definitions["structures"]}
 
 
 def first_line(description: object) -> str | None:

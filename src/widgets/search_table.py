@@ -2,13 +2,13 @@
 
 import os
 
-from _internal import first_line, served_structure_definitions
+from _internal import first_line, result_entry_type, served_field_definitions
 from httk.serve.web.widgets.optimade_table import render as render_optimade_table
 
 
 def _with_descriptions(columns):
     """Add each served property's first description line as a column hover hint."""
-    definitions = served_structure_definitions()
+    definitions = served_field_definitions()
     described = []
     for column in columns:
         description = first_line(definitions.get(column["key"], {}).get("description"))
@@ -24,6 +24,7 @@ def render(context, **props):
     return render_optimade_table(
         context,
         base_url=base_url,
+        entry_type=result_entry_type(),
         columns=_with_descriptions(
             (
                 {"key": "_anyterial_formula", "label": "Material", "format": "formula"},

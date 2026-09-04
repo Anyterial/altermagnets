@@ -41,6 +41,9 @@ def test_material_widget_emits_shell_config_and_both_assets(monkeypatch) -> None
     assert config["base_url"] == "https://api.example.test/optimade/amdb"
     assert config["id_query"] == "id"
     assert config["widget_id"] == "material-detail"
+    # The detail page requests the AMDB main entity (the screening-result endpoint).
+    assert config["entry_type"] == "_anyterial_altermagnet_screening_result"
+    assert config["include"] == ["structures", "references"]
     assert "_anyterial_magndata_variants" in config["response_fields"]
     assert {asset.path for asset in result.assets} == {
         "serve-optimade-table-protocol.mjs",
@@ -62,9 +65,11 @@ def test_material_widget_requests_every_attribute_used_by_detail_js() -> None:
     result = MODULE.render(_context())
     config_text = result.html.split('type="application/json">', 1)[1].split("</script>", 1)[0]
     config = json.loads(config_text)
-    # Pinned to the attributes.* accesses in src/widgets/material-detail.mjs.
-    consumed_fields = {
-        "chemical_formula_reduced",
+    # The science/figure/energy fields read off the RESULT resource, pinned to the
+    # attributes.* accesses in src/widgets/material-detail.mjs. The five CrysViz
+    # structural fields are NOT here: they are served on the slim ``structures`` record
+    # and ride in via ``include=structures`` (asserted below).
+    result_fields = {
         "_anyterial_avg_spin_splitting",
         "_anyterial_classification",
         "_anyterial_electronic_type",
@@ -83,15 +88,16 @@ def test_material_widget_requests_every_attribute_used_by_detail_js() -> None:
         "_anyterial_wave_classes",
         "_httk_dft_band_gap",
         "_httk_magndata_ids",
-        # Structure fields consumed by the CrysViz iframe embed.
-        "lattice_vectors",
-        "cartesian_site_positions",
-        "species",
-        "species_at_sites",
-        "_httk_site_moments",
     }
 
-    assert set(config["response_fields"]) == consumed_fields
+    assert set(config["response_fields"]) == result_fields
+    # The detail page inlines the structure (CrysViz payload) and the references (DOIs).
+    assert config["include"] == ["structures", "references"]
+    # The five CrysViz structural fields are structure-owned and must never be requested
+    # on the result endpoint (its /info does not advertise them).
+    structure_only = {"lattice_vectors", "cartesian_site_positions", "species", "species_at_sites", "_httk_site_moments"}
+    assert not (structure_only & set(config["response_fields"]))
+    assert "chemical_formula_reduced" not in config["response_fields"]
 
 
 def test_material_widget_embeds_field_info_first_lines() -> None:

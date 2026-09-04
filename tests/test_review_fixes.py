@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))
 
 import material_store
 from conftest import write_source_tables
-from optimade import build_service_app
+from optimade import RESULT_TYPE, build_service_app
 from starlette.testclient import TestClient
 
 
@@ -49,7 +49,8 @@ def _is_optimade_error(response) -> bool:
 
 
 def test_internal_public_id_is_not_filterable_on_structures(client: TestClient) -> None:
-    response = client.get("/v1/structures", params={"filter": '_httk_custom_public_id="anyt.am-1-1"'})
+    # The public-id remap follows the screening result main entity now.
+    response = client.get(f"/v1/{RESULT_TYPE}", params={"filter": '_httk_custom_public_id="anyt.am-1-1"'})
     assert response.status_code == 400
     assert _is_optimade_error(response)
 
@@ -60,7 +61,7 @@ def test_public_id_filter_drives_internal_remap_and_returns_row(client: TestClie
     # and must still serve the row, while a direct external filter on
     # _httk_custom_public_id (above) still 400s. This exercises the internal remap
     # path that broke earlier; a non-id filter would not.
-    response = client.get("/v1/structures", params={"filter": 'id="anyt.am-1-1"', "response_fields": "id"})
+    response = client.get(f"/v1/{RESULT_TYPE}", params={"filter": 'id="anyt.am-1-1"', "response_fields": "id"})
     assert response.status_code == 200
     assert [item["id"] for item in response.json()["data"]] == ["anyt.am-1-1"]
 

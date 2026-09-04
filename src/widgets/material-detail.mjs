@@ -392,6 +392,22 @@ function referencesFor(resource, included) {
   return doiLinks(ids.map((id) => byId.get(id)?.attributes?.doi).filter(Boolean));
 }
 
+// The slim `structures` resource carrying this result's CrysViz payload, located via
+// the result's injected `relationships.structures` block and the `included` section
+// (include=structures). Returns null when the block or the inlined resource is absent
+// (a structureless result, or a service that did not inline it) so the caller degrades
+// the structure card to the static figure.
+function includedStructure(resource, included) {
+  const relation = resource.relationships?.structures?.data;
+  const ids = Array.isArray(relation) ? relation.map((item) => item?.id) : relation?.id ? [relation.id] : [];
+  const byId = new Map(arrayValue(included).map((item) => [item.id, item]));
+  for (const id of ids) {
+    const structure = byId.get(id);
+    if (structure && structure.type === "structures") return structure;
+  }
+  return null;
+}
+
 function variantFor(value, magndataId) {
   return { magndata_id: magndataId, source: "", formula: "", phases: [], wave_classes: [], warnings: [], notes: [], ...value };
 }
@@ -400,15 +416,18 @@ function sourceLabel(source) {
   return CLASSIFICATION_LABELS[source] || "No symmetry table entry";
 }
 
-function buildFigures(attributes, apiBase, alternatives = [], menuLinks = []) {
+// `attributes` is the RESULT resource (its `_httk_custom_figures` records supply the
+// static band/structure/BZ images); `structureAttributes` is the INCLUDED slim
+// structure resource (its five CrysViz structural fields drive the interactive iframe).
+function buildFigures(attributes, structureAttributes, apiBase, alternatives = [], menuLinks = []) {
   const records = new Map(arrayValue(attributes._httk_custom_figures).map((item) => [item.key, item]));
   const grid = node("div", "figure-grid");
   let availableCount = 0;
   FIGURE_SPECS.forEach((spec) => {
     const record = records.get(spec.key) || {};
-    // The structure card becomes the interactive CrysViz iframe when structure
-    // data is present; otherwise it keeps the static-figure/placeholder path.
-    const crysvizSrc = spec.key === "structure" ? crysvizIframeSrc(attributes, crysvizBaseUrl, alternatives, menuLinks) : "";
+    // The structure card becomes the interactive CrysViz iframe when the included
+    // structure carries valid data; otherwise it keeps the static-figure/placeholder path.
+    const crysvizSrc = spec.key === "structure" ? crysvizIframeSrc(structureAttributes, crysvizBaseUrl, alternatives, menuLinks) : "";
     const light = crysvizSrc ? "" : record.available === true ? figureUrl(record.url, apiBase) : "";
     const dark = light ? figureUrl(record.dark_url, apiBase) || light : "";
     const layout = crysvizSrc ? "figure-card--wide" : spec.layout;
@@ -431,7 +450,7 @@ function buildFigures(attributes, apiBase, alternatives = [], menuLinks = []) {
       // Follow live theme toggles: rebuild the src (with the new theme) — reuses
       // crysvizIframeSrc so there is one source of truth for the URL shape.
       onThemeChange(() => {
-        const next = crysvizIframeSrc(attributes, crysvizBaseUrl, alternatives, menuLinks);
+        const next = crysvizIframeSrc(structureAttributes, crysvizBaseUrl, alternatives, menuLinks);
         if (next) frame.setAttribute("src", next);
       });
     } else if (light) {
@@ -528,11 +547,13 @@ const materialPageHref = (id) => new URL(`?id=${encodeURIComponent(id)}`, docume
 
 // Human word for a produced entry, keyed by its served (wire) type — the label
 // on the non-link fallback and the anchor-text fallback for a file with no served
-// name. `structures` entries resolve to real material pages; `files` entries
-// become download links from the mounted files endpoint (see attachFileDownloads),
+// name. The RESULT entry (its wire type is passed in from the config) resolves to
+// the real material page; `structures` entries are the slim crystal record with no
+// page of its own, so they render as plain typed entries; `files` entries become
+// download links from the mounted files endpoint (see attachFileDownloads),
 // degrading to a labeled non-link entry; `_httk_records` are rendered from the run
 // blocks alone and stay non-link. The full id is kept in a title attribute.
-const PRODUCED_KIND_WORDS = { _httk_records: "record", files: "file" };
+const PRODUCED_KIND_WORDS = { _httk_records: "record", files: "file", structures: "structure" };
 
 // The forward-relationship keys a run exposes for what it produced, and the
 // reverse keys a material carries naming its producing run.
@@ -644,17 +665,19 @@ async function fetchProvenance(Transport, config, resource) {
   };
 }
 
-// The compact "This run produced" list: structures ids are real material-page
-// links (with a "(this material)" marker for the current id); files with a served
-// url (attached by attachFileDownloads) are download links (served name + compact
-// size); records — and any file whose batch entry did not resolve — are labeled
-// non-link entries (edge label + a human kind word; full id in a title).
-function buildProducedList(produced, currentId) {
+// The compact "This run produced" list: the RESULT edge (its wire type passed in as
+// `resultType`) is the real material-page link, with a "(this material)" marker on the
+// current id; `structures` edges are the slim crystal record (no page of its own) and
+// render as plain typed non-link entries; files with a served url (attached by
+// attachFileDownloads) are download links (served name + compact size); records — and
+// any file whose batch entry did not resolve — are labeled non-link entries (edge label
+// + a human kind word; full id in a title).
+function buildProducedList(produced, currentId, resultType) {
   const list = node("ul", "provenance-produced");
   produced.forEach((item) => {
     const li = node("li", "provenance-produced-item");
     if (item.label) li.append(node("span", "provenance-produced-label", item.label));
-    if (item.type === "structures") {
+    if (item.type === resultType) {
       const current = item.id === currentId;
       const link = node("a", current ? "provenance-produced-link is-current" : "provenance-produced-link", item.id);
       link.href = materialPageHref(item.id);
@@ -681,7 +704,7 @@ function buildProducedList(produced, currentId) {
 
 // Render the Provenance section from a plain provenance object (renderer contract:
 // object in, section element out; null in → null out so the caller omits it).
-function buildProvenance(provenance, currentId) {
+function buildProvenance(provenance, currentId, resultType) {
   if (!provenance) return null;
   const sec = section("Provenance");
   sec.append(node("p", "section-note", "How this material was produced: the workflow run that generated it, its identifiers, and the entries that run produced."));
@@ -697,14 +720,16 @@ function buildProvenance(provenance, currentId) {
   if (dl.childNodes.length) sec.append(dl);
   if (provenance.produced.length) {
     sec.append(node("p", "section-note", "This run produced:"));
-    sec.append(buildProducedList(provenance.produced, currentId));
+    sec.append(buildProducedList(provenance.produced, currentId, resultType));
   }
   return sec;
 }
 
-function buildDetail(resource, included, apiBase, alternatives = [], provenance = null) {
+function buildDetail(resource, included, structure, apiBase, alternatives = [], provenance = null, resultType = "") {
   const attributes = resource.attributes || {};
-  const formula = attributes.chemical_formula_reduced || attributes._anyterial_formula || "";
+  const structureAttributes = structure?.attributes || {};
+  const structureId = structure?.id || "";
+  const formula = attributes._anyterial_formula || attributes.chemical_formula_reduced || "";
   const ids = arrayValue(attributes._httk_magndata_ids).map(String);
   let variants = arrayValue(attributes._anyterial_magndata_variants).map((item) => variantFor(item, item.magndata_id));
   if (!variants.length && ids.length) variants = ids.map((id) => variantFor({}, id));
@@ -757,7 +782,7 @@ function buildDetail(resource, included, apiBase, alternatives = [], provenance 
 
   const figureSection = section("Figures");
   const figureHeading = node("div", "detail-figure-heading");
-  const figureResult = buildFigures(attributes, apiBase, alternatives, structureDownloadLinks(resource.id, apiBase));
+  const figureResult = buildFigures(attributes, structureAttributes, apiBase, alternatives, structureDownloadLinks(structureId, apiBase));
   figureHeading.append(node("h3", "", "Figures"), node("p", "section-note", `${figureResult.availableCount} of ${FIGURE_SPECS.length} detail figures available from the mounted calculation archive.`));
   figureSection.replaceChildren(figureHeading, figureResult.grid);
   article.append(figureSection);
@@ -776,7 +801,7 @@ function buildDetail(resource, included, apiBase, alternatives = [], provenance 
     article.append(messages);
   }
 
-  const provenanceSection = buildProvenance(provenance, resource.id);
+  const provenanceSection = buildProvenance(provenance, resource.id, resultType);
   if (provenanceSection) article.append(provenanceSection);
   return article;
 }
@@ -852,15 +877,21 @@ async function loadShell(shell, Transport = OptimadeTransport) {
   }
   try {
     const transport = new Transport(config, { documentBase: document.baseURI });
-    const result = await transport.fetchOne(id, { include: ["references"] });
+    const include = Array.isArray(config.include) && config.include.length ? config.include : ["structures", "references"];
+    const result = await transport.fetchOne(id, { include });
     if (result === null) {
       showState(shell, "The requested material entry could not be found.");
       return;
     }
     const discovery = await transport.discover();
-    const alternatives = await fetchAlternatives(Transport, config, discovery.apiBaseUrl, id);
+    // The interactive structure, its alternatives and its CIF/POSCAR links all key on
+    // the INCLUDED slim structure's id, not the result id.
+    const structure = includedStructure(result.resource, result.included);
+    const alternatives = structure ? await fetchAlternatives(Transport, config, discovery.apiBaseUrl, structure.id) : null;
     const provenance = await fetchProvenance(Transport, config, result.resource);
-    shell.replaceChildren(buildDetail(result.resource, result.included, discovery.apiBaseUrl, alternatives, provenance));
+    shell.replaceChildren(
+      buildDetail(result.resource, result.included, structure, discovery.apiBaseUrl, alternatives, provenance, config.entry_type),
+    );
     shell.setAttribute("aria-busy", "false");
     window.altermagnetsUi?.initSubtree(shell);
   } catch (error) {
@@ -873,4 +904,4 @@ const start = () => document.querySelectorAll("[data-site-material-detail]").for
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
 else start();
 
-export { altKind, buildProvenance, crysvizIframeSrc, crysvizPayload, fetchProvenance, figureUrl, loadShell, structureDownloadLinks };
+export { altKind, buildProvenance, crysvizIframeSrc, crysvizPayload, fetchProvenance, figureUrl, includedStructure, loadShell, structureDownloadLinks };

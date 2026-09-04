@@ -33,6 +33,10 @@ from optimade import adapter, build_providers, build_service_app, run_validation
 from optimade import dataset as dataset_module
 from starlette.testclient import TestClient
 
+#: The AMDB main entity wire type (the primary search + science endpoint). The screened
+#: crystal structure is a separate slim standard ``structures`` entry linked from it.
+RESULT = adapter.RESULT_TYPE
+
 EXPECTED_DEFINITION_PROVENANCE = {
     "_anyterial_formula": (
         "https://schemas.anyterial.se/defs/v0.1/properties/altermagnets/formula",
@@ -231,21 +235,29 @@ def test_serves_material_run_strong_link_relationships_and_energy(tmp_path: Path
     )
     try:
         with TestClient(app, base_url="http://testserver") as live:
-            # (a) the coupled structure serves the derived reverse StrongLink blocks
-            # naming the producing run, plus the symmetric material-level energy scalar.
-            structure = live.get(
-                "/v1/structures/anyt.am-1-1", params={"response_fields": "_httk_custom_total_energy"}
+            # (a) the coupled screening RESULT serves the appended reverse _httk_is_artifact
+            # block naming the producing run, plus the symmetric result-level energy scalar.
+            result = live.get(
+                f"/v1/{RESULT}/anyt.am-1-1", params={"response_fields": "_httk_custom_total_energy"}
             ).json()["data"]
-            assert structure["attributes"]["_httk_custom_total_energy"] == -1.0
+            assert result["attributes"]["_httk_custom_total_energy"] == -1.0
+            result_is_artifact = result["relationships"]["_httk_is_artifact"]["data"]
+            assert [(e["type"], e["id"]) for e in result_is_artifact] == [("_httk_runs", result_is_artifact[0]["id"])]
+            assert result_is_artifact[0]["meta"]["role"] == "artifact"
+            assert result_is_artifact[0]["meta"]["_httk_label"] == "screening_result"
+            run_id = result_is_artifact[0]["id"]
+            structure_id = _relationship_ids(result, "structures")[0][1]
+
+            # (b) the coupled STRUCTURE serves the relaxed_structure reverse blocks (the
+            # structure IS the relaxed output/artifact).
+            structure = live.get(f"/v1/structures/{structure_id}").json()["data"]
             is_artifact = structure["relationships"]["_httk_is_artifact"]["data"]
             is_output = structure["relationships"]["_httk_is_output"]["data"]
-            assert [(e["type"], e["id"]) for e in is_artifact] == [("_httk_runs", is_artifact[0]["id"])]
-            assert is_artifact[0]["meta"]["role"] == "artifact"
+            assert [(e["type"], e["id"]) for e in is_artifact] == [("_httk_runs", run_id)]
             assert is_artifact[0]["meta"]["_httk_label"] == "relaxed_structure"
-            run_id = is_artifact[0]["id"]
             assert [(e["type"], e["id"]) for e in is_output] == [("_httk_runs", run_id)]
 
-            # (b) the run resolves at its wire endpoint with non-null prefixed values.
+            # (c) the run resolves at its wire endpoint with non-null prefixed values.
             run = live.get(
                 f"/v1/_httk_runs/{run_id}",
                 params={"response_fields": "_httk_source_id,_httk_workflow_declaration_uri"},
@@ -255,17 +267,20 @@ def test_serves_material_run_strong_link_relationships_and_energy(tmp_path: Path
             assert run_attrs["_httk_source_id"]
             assert run_attrs["_httk_workflow_declaration_uri"]
 
-            # (c) the run's forward _httk_has_* blocks resolve: the relaxed_structure edge
-            # targets the material itself, plus the record and file edges.
+            # (d) the run's forward _httk_has_* blocks resolve: has_artifact carries the
+            # relaxed structure, the record/file edges, AND the appended screening result;
+            # has_output carries the structure + record/file edges but NOT the result.
             run_resource = run.json()["data"]
             has_output = _relationship_ids(run_resource, "_httk_has_output")
             has_artifact = _relationship_ids(run_resource, "_httk_has_artifact")
-            assert has_output == has_artifact  # this workflow returns every output as an artifact
-            assert ("structures", "anyt.am-1-1") in has_output
+            assert ("structures", structure_id) in has_output
+            assert (RESULT, "anyt.am-1-1") in has_artifact
+            assert (RESULT, "anyt.am-1-1") not in has_output
+            assert set(has_output) < set(has_artifact)
             assert any(etype == "_httk_records" for etype, _ in has_output)
             assert any(etype == "files" for etype, _ in has_output)
 
-            # (d) the _httk_relationships filter route selects the run by material id.
+            # (e) the _httk_relationships filter route selects the run by result id.
             filtered = live.get(
                 "/v1/_httk_runs",
                 params={"filter": '_httk_relationships._httk_has_artifact.id HAS "anyt.am-1-1"'},
@@ -273,13 +288,12 @@ def test_serves_material_run_strong_link_relationships_and_energy(tmp_path: Path
             assert filtered.status_code == 200
             assert [item["id"] for item in filtered.json()["data"]] == [run_id]
 
-            # (e) an uncoupled material in the same build serves a null energy and no reverse block.
+            # (f) an uncoupled result in the same build serves a null energy and no reverse block.
             other = live.get(
-                "/v1/structures/anyt.am-1-2", params={"response_fields": "_httk_custom_total_energy"}
+                f"/v1/{RESULT}/anyt.am-1-2", params={"response_fields": "_httk_custom_total_energy"}
             ).json()["data"]
             assert other["attributes"]["_httk_custom_total_energy"] is None
             assert _relationship_ids(other, "_httk_is_artifact") == []
-            assert _relationship_ids(other, "_httk_is_output") == []
     finally:
         opened.database.dispose()
 
@@ -356,12 +370,30 @@ def test_five_entry_type_id_forms(tmp_path: Path) -> None:
     opened, app, _details, _runs = _build_run_backed_store(tmp_path)
     try:
         with TestClient(app, base_url="http://testserver") as live:
-            material = live.get("/v1/structures/anyt.am-1-1").json()["data"]
-            assert re.fullmatch(r"anyt\.am-1-\d+", material["id"])
-            references = material["relationships"]["references"]["data"]
+            result = live.get(f"/v1/{RESULT}/anyt.am-1-1").json()["data"]
+            assert re.fullmatch(r"anyt\.am-1-\d+", result["id"])
+            references = result["relationships"]["references"]["data"]
             assert references and all(re.fullmatch(r"anyt\.am\.refs-1-\d+", ref["id"]) for ref in references)
 
-            run_id = material["relationships"]["_httk_is_artifact"]["data"][0]["id"]
+            structure_id = result["relationships"]["structures"]["data"][0]["id"]
+            assert re.fullmatch(r"anyt\.am\.structure-1-\d+", structure_id)
+
+            # include=structures inlines the referenced structure with EVERY CrysViz
+            # field non-null; a default-response/schema regression would silently
+            # degrade every detail page while leaving id-only tests green.
+            included = live.get(f"/v1/{RESULT}/anyt.am-1-1", params={"include": "structures"}).json()["included"]
+            structure = next(item for item in included if item["id"] == structure_id)
+            crysviz = structure["attributes"]
+            for field_name in (
+                "lattice_vectors",
+                "cartesian_site_positions",
+                "species",
+                "species_at_sites",
+                "_httk_site_moments",
+            ):
+                assert crysviz.get(field_name) is not None, field_name
+
+            run_id = result["relationships"]["_httk_is_artifact"]["data"][0]["id"]
             assert re.fullmatch(r"anyt\.am\.runs-1-\d+", run_id)
 
             file_id = live.get("/v1/files").json()["data"][0]["id"]
@@ -407,11 +439,12 @@ def test_store_native_service_is_live_and_does_not_own_caller_store(tmp_path: Pa
     assert app.state.owns_entry_store is False
 
     with TestClient(app, base_url="http://testserver") as live:
-        info = live.get("/v1/info/structures")
+        info = live.get(f"/v1/info/{RESULT}")
         assert info.status_code == 200
         assert "_httk_custom_public_id" not in info.json()["data"]["properties"]
         assert "_httk_custom_reference_ids" not in info.json()["data"]["properties"]
-        first = live.get("/v1/structures", params={"sort": "id", "response_fields": "id"})
+        assert "_httk_custom_structure_id" not in info.json()["data"]["properties"]
+        first = live.get(f"/v1/{RESULT}", params={"sort": "id", "response_fields": "id"})
         assert first.status_code == 200
         assert [item["id"] for item in first.json()["data"]] == [
             "anyt.am-1-1",
@@ -420,22 +453,22 @@ def test_store_native_service_is_live_and_does_not_own_caller_store(tmp_path: Pa
         ]
 
         searcher = opened.store.searcher()
-        material = searcher.variable(material_store.MaterialRecord)
+        material = searcher.variable(material_store.AltermagnetScreeningResult)
         record = searcher.results(material=material).first()["material"]
         # A clone saved as a new entry must not reuse the source revision's
         # store-minted immutable id.
         opened.store.save(replace(record, id="anyt.am-1-9999", immutable_id=None, screening_rank=9999))
 
-        later = live.get("/v1/structures", params={"sort": "id", "response_fields": "id"})
+        later = live.get(f"/v1/{RESULT}", params={"sort": "id", "response_fields": "id"})
         assert later.status_code == 200
         assert later.json()["meta"]["data_returned"] == 4
         assert later.json()["data"][-1]["id"] == "anyt.am-1-9999"
-        included = live.get("/v1/structures/anyt.am-1-1", params={"include": "references"})
+        included = live.get(f"/v1/{RESULT}/anyt.am-1-1", params={"include": "references"})
         assert included.status_code == 200
         assert included.json()["included"]
 
     # The service did not close a store supplied by its caller.
-    assert opened.store.searcher().variable(material_store.MaterialRecord) is not None
+    assert opened.store.searcher().variable(material_store.AltermagnetScreeningResult) is not None
     opened.database.dispose()
 
 
@@ -453,17 +486,21 @@ def test_structure_downloads_serve_generated_cif_and_poscar(tmp_path: Path) -> N
     try:
         with TestClient(app, base_url="http://testserver") as live:
             searcher = opened.store.searcher()
-            material = searcher.variable(material_store.MaterialRecord)
+            material = searcher.variable(material_store.AltermagnetScreeningResult)
             record = searcher.results(material=material).first()["material"]
+            # CIF/POSCAR routes are keyed on the STRUCTURE id now (the crystal is a
+            # separate standard entry).
+            structure_id = record.structure_id
+            assert structure_id is not None
             expected = material_store.material_structure(record)
             assert expected is not None
 
             cases = [
-                ("structure.cif", "chemical/x-cif", f'attachment; filename="{record.id}.cif"', "roundtrip.cif"),
+                ("structure.cif", "chemical/x-cif", f'attachment; filename="{structure_id}.cif"', "roundtrip.cif"),
                 ("POSCAR", "text/plain", 'attachment; filename="POSCAR"', "POSCAR"),
             ]
             for filename, content_type, disposition, local_name in cases:
-                resp = live.get(f"/extensions/files/{record.id}/{filename}")
+                resp = live.get(f"/extensions/files/{structure_id}/{filename}")
                 assert resp.status_code == 200, resp.text
                 assert resp.headers["content-type"].startswith(content_type)
                 assert resp.headers["content-disposition"] == disposition
@@ -478,14 +515,11 @@ def test_structure_downloads_serve_generated_cif_and_poscar(tmp_path: Path) -> N
                 assert sorted(loaded.species_at_sites) == sorted(expected.species_at_sites)
 
             # A non-whitelisted filename falls through to the figure lookup and 404s.
-            assert live.get(f"/extensions/files/{record.id}/structure.xyz").status_code == 404
+            assert live.get(f"/extensions/files/{structure_id}/structure.xyz").status_code == 404
 
-            # A material without a structure yields 404 for both generated files.
-            opened.store.save(
-                replace(record, id="anyt.am-1-7777", immutable_id=None, structure=None, screening_rank=7777)
-            )
-            assert live.get("/extensions/files/anyt.am-1-7777/structure.cif").status_code == 404
-            assert live.get("/extensions/files/anyt.am-1-7777/POSCAR").status_code == 404
+            # An unknown structure id yields 404 for both generated files.
+            assert live.get("/extensions/files/anyt.am.structure-1-7777/structure.cif").status_code == 404
+            assert live.get("/extensions/files/anyt.am.structure-1-7777/POSCAR").status_code == 404
     finally:
         opened.database.dispose()
 
@@ -521,17 +555,20 @@ def test_combined_mount_serves_files_route_downloads_and_figures(tmp_path: Path)
     try:
         with TestClient(app, base_url="http://testserver") as live:
             searcher = opened.store.searcher()
-            material = searcher.variable(material_store.MaterialRecord)
+            material = searcher.variable(material_store.AltermagnetScreeningResult)
             record = searcher.results(material=material).first()["material"]
+            structure_id = record.structure_id
+            assert structure_id is not None
             expected = material_store.material_structure(record)
             assert expected is not None
 
             # Mirror the widget: the extensions route is a sibling of /v1, so a
             # relative path resolved against the discovered API base replaces "v1".
+            # CIF/POSCAR are keyed on the structure id now.
             api_base = "http://testserver/optimade/amdb/v1"
             for filename in _COMBINED_DOWNLOAD_FILES:
-                url = urljoin(api_base, f"extensions/files/{record.id}/{filename}")
-                assert url == f"http://testserver/optimade/amdb/extensions/files/{record.id}/{filename}"
+                url = urljoin(api_base, f"extensions/files/{structure_id}/{filename}")
+                assert url == f"http://testserver/optimade/amdb/extensions/files/{structure_id}/{filename}"
                 resp = live.get(url)
                 assert resp.status_code == 200, resp.text
                 local = tmp_path / filename
@@ -542,7 +579,7 @@ def test_combined_mount_serves_files_route_downloads_and_figures(tmp_path: Path)
 
             # A served figure URL resolves under the renamed route (protects the rename).
             attributes = live.get(
-                f"/optimade/amdb/v1/structures/{record.id}", params={"response_fields": "_httk_custom_figures"}
+                f"/optimade/amdb/v1/{RESULT}/{record.id}", params={"response_fields": "_httk_custom_figures"}
             ).json()["data"]["attributes"]
             figure_url = next(
                 (fig["url"] for fig in (attributes.get("_httk_custom_figures") or []) if fig.get("available")), None
@@ -576,36 +613,31 @@ def test_httk_alts_routes_serve_composite_alternatives(tmp_path: Path) -> None:
     )
     try:
         with TestClient(app, base_url="http://testserver") as live:
-            group = live.get("/v1/structures/anyt.am-1-1/_httk_alts")
+            # Alternatives re-parent to the screened structure main (keyed on its id).
+            structure_id = _relationship_ids(live.get(f"/v1/{RESULT}/anyt.am-1-1").json()["data"], "structures")[0][1]
+            group = live.get(f"/v1/structures/{structure_id}/_httk_alts")
             assert group.status_code == 200, group.text
             payload = group.json()
             assert {item["id"] for item in payload["data"]} == {
-                "anyt.am-1-1~conventional",
-                "anyt.am-1-1~primitive",
+                f"{structure_id}~conventional",
+                f"{structure_id}~primitive",
             }
             assert {item["type"] for item in payload["data"]} == {"structures"}
-            assert {item["attributes"]["_httk_id"] for item in payload["data"]} == {"anyt.am-1-1"}
+            assert {item["attributes"]["_httk_id"] for item in payload["data"]} == {structure_id}
             assert {item["attributes"]["_httk_kind"] for item in payload["data"]} == {"conventional", "primitive"}
             assert payload["meta"]["data_returned"] == 2
 
-            single = live.get("/v1/structures/anyt.am-1-1/_httk_alts/conventional")
+            single = live.get(f"/v1/structures/{structure_id}/_httk_alts/conventional")
             assert single.status_code == 200, single.text
-            assert single.json()["data"]["id"] == "anyt.am-1-1~conventional"
+            assert single.json()["data"]["id"] == f"{structure_id}~conventional"
             assert single.json()["data"]["attributes"]["_httk_kind"] == "conventional"
-
-            # The alternative rows carry the main's densely enumerated references: the
-            # reference_ids stamp must reach the alternative-cell derivation, not only
-            # the mains bulk save (regression: alternatives served an empty block).
-            main_refs = _relationship_ids(live.get("/v1/structures/anyt.am-1-1").json()["data"], "references")
-            assert main_refs and all(re.fullmatch(r"anyt\.am\.refs-1-\d+", rid) for _type, rid in main_refs)
-            alt_refs = _relationship_ids(single.json()["data"], "references")
-            assert alt_refs == main_refs
     finally:
         opened.database.dispose()
 
 
-# The 9 direct MaterialRecord projections the site's search table requests; none is
-# nested under the structure sub-record, so serving them must never SELECT it.
+# The 9 direct AltermagnetScreeningResult projections the site's search table requests; none
+# reads the structure, so serving them must never hydrate the structure CONTENT (a single
+# cheap sid/id FK-identity probe on the base table resolves the reference; see the test).
 SEARCH_TABLE_COLUMNS = (
     "_anyterial_formula",
     "_httk_magndata_ids",
@@ -623,7 +655,7 @@ def _structure_table_names() -> set[str]:
     """Resolve the structure record's table and its child tables without hardcoding."""
     from httk.store.backend.schema import resolve_schema
 
-    structure_schema = resolve_schema(resolve_schema(material_store.MaterialRecord).field("structure").target)
+    structure_schema = resolve_schema(resolve_schema(material_store.AltermagnetScreeningResult).field("structure").target)
     tables = {structure_schema.table_name}
     tables.update(
         field.child.table_name for field in structure_schema.fields if field.role == "child" and field.child is not None
@@ -672,7 +704,7 @@ def test_search_table_columns_skip_structure_hydration(tmp_path: Path) -> None:
     try:
         with TestClient(app, base_url="http://testserver") as live:
             response = live.get(
-                "/v1/structures",
+                f"/v1/{RESULT}",
                 params={"response_fields": ",".join(SEARCH_TABLE_COLUMNS), "page_limit": "180"},
             )
     finally:
@@ -690,15 +722,105 @@ def test_search_table_columns_skip_structure_hydration(tmp_path: Path) -> None:
     assert first["_anyterial_classification"]
     assert first["_anyterial_max_spin_splitting"] is not None
     assert first["_httk_dft_band_gap"] is not None
-    # The search table never reads the nested structure, so no SQL touches its tables.
+    # The result references the structure as a separate main. The federation serves that
+    # typed reference natively as the `structures` relationship block (E3), reading the
+    # result's FK plus at most ONE cheap FK-identity probe (sid, id) on the base structure
+    # table. It must NEVER hydrate the expensive structure CONTENT: neither the child
+    # tables (species/sites-moments/assemblies) nor the base-table content columns.
+    from httk.store.backend.schema import resolve_schema
+
+    base_table = resolve_schema(
+        resolve_schema(material_store.AltermagnetScreeningResult).field("structure").target
+    ).table_name
+    content_tables = structure_tables - {base_table}
+    content_columns = ("chemical_formula", "basis", "reduced_coords", "site_moments", "species_at_sites")
     assert statements
-    assert not any(table in statement for table in structure_tables for statement in statements)
+    assert not any(table in statement for table in content_tables for statement in statements)
+    base_hits = [statement for statement in statements if base_table in statement]
+    assert not any(marker in statement for statement in base_hits for marker in content_columns)
     # Phase 2: the adapter always attaches references relationships and include was
     # defaulted on this multi-row page, so the reply must not embed an included section.
     assert len(data) > 1
     assert "included" not in payload
 
     opened.database.dispose()
+
+
+def _result_filter_ids(live: "TestClient", filter_string: str) -> "tuple[int, list[str]]":
+    """Return ``(status, sorted result ids)`` for a filter on the result endpoint."""
+    response = live.get(
+        f"/v1/{RESULT}", params={"filter": filter_string, "page_limit": "200", "response_fields": "id"}
+    )
+    return response.status_code, sorted(item["id"] for item in response.json().get("data", []))
+
+
+def _structure_nsites_by_result(live: "TestClient") -> dict[str, int]:
+    """Map each result id that references a structure to that structure's ``nsites``.
+
+    Read straight off the served ``structures`` relationship block (federation, E3),
+    so the e2e assertions derive their expected sets from the store's own data rather
+    than hard-coding fixture values (the two store builds differ in nsites).
+    """
+    results = live.get(f"/v1/{RESULT}", params={"page_limit": "200", "response_fields": "id"}).json()["data"]
+    nsites: dict[str, int] = {}
+    for item in results:
+        resource = live.get(f"/v1/{RESULT}/{item['id']}").json()["data"]
+        block = resource.get("relationships", {}).get("structures", {}).get("data", [])
+        if not block:
+            continue
+        structure = live.get(f"/v1/structures/{block[0]['id']}", params={"response_fields": "nsites"}).json()["data"]
+        nsites[item["id"]] = structure["attributes"]["nsites"]
+    return nsites
+
+
+def test_structures_nsites_depth1_filter_e2e(tmp_path: Path) -> None:
+    """The plan headline: depth-1 ``structures.nsites`` filtering on the result endpoint.
+
+    The federation resolves the result->structure typed reference field's target property
+    (E3), so a ``structures.<prop>`` filter on the result endpoint selects the results whose
+    referenced structure matches. Exercised on BOTH a fresh coupled in-memory build AND the
+    real prebuilt duckdb store, with expected id sets derived from each store's own served
+    data: an exact filter selects exactly the results whose structure has that ``nsites``
+    (non-empty), a ``<=`` at the max selects every result with a structure, and a value no
+    structure satisfies selects none (proving the resolver truly discriminates on the value).
+    """
+    in_memory = material_store.open_in_memory_store(
+        write_source_tables(tmp_path / "tables"), details_dir=write_detail_assets(tmp_path / "details")
+    )
+    assert in_memory is not None
+    prebuilt = material_store.open_prebuilt_store(
+        material_store.build_store(
+            tmp_path / "store.duckdb",
+            data_dir=write_source_tables(tmp_path / "tables2"),
+            details_dir=write_detail_assets(tmp_path / "details2"),
+        )
+    )
+    assert prebuilt is not None
+    try:
+        for opened in (in_memory, prebuilt):
+            app = build_service_app(
+                public_base_url="https://api.example.test/optimade/amdb", store=opened.store
+            )
+            with TestClient(app, base_url="http://testserver") as live:
+                nsites = _structure_nsites_by_result(live)
+                assert nsites, "fixture must reference at least one structure"
+                values = sorted(set(nsites.values()))
+                target, ceiling, floor = values[0], values[-1], values[0]
+                # Exact match selects exactly the results whose structure has that nsites.
+                expected_exact = sorted(rid for rid, n in nsites.items() if n == target)
+                assert expected_exact
+                assert _result_filter_ids(live, f"structures.nsites={target}") == (200, expected_exact)
+                # `<=` the max selects every result carrying a structure.
+                assert _result_filter_ids(live, f"structures.nsites<={ceiling}") == (200, sorted(nsites))
+                # A comparison no structure satisfies, and an out-of-range exact: both empty.
+                assert _result_filter_ids(live, f"structures.nsites<{floor}") == (200, [])
+                assert _result_filter_ids(live, f"structures.nsites={ceiling + 1000}") == (200, [])
+                # depth>=2 stays not-implemented on this route.
+                depth2 = live.get(f"/v1/{RESULT}", params={"filter": 'structures.nsites.deep CONTAINS "x"'})
+                assert depth2.status_code == 501
+    finally:
+        in_memory.database.dispose()
+        prebuilt.database.dispose()
 
 
 def _figure_dataset(details_root: Path) -> tuple[dict[str, Any], str, Path, Path]:
@@ -905,7 +1027,7 @@ def test_standalone_service_api_figure_url_resolves_through_same_app() -> None:
     )
     client = ApiClient(app)
     all_data: list[dict[str, Any]] = []
-    next_url: str | None = "/structures"
+    next_url: str | None = f"/{RESULT}"
     params = {"response_fields": "_httk_custom_figures", "page_limit": "200"}
     while next_url is not None:
         response = client.get(next_url, params=params)
@@ -926,14 +1048,21 @@ def test_standalone_service_api_figure_url_resolves_through_same_app() -> None:
 
 
 def test_dataset_assembly_counts_and_exact_lattice() -> None:
-    structures, properties, _relationships, references = dataset_module.build_dataset()
-    assert len(structures) == 180
+    structures, properties, relationships, references = dataset_module.build_dataset()
+    # Science properties key on every result id; structures key on their stamped ids and
+    # are deduplicated by content, so there are at most one per structure-bearing result.
     assert len(properties) == 180
+    # Structures key on their stamped ids, deduplicated by content, so the count equals
+    # the number of DISTINCT structure ids the results reference (135 in the coupled
+    # prebuilt store; fewer in the details-only in-memory fallback). Pin that invariant
+    # rather than a store-dependent magic number.
+    referenced = {sid for rels in relationships.values() for sid in rels.get("structures", ())}
+    assert 0 < len(structures) == len(referenced)
     assert references  # DOIs were collected across the symmetry tables
     for property_values in properties.values():
         assert set(property_values) == EXPECTED_PROPERTY_NAMES
 
-    smfeo3 = structures["anyt.am-1-39"]
+    smfeo3 = structures[relationships["anyt.am-1-39"]["structures"][0]]
     assert smfeo3 is not None
     row0 = smfeo3.cell.basis.to_floats()[0]
     # First lattice row: float-exact from the CONTCAR strings ("5.3982999999999999").
@@ -960,18 +1089,30 @@ def test_live_definition_contract() -> None:
     assert figures["x-optimade-requirements"]["response-level"] == "should not"
 
 
-def test_null_structure_material_serves_null_lattice(providers: list) -> None:
-    structure_provider = providers[0]
-    records = {record["__id"]: record for record in structure_provider.records("structures")}
-    null_materials = [mid for mid, record in records.items() if record["lattice_vectors"] is None]
-    assert null_materials  # some screening rows have no CONTCAR
-    assert records[null_materials[0]]["lattice_vectors"] is None
-    assert records[null_materials[0]]["species"] is None
+def test_structureless_result_has_no_structures_relationship(providers: list) -> None:
+    # A screening result whose material has no CONTCAR serves its science but carries no
+    # structures relationship (there is no slim structures main for it to reference).
+    result_relationships = providers[0].relationships(RESULT)
+    result_ids = {record["id"] for record in providers[0].records(RESULT)}
+    structureless = [
+        rid
+        for rid in result_ids
+        if not any(entry.entry_type == "structures" for entry in result_relationships.get(rid, ()))
+    ]
+    assert structureless  # some screening rows have no CONTCAR
+    science = {record["id"]: record for record in providers[0].records(RESULT)}
+    assert science[structureless[0]]["_anyterial_formula"]
+
+
+def _structure_id_for(providers: list, result_id: str) -> str:
+    """Resolve the structures relationship id of one screening result."""
+    related = providers[0].relationships(RESULT)[result_id]
+    return next(entry.id for entry in related if entry.entry_type == "structures")
 
 
 def test_moments_are_served_for_the_fixture_structure(providers: list) -> None:
-    records = {record["__id"]: record for record in providers[0].records("structures")}
-    assert records["anyt.am-1-39"]["_httk_site_moments"] == [
+    records = {record["__id"]: record for record in providers[1].records("structures")}
+    assert records[_structure_id_for(providers, "anyt.am-1-39")]["_httk_site_moments"] == [
         [0.0, 0.0, -0.0],
         [0.0, 0.0, -0.0],
         [0.0, 0.0, -0.0],
@@ -993,16 +1134,22 @@ def test_moments_are_served_for_the_fixture_structure(providers: list) -> None:
         [0.0, 0.0, 0.007],
         [0.0, 0.0, -0.006],
     ]
-    assert "_httk_magnetism" in records["anyt.am-1-39"]["structure_features"]
+    assert "_httk_magnetism" in records[_structure_id_for(providers, "anyt.am-1-39")]["structure_features"]
 
 
 def test_info_structures_lists_custom_and_standard_definitions(client: ApiClient) -> None:
-    response = client.get("/info/structures")
+    # Standard structural definitions (and site moments) stay on the structures info.
+    structures_info = client.get("/info/structures")
+    assert structures_info.status_code == 200
+    structures_blob = json.dumps(structures_info.json())
+    assert "https://schemas.optimade.org/defs/v1.2/properties/optimade/structures/nelements" in structures_blob
+    assert "_httk_site_moments" in structures_info.json()["data"]["properties"]
+    # The AMDB science definitions moved to the screening-result main entity.
+    response = client.get(f"/info/{RESULT}")
     assert response.status_code == 200
     blob = json.dumps(response.json())
-    # Published custom definitions retain their authoritative $ids; standard ones stay canonical.
+    # Published custom definitions retain their authoritative $ids.
     assert "https://schemas.anyterial.se/defs/v0.1/properties/altermagnets/max_spin_splitting" in blob
-    assert "https://schemas.optimade.org/defs/v1.2/properties/optimade/structures/nelements" in blob
     properties = response.json()["data"]["properties"]
     expected_custom_properties = {
         "_anyterial_classification",
@@ -1031,11 +1178,12 @@ def test_info_structures_lists_custom_and_standard_definitions(client: ApiClient
     assert "_httk_magndata_ids" in properties
     assert "_anyterial_magnetic_phase" in properties
     assert "_anyterial_wave_class" in properties
-    assert "_httk_site_moments" in properties
+    # Site moments are a structures property, not a screening-result one.
+    assert "_httk_site_moments" not in properties
 
 
 def test_info_structures_figure_definition_is_local_and_lightweight(client: ApiClient) -> None:
-    response = client.get("/info/structures")
+    response = client.get(f"/info/{RESULT}")
     assert response.status_code == 200
     definition = response.json()["data"]["properties"]["_httk_custom_figures"]
     assert definition["$id"] == "https://schemas.httk.org/ad-hoc/defs/properties/_httk_custom_figures"
@@ -1045,7 +1193,7 @@ def test_info_structures_figure_definition_is_local_and_lightweight(client: ApiC
 
 def test_filter_on_magnetic_phase_returns_rows(client: ApiClient) -> None:
     response = client.get(
-        "/structures",
+        f"/{RESULT}",
         params={"filter": '_anyterial_magnetic_phase = "altermagnet"', "response_fields": "_anyterial_magnetic_phase"},
     )
     assert response.status_code == 200
@@ -1059,7 +1207,7 @@ def test_references_endpoint_and_include(client: ApiClient) -> None:
     assert references.status_code == 200
     assert len(references.json()["data"]) > 0
 
-    included_response = client.get("/structures", params={"include": "references", "page_limit": "5"})
+    included_response = client.get(f"/{RESULT}", params={"include": "references", "page_limit": "5"})
     assert included_response.status_code == 200
     payload = included_response.json()
     included = payload.get("included", [])
@@ -1124,7 +1272,7 @@ def test_detail_properties_and_absolute_figures(client: ApiClient) -> None:
         "_httk_custom_figures",
     ]
     response = client.get(
-        "/structures",
+        f"/{RESULT}",
         params={
             "filter": 'id = "anyt.am-1-1"',
             "response_fields": ",".join(fields),
@@ -1148,7 +1296,7 @@ def test_detail_properties_and_absolute_figures(client: ApiClient) -> None:
 
 
 def test_non_default_properties_are_omitted_unless_requested(client: ApiClient) -> None:
-    response = client.get("/structures", params={"filter": 'id = "anyt.am-1-1"'})
+    response = client.get(f"/{RESULT}", params={"filter": 'id = "anyt.am-1-1"'})
     assert response.status_code == 200
     attributes = response.json()["data"][0]["attributes"]
     assert all(
@@ -1179,7 +1327,7 @@ def test_non_default_properties_are_omitted_unless_requested(client: ApiClient) 
 )
 def test_sortable_properties_put_nulls_last_in_both_directions(client: ApiClient, property_name: str) -> None:
     for sort in (property_name, f"-{property_name}"):
-        response = client.get("/structures", params={"sort": sort, "response_fields": property_name})
+        response = client.get(f"/{RESULT}", params={"sort": sort, "response_fields": property_name})
         assert response.status_code == 200
         values = [
             item["id"] if property_name == "id" else item["attributes"].get(property_name)
@@ -1209,7 +1357,7 @@ def test_sortable_properties_put_nulls_last_in_both_directions(client: ApiClient
 
 def test_sort_continuation_preserves_order(client: ApiClient) -> None:
     response = client.get(
-        "/structures",
+        f"/{RESULT}",
         params={"sort": "_httk_dft_band_gap", "page_limit": "2", "response_fields": "_httk_dft_band_gap"},
     )
     assert response.status_code == 200
@@ -1224,15 +1372,21 @@ def test_sort_continuation_preserves_order(client: ApiClient) -> None:
 
 
 def test_structureless_and_unresolved_variant_projection(providers: list) -> None:
-    records = {record["__id"]: record for record in providers[0].records("structures")}
-    structureless = next(record for record in records.values() if record["lattice_vectors"] is None)
-    assert structureless["_anyterial_formula"]
-    assert structureless["_anyterial_elements"]
+    science = {record["id"]: record for record in providers[0].records(RESULT)}
+    result_relationships = providers[0].relationships(RESULT)
+    structureless_id = next(
+        rid
+        for rid in science
+        if not any(entry.entry_type == "structures" for entry in result_relationships.get(rid, ()))
+    )
+    assert science[structureless_id]["_anyterial_formula"]
+    assert science[structureless_id]["_anyterial_elements"]
 
-    structures, properties, _relationships, _references = dataset_module.build_dataset()
-    assert structures[structureless["__id"]] is None
-    assert properties[structureless["__id"]]["_anyterial_formula"]
-    assert properties[structureless["__id"]]["_anyterial_elements"]
+    structures, properties, relationships, _references = dataset_module.build_dataset()
+    # A structureless result has science but no stored structure and no structures relationship.
+    assert "structures" not in relationships.get(structureless_id, {})
+    assert properties[structureless_id]["_anyterial_formula"]
+    assert properties[structureless_id]["_anyterial_elements"]
 
     # The store graph has no unresolved links in the production fixture. Exercise
     # the same placeholder projection on a copied record to keep this contract explicit.
@@ -1240,7 +1394,7 @@ def test_structureless_and_unresolved_variant_projection(providers: list) -> Non
     assert opened is not None
     try:
         searcher = opened.store.searcher()
-        material_variable = searcher.variable(material_store.MaterialRecord)
+        material_variable = searcher.variable(material_store.AltermagnetScreeningResult)
         material = searcher.results(material=material_variable).first()["material"]
         unresolved = replace(
             material,
@@ -2033,7 +2187,7 @@ def test_search_filter_and_sort_goldens(client: ApiClient) -> None:
         "abundance_desc": "-_anyterial_min_crustal_abundance,-_anyterial_max_spin_splitting,id",
     }
     for mode, expression in sort_expressions.items():
-        response = client.get("/structures", params={"sort": expression, "response_fields": "id", "page_limit": "50"})
+        response = client.get(f"/{RESULT}", params={"sort": expression, "response_fields": "id", "page_limit": "50"})
         assert response.status_code == 200
         page = response.json()
         ids = [item["id"] for item in page["data"]]

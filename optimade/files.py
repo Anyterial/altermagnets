@@ -72,7 +72,7 @@ def _load_figure_index() -> dict[str, tuple[str, tuple[_StoredFigure, ...]]]:
     records: dict[str, Any] = {}
     try:
         searcher = opened.store.searcher()
-        material = searcher.variable(material_store.MaterialRecord)
+        material = searcher.variable(material_store.AltermagnetScreeningResult)
         for result in searcher.results(material=material):
             record = result["material"]
             records[record.id] = record
@@ -131,18 +131,39 @@ def resolve_locator_path(locator: str, runs_root: Path) -> Path | None:
 
 
 def _stored_material_record(store: Any, material_id: str) -> Any | None:
-    """Fetch the MaterialRecord for one public material ID from the store, or None."""
+    """Fetch the AltermagnetScreeningResult for one public result ID from the store, or None."""
     aliases = material_store.material_id_aliases(material_id)
     if not aliases:
         return None
     searcher = store.searcher()
-    material = searcher.variable(material_store.MaterialRecord)
+    material = searcher.variable(material_store.AltermagnetScreeningResult)
     predicate = material.id == aliases[0]
     for alias in aliases[1:]:
         predicate = predicate | (material.id == alias)
     searcher.add(predicate)
     row = searcher.results(material=material).first()
     return None if row is None else row["material"]
+
+
+def _stored_structure_record(store: Any, structure_id: str) -> Any | None:
+    """Fetch one slim ``structures`` main (``UnitcellStructureRecord``) by its stamped id.
+
+    The CIF/POSCAR download routes are keyed on the structure id (``anyt.am.structure-1-N``)
+    now that the crystal structure is a separate standard entry.
+
+    :param store: The live entry store to read.
+    :param structure_id: The stamped structure id to fetch.
+    :return: The structure record, or ``None`` when absent.
+    """
+    if not structure_id:
+        return None
+    from httk.atomistic.storage.records import UnitcellStructureRecord
+
+    searcher = store.searcher()
+    structure = searcher.variable(UnitcellStructureRecord)
+    searcher.add(structure.id == structure_id)
+    row = searcher.results(structure=structure).first()
+    return None if row is None else row["structure"]
 
 
 def _stored_figure_match(store: Any, material_id: str) -> tuple[str, tuple[_StoredFigure, ...]] | None:
@@ -177,16 +198,17 @@ def structure_download_filename(material_id: str, download: _StructureDownload) 
 
 
 def structure_download_body(record: Any, download: _StructureDownload) -> bytes | None:
-    """Serialize a record's MAIN structure to the download format, or None.
+    """Serialize a slim ``structures`` main to the download format, or None.
 
-    ``None`` means the material has no structure, the format cannot represent it
-    (e.g. POSCAR partial occupancy), or the generated file exceeds the size cap.
-    httk-core ``save`` selects the writer by ``format`` and writes to a path, so
-    a throwaway temp file is the cleanly supported buffer.
+    ``record`` is a ``UnitcellStructureRecord`` (the screened crystal, now a separate
+    standard entry). ``None`` means the format cannot represent it (e.g. POSCAR partial
+    occupancy) or the generated file exceeds the size cap. httk-core ``save`` selects
+    the writer by ``format`` and writes to a path, so a throwaway temp file is the
+    cleanly supported buffer.
     """
-    structure = material_store.material_structure(record)
-    if structure is None:
-        return None
+    from httk.atomistic import UnitcellStructureView
+
+    structure = UnitcellStructureView(record, kind="record")
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "structure"
         try:

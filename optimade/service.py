@@ -27,7 +27,7 @@ from .files import (
     _media_type,
     _read_file,
     _stored_figure_match,
-    _stored_material_record,
+    _stored_structure_record,
     resolve_locator_path,
     stored_file_locator,
     structure_download_body,
@@ -134,9 +134,10 @@ def build_service_app(
         filename = request.path_params["filename"]
         download = STRUCTURE_DOWNLOADS.get(filename)
         if download is not None:
-            # Structure files are generated on request from the DATABASE record's
-            # main structure (never the detail tree). Requires a live store.
-            record = _stored_material_record(store, material_id) if store is not None else None
+            # Structure files are generated on request from the DATABASE structure main
+            # (never the detail tree), keyed on the structure id (anyt.am.structure-1-N).
+            # Requires a live store.
+            record = _stored_structure_record(store, material_id) if store is not None else None
             if record is None:
                 return Response(status_code=404)
             body = structure_download_body(record, download)

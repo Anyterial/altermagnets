@@ -17,7 +17,7 @@ import os
 import re
 import tempfile
 import time
-from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass, field, replace
 from functools import cache
 from pathlib import Path
@@ -178,15 +178,9 @@ LEDGER_SERIES = "1"
 #: Seal-key refs the build signs the ledger with. ``identity`` is the operator's
 #: default identity (this repo is NOT an httk project, so no ``project`` ref);
 #: the build fails at open if none resolves rather than silently skip sealing.
+#: The seal is an audit record (who signed each committed ledger, logged and
+#: inspected via git history), not a build gate; the build never pins a signer.
 LEDGER_SIGNER_REFS: tuple[str, ...] = ("identity",)
-
-#: The signer fingerprint the build pins when opening an existing ledger. When
-#: non-empty, ``IdLedger.open(trusted_keys=...)`` demands this signer (a swapped
-#: seal is rejected); when empty, a merely valid signature is accepted with a
-#: loud warning and git history stands as the witness. DEPLOY NOTE: this is the
-#: fingerprint of the operator identity on the build host; a different operator
-#: must re-pin it to their own ``httk identity`` fingerprint.
-LEDGER_TRUSTED_SIGNERS: tuple[str, ...] = ("sha256:42834362ba07f8849a60fc9784cf0ee928b965299bae6c7172c5307d589ce666",)
 MATERIAL_ID_PATTERN = re.compile(r"^(?:anyt[:.])?(?P<family>am|amdb)-(?P<series>[A-Za-z0-9]+)-(?P<number>\d+)$")
 LEGACY_MATERIAL_ID_PATTERN = re.compile(r"^(?:anyt:)?amdb-(?P<number>\d+)$")
 PLOT_FILENAMES: tuple[tuple[str, str], ...] = (
@@ -729,17 +723,16 @@ def _assign_output_id(ledger: IdLedger, amdb_id: str, role: str, value: object) 
     return ledger.assign(_record_key(amdb_id, role), "records")
 
 
-def _open_ledger(source_dir: Path, *, trusted_signers: Sequence[str]) -> IdLedger:
+def _open_ledger(source_dir: Path) -> IdLedger:
     """Open the committed sealed id ledger, creating it on the first build.
 
     The build always signs the ledger with :data:`LEDGER_SIGNER_REFS`; a missing
-    signing seed fails here rather than silently skipping the seal. An existing
-    ledger is opened with the pinned *trusted_signers* (a swapped seal is
-    rejected) or, when none are pinned, with a loud warning and git history as the
-    witness.
+    signing seed fails here rather than silently skipping the seal. The signature
+    is an audit record, not a build gate: an existing ledger opens without a
+    pinned signer (the integrity self-check still refuses a tampered file), and
+    ``IdLedger.open`` logs who signed it. Git history is the tamper witness.
 
     :param source_dir: The source-table directory holding :data:`LEDGER_FILENAME`.
-    :param trusted_signers: The pinned trust anchors, or empty to accept any valid signer.
     :return: The open, locked ledger.
     :raises SealError: If no signing seed is available.
     """
@@ -754,9 +747,7 @@ def _open_ledger(source_dir: Path, *, trusted_signers: Sequence[str]) -> IdLedge
     if path.exists():
         # Pass the code-side scheme so a drift between LEDGER_BASES/LEDGER_SERIES and the
         # committed file is a loud error, not a silent adoption of the stored bases.
-        return IdLedger.open(
-            path, keys=keys, trusted_keys=tuple(trusted_signers), bases=LEDGER_BASES, series=LEDGER_SERIES
-        )
+        return IdLedger.open(path, keys=keys, bases=LEDGER_BASES, series=LEDGER_SERIES)
     return IdLedger.create(path, bases=LEDGER_BASES, series=LEDGER_SERIES, keys=keys)
 
 
@@ -2613,7 +2604,6 @@ def build_store(
     runs_dir: str | os.PathLike[str] | None = None,
     legacy: bool = False,
     refresh_coupling: bool = False,
-    trusted_signers: Sequence[str] | None = None,
     timings: MutableMapping[str, float] | None = None,
 ) -> Path:
     """Build a fresh store next to ``target`` and atomically replace it.
@@ -2624,15 +2614,14 @@ def build_store(
     A non-legacy build allocates every structure, reference, run, record and file
     id from the committed sealed id ledger (``data/tables/amdb_ids.json``), so the
     ids are stable across rebuilds; the ledger is signed with the operator identity
-    and, on later builds, opened with *trusted_signers* (defaulting to the pinned
-    :data:`LEDGER_TRUSTED_SIGNERS`; pass an empty sequence to accept any valid
-    signer with a warning). The build refuses to run without a signing seed.
+    as an audit record (``IdLedger.open`` logs who signed each reopened ledger and
+    refuses a tampered one; git history is the tamper witness). The build refuses
+    to run without a signing seed.
 
     When ``timings`` is supplied it is populated with the wall-clock seconds of
     the ``load`` (source parsing), ``write`` (the bulk-ingest context) and
     ``finalize`` (dispose plus atomic replace) phases, and the ``total``.
     """
-    pinned_signers = LEDGER_TRUSTED_SIGNERS if trusted_signers is None else trusted_signers
     total_started = time.perf_counter()
     resolved_target = resolve_store_path(target)
     source_dir = resolve_data_dir(data_dir)
@@ -2750,7 +2739,7 @@ def build_store(
         # stable amdb source keys, so the store keeps its ids across rebuilds. It is not
         # used by the legacy raw-storage build (no id-managed families).
         if not legacy:
-            ledger = _open_ledger(source_dir, trusted_signers=pinned_signers)
+            ledger = _open_ledger(source_dir)
         created_database = Backend.duckdb(temporary_path)
         database = created_database
         store = SqlStore(

@@ -8,6 +8,7 @@ can sign the ledger (the build refuses to run unsigned).
 """
 
 import json
+import logging
 from pathlib import Path
 
 import duckdb
@@ -97,11 +98,10 @@ def _fixture_tree(tmp_path: Path) -> tuple[Path, Path, Path]:
 
 
 def _local_signer_fingerprint(project_root: Path) -> str:
-    """Return the fingerprint the build will actually sign with on THIS host.
+    """Return the fingerprint the build will actually sign the ledger with on THIS host.
 
-    Derived exactly as the build derives its signing key, so the pinned-trust test
-    stays portable across operators/CI instead of assuming the local identity equals
-    the committed production pin.
+    Derived exactly as the build derives its signing key, so the audit-surface test
+    asserts the logged signer without assuming the local identity's fingerprint.
     """
     from httk.core.crypto import ed25519_public_key
     from httk.core.project.anchor import format_public_key, key_fingerprint
@@ -154,11 +154,9 @@ def _result(material_id: str, structure: object | None, *, dois: tuple[str, ...]
 def test_double_build_keeps_every_served_id_identical(tmp_path: Path) -> None:
     """THE HEADLINE: a from-scratch rebuild consuming the ledger serves identical ids everywhere."""
     tables, details, runs = _fixture_tree(tmp_path)
-    first = build_store(tmp_path / "s1.duckdb", data_dir=tables, details_dir=details, runs_dir=runs, trusted_signers=())
+    first = build_store(tmp_path / "s1.duckdb", data_dir=tables, details_dir=details, runs_dir=runs)
     ledger_after_first = (tables / material_store.LEDGER_FILENAME).read_bytes()
-    second = build_store(
-        tmp_path / "s2.duckdb", data_dir=tables, details_dir=details, runs_dir=runs, trusted_signers=()
-    )
+    second = build_store(tmp_path / "s2.duckdb", data_dir=tables, details_dir=details, runs_dir=runs)
 
     ids_first = _served_ids(first)
     ids_second = _served_ids(second)
@@ -196,7 +194,7 @@ def test_record_value_change_keeps_the_same_id(tmp_path: Path) -> None:
 
 def test_shared_structure_records_one_id_and_an_alias(tmp_path: Path) -> None:
     """Two materials sharing one structure yield one assigned id and an alias of the smaller key."""
-    with _open_ledger(tmp_path, trusted_signers=()) as ledger:
+    with _open_ledger(tmp_path) as ledger:
         shared = _structure(1.0)
         id_map, mains = _structure_mains([_result("anyt.am-1-2", shared), _result("anyt.am-1-5", shared)], ledger)
         assert id_map["anyt.am-1-2"] == id_map["anyt.am-1-5"]  # one shared structure id
@@ -222,12 +220,12 @@ def test_shared_structure_split_supersedes_the_departed_member(tmp_path: Path) -
     unless the reconcile escalates to ``supersede=True``.
     """
     shared = _structure(1.0)
-    with _open_ledger(tmp_path, trusted_signers=()) as ledger:
+    with _open_ledger(tmp_path) as ledger:
         first, _mains = _structure_mains([_result("anyt.am-1-2", shared), _result("anyt.am-1-5", shared)], ledger)
     owner_id = first["anyt.am-1-2"]
     assert first["anyt.am-1-2"] == first["anyt.am-1-5"] == owner_id  # one shared id, 1-2 the smaller key owns
 
-    with _open_ledger(tmp_path, trusted_signers=()) as ledger:
+    with _open_ledger(tmp_path) as ledger:
         second, _mains = _structure_mains(
             [_result("anyt.am-1-2", shared), _result("anyt.am-1-5", _structure(2.0))], ledger
         )
@@ -252,7 +250,7 @@ def test_shared_structure_merge_supersedes_the_absorbed_assignment(tmp_path: Pat
     Fails without the wiring: aliasing the absorbed member's assigned key raises
     unless the reconcile escalates to ``supersede=True``.
     """
-    with _open_ledger(tmp_path, trusted_signers=()) as ledger:
+    with _open_ledger(tmp_path) as ledger:
         first, _mains = _structure_mains(
             [_result("anyt.am-1-2", _structure(1.0)), _result("anyt.am-1-7", _structure(3.0))], ledger
         )
@@ -260,7 +258,7 @@ def test_shared_structure_merge_supersedes_the_absorbed_assignment(tmp_path: Pat
     absorbed_id = first["anyt.am-1-7"]
     assert owner_id != absorbed_id  # two distinct structures, each its own assignment
 
-    with _open_ledger(tmp_path, trusted_signers=()) as ledger:
+    with _open_ledger(tmp_path) as ledger:
         merged, mains = _structure_mains(
             [_result("anyt.am-1-2", _structure(1.0)), _result("anyt.am-1-7", _structure(1.0))], ledger
         )
@@ -276,7 +274,7 @@ def test_shared_structure_merge_supersedes_the_absorbed_assignment(tmp_path: Pat
 
 def test_doi_case_variants_collapse_to_one_reference_id(tmp_path: Path) -> None:
     """Two DOIs differing only in case map to one reference id (keys are lower-cased)."""
-    with _open_ledger(tmp_path, trusted_signers=()) as ledger:
+    with _open_ledger(tmp_path) as ledger:
         mapping = _reference_ids_by_doi(
             [_result("anyt.am-1-1", None, dois=("10.1000/AbC",)), _result("anyt.am-1-2", None, dois=("10.1000/abc",))],
             ledger,
@@ -293,7 +291,7 @@ def test_open_rejects_a_bases_map_that_drifts_from_the_committed_file(tmp_path: 
 
     Defends the code-side LEDGER_BASES pin against divergence from the stored subject.
     """
-    with _open_ledger(tmp_path, trusted_signers=()):
+    with _open_ledger(tmp_path):
         pass  # create the committed-format ledger
     keys = resolve_seal_keys(material_store.LEDGER_SIGNER_REFS, project_root=tmp_path).keys
     drifted = {**material_store.LEDGER_BASES, "structures": "anyt.am.drifted"}
@@ -331,28 +329,27 @@ def test_missing_id_is_rejected_without_a_minting_scheme(tmp_path: Path) -> None
         database.dispose()
 
 
-def test_build_verifies_the_pinned_signer_and_rejects_a_stranger(tmp_path: Path) -> None:
-    """The in-build seal check accepts the actual signer when pinned and refuses a stranger.
+def test_reopen_logs_the_signer_as_an_audit_record_and_refuses_a_tampered_ledger(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The seal is an audit record: reopening logs who signed it, and a tampered file is refused.
 
-    The trust anchor is derived from the local signing identity (not the committed
-    production constant) so the test is portable across operators and CI hosts.
+    Trust is not enforced (no pinned signer), but the integrity self-check always
+    is: an edited byte breaks the seal and the reopen raises.
     """
+
     tables, details, runs = _fixture_tree(tmp_path)
     build_store(tmp_path / "s1.duckdb", data_dir=tables, details_dir=details, runs_dir=runs)
-    # Re-open with the pinned trust anchor: the committed ledger verifies.
-    build_store(
-        tmp_path / "s2.duckdb",
-        data_dir=tables,
-        details_dir=details,
-        runs_dir=runs,
-        trusted_signers=[_local_signer_fingerprint(tables)],
-    )
-    # A different pinned signer is rejected: the seal is signed by the wrong key.
-    with pytest.raises(IdLedgerError, match="untrusted"):
-        build_store(
-            tmp_path / "s3.duckdb",
-            data_dir=tables,
-            details_dir=details,
-            runs_dir=runs,
-            trusted_signers=["sha256:" + "0" * 64],
-        )
+    # Reopening logs the actual signer's fingerprint as the manual-audit surface.
+    with caplog.at_level(logging.INFO, logger="httk.store.id_ledger"):
+        build_store(tmp_path / "s2.duckdb", data_dir=tables, details_dir=details, runs_dir=runs)
+    message = next(record.getMessage() for record in caplog.records if "audit record" in record.getMessage())
+    assert _local_signer_fingerprint(tables) in message
+
+    # Tamper: flip a byte in the committed ledger. The signature no longer matches
+    # its own content, so the reopen refuses (integrity self-check, always on).
+    ledger_path = tables / material_store.LEDGER_FILENAME
+    text = ledger_path.read_text(encoding="utf-8")
+    ledger_path.write_text(text.replace("anyt.am.structure", "anyt.am.structured", 1), encoding="utf-8")
+    with pytest.raises(IdLedgerError, match="signature does not verify|restore"):
+        build_store(tmp_path / "s3.duckdb", data_dir=tables, details_dir=details, runs_dir=runs)

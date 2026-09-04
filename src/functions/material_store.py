@@ -2883,7 +2883,10 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
         if store_path.stat().st_size == 0:
             logger.info("Prebuilt store %s is empty; rebuild with `make build_store`", store_path)
             return None
-        opened_database = Backend.duckdb(store_path)
+        # Serving is pure reads; opening read-only keeps a store on read-only
+        # media (or a write-protected deployment) servable instead of tripping
+        # the broad fallback below with a write-lock/WAL permission error.
+        opened_database = Backend.duckdb(store_path, read_only=True)
         database = opened_database
         store = SqlStore(opened_database)
         # The layout stamp is the authoritative staleness check: a store built

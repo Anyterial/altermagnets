@@ -64,6 +64,33 @@ def test_load_material_structure_warns_and_omits_invalid_moments(tmp_path: Path,
     assert "2 rows for 3 sites" in caplog.text
 
 
+def test_prebuilt_store_serves_from_read_only_media(tmp_path: Path) -> None:
+    """A store on a read-only filesystem must serve, not trip the fallback.
+
+    Serving is pure reads; a read-write open needs DuckDB's write lock/WAL and
+    fails with a permission error on read-only media, which the broad fallback
+    used to swallow into the silently-degraded in-memory seed (observed on the
+    production host). Pins the read-only open path.
+    """
+    source = write_source_tables(tmp_path / "tables")
+    details = write_detail_assets(tmp_path / "details")
+    store_path = build_store(tmp_path / "ro" / "store.duckdb", data_dir=source, details_dir=details, legacy=True)
+    store_path.chmod(0o444)
+    store_path.parent.chmod(0o555)
+    try:
+        opened = open_prebuilt_store(store_path)
+        assert opened is not None, "read-only media must not trigger the fallback"
+        try:
+            searcher = opened.store.searcher()
+            material = searcher.variable(AltermagnetScreeningResult)
+            assert searcher.results(material=material).first() is not None
+        finally:
+            opened.database.dispose()
+    finally:
+        store_path.parent.chmod(0o755)
+        store_path.chmod(0o644)
+
+
 def test_material_structure_round_trips_through_store(tmp_path: Path) -> None:
     source = write_source_tables(tmp_path / "tables")
     details = write_detail_assets(tmp_path / "details")

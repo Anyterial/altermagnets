@@ -897,12 +897,11 @@ def test_records_relationship_depth1_filter_e2e(tmp_path: Path) -> None:
     ``screening_record`` the second).
 
     ``_httk_total_energy`` (the OTHER backing, :class:`~material_store.CalculationOutputRecord`,
-    reached through the first-declared ``calculation_output`` field) is deliberately NOT
-    exercised as a working filter here: its vendored definition
-    (``httk-schemas`` ``core/total_energy.json``) declares ``query-support: none``, so the
-    HTTP filter layer refuses it with 400 regardless of relationship depth -- confirmed
-    below instead, to lock in that documented (not this packet's) contract rather than
-    silently drop coverage of it.
+    reached through the first-declared ``calculation_output`` field) covers the
+    first-field route: its vendored definition (``httk-schemas``
+    ``core/total_energy.json``) declares ``query-support: "all mandatory"``, so both
+    the depth-1 relationship spelling on the result endpoint and the direct records
+    endpoint filter must select exactly the coupled material's rows.
     """
     opened, app, _details, _runs = _build_run_backed_store(tmp_path)
     try:
@@ -913,9 +912,16 @@ def test_records_relationship_depth1_filter_e2e(tmp_path: Path) -> None:
                 200,
                 ["anyt.am-1-1", "anyt.am-1-2"],
             )
-            refused = live.get(f"/v1/{RESULT}", params={"filter": "_httk_records._httk_total_energy < 0"})
-            assert refused.status_code == 400
-            assert "_httk_total_energy" in refused.json()["errors"][0]["detail"]
+            # Only CrSb is run-coupled (TOTEN -1.0); the depth-1 spelling routes
+            # through the FIRST-declared calculation_output reference field.
+            assert _result_filter_ids(live, "_httk_records._httk_total_energy < 0") == (
+                200,
+                ["anyt.am-1-1"],
+            )
+            direct = live.get("/v1/_httk_records", params={"filter": "_httk_total_energy < 0"})
+            assert direct.status_code == 200
+            direct_rows = direct.json()["data"]
+            assert [row["attributes"]["_httk_total_energy"] for row in direct_rows] == [-1.0]
     finally:
         opened.database.dispose()
 

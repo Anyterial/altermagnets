@@ -1,6 +1,5 @@
 """Dataset assembly and custom-property projection for the altermagnets service."""
 
-import json
 import logging
 from collections.abc import Iterable, Mapping, MutableMapping
 from pathlib import Path
@@ -9,7 +8,7 @@ from typing import Any
 import material_store
 from httk.atomistic import StructureEntryProvider
 from httk.core import EntryProvider, EntryTypeDefinition, PropertyDefinition, RelatedEntry, report
-from httk.store import DataRecordEntryProvider, FileEntryProvider, ReferenceEntryProvider
+from httk.store import FileEntryProvider, ReferenceEntryProvider
 
 from .files import figure_file_is_servable
 
@@ -48,7 +47,6 @@ HTTK_DEFINITION_PATHS = {
 }
 
 ANYTERIAL_DEFS_DIR = ROOT / "dependencies/submodules/anyterial-schemas/defs/v0.1/properties/altermagnets"
-HTTK_DEFS_DIR = ROOT / "dependencies/submodules/httk-schemas/defs/v0.1/properties"
 
 DEFAULT_PUBLIC_BASE_URL = "http://127.0.0.1:8081"
 FIGURE_KEYS = ("band", "structure", "bz")
@@ -62,40 +60,41 @@ SCREENING_PHASE_LABELS = {
 _RETAINED_STORES: list[Any] = []
 
 
-class AltermagnetScreeningResultProvider(EntryProvider):
-    """Serve the AMDB main entity (screening results) through the neutral provider contract.
+class _PropertyEntryProvider(EntryProvider):
+    """Serve one entry type from a flat per-id property map, the neutral provider contract.
 
-    Used by the ``--validate`` path: it advertises the served
-    ``_anyterial_altermagnet_screening_result`` definition and its science/figure/energy
-    property values, plus each result's ``structures``/``references`` relationships (for
-    the provider-backed serving path). The crystal structure is a separate provider.
+    Shared by the AMDB main entity and the ``_httk_records`` family on the ``--validate``
+    path: each keeps its own entry-type definition and (optional) relationships, but the
+    property/record/keys plumbing is identical.
     """
 
     def __init__(
         self,
+        definition: EntryTypeDefinition,
         properties: Mapping[str, Mapping[str, Any]],
         *,
-        relationships: Mapping[str, Mapping[str, tuple[str, ...]]],
+        relationships: Mapping[str, Mapping[str, tuple[str | RelatedEntry, ...]]] | None = None,
     ) -> None:
-        self._definition = material_store.AltermagnetScreeningResultEntry.entry_type_definition().served_form()
-        self._entry_type = self._definition.name
+        self._definition = definition
+        self._entry_type = definition.name
         self._properties = {str(entry_id): dict(values) for entry_id, values in properties.items()}
-        # The served science/figure/energy property names actually produced.
+        # The served property names actually produced (a property a row's backing
+        # lacks is simply absent from that row's dict and serves as null).
         self._property_names = sorted({name for values in self._properties.values() for name in values})
         # httk-core states relationships as a flat tuple of RelatedEntry per entry id;
         # grouping by related type is the serving layer's job.
-        self._result_relationships = {
+        self._related = {
             str(entry_id): tuple(
-                RelatedEntry(entry_type=related, id=related_id)
-                for related, ids in related_map.items()
-                for related_id in ids
+                item if isinstance(item, RelatedEntry) else RelatedEntry(entry_type=related, id=item)
+                for related, items in related_map.items()
+                for item in items
             )
-            for entry_id, related_map in relationships.items()
+            for entry_id, related_map in (relationships or {}).items()
         }
 
     def _check(self, entry_type: str) -> None:
         if entry_type != self._entry_type:
-            raise KeyError(f"AltermagnetScreeningResultProvider serves only {self._entry_type!r}.")
+            raise KeyError(f"{type(self).__name__} serves only {self._entry_type!r}.")
 
     def entry_types(self) -> Mapping[str, EntryTypeDefinition]:
         return {self._entry_type: self._definition}
@@ -115,7 +114,45 @@ class AltermagnetScreeningResultProvider(EntryProvider):
 
     def relationships(self, entry_type: str) -> Mapping[str, tuple[RelatedEntry, ...]]:
         self._check(entry_type)
-        return self._result_relationships
+        return self._related
+
+
+class AltermagnetScreeningResultProvider(_PropertyEntryProvider):
+    """Serve the AMDB main entity (screening results) through the neutral provider contract.
+
+    Used by the ``--validate`` path: it advertises the served
+    ``_anyterial_altermagnet_screening_result`` definition and its science/figure
+    property values, plus each result's ``structures``/``references``/``_httk_records``
+    relationships (for the provider-backed serving path). The crystal structure is a
+    separate provider.
+    """
+
+    def __init__(
+        self,
+        properties: Mapping[str, Mapping[str, Any]],
+        *,
+        relationships: Mapping[str, Mapping[str, tuple[str | RelatedEntry, ...]]],
+    ) -> None:
+        super().__init__(
+            material_store.AltermagnetScreeningResultEntry.entry_type_definition().served_form(),
+            properties,
+            relationships=relationships,
+        )
+
+
+class AltermagnetDataRecordProvider(_PropertyEntryProvider):
+    """Serve the AMDB ``_httk_records`` family (both typed backings) through the neutral
+    provider contract.
+
+    Used by the ``--validate`` path: the persisted :class:`~material_store.CalculationOutputRecord`
+    and :class:`~material_store.ScreeningResultRecord` rows are projected into the same typed
+    properties the store-native route serves; a property a row's backing lacks is absent
+    from its dict and serves as null. Records carry no relationships on this path (runs
+    are not validated here).
+    """
+
+    def __init__(self, properties: Mapping[str, Mapping[str, Any]]) -> None:
+        super().__init__(material_store.AltermagnetDataRecordEntry.entry_type_definition().served_form(), properties)
 
 
 def load_schema_definitions() -> dict[str, PropertyDefinition]:
@@ -216,11 +253,6 @@ def _material_properties(record: Any, public_base_url: str) -> dict[str, Any]:
         # page renders its no-symmetry-record placeholder from that state.
         "_anyterial_magndata_variants": variants,
         "_httk_custom_figures": _figure_payload(record, public_base_url),
-        # The producing run's reverse StrongLink relationships carry the run identity;
-        # this symmetric scalar is the material-level energy the detail page renders.
-        # The in-memory/--validate path serves no relationships, so its pages show
-        # only this scalar (documented degradation).
-        "_httk_custom_total_energy": getattr(record, "total_energy", None),
         "_anyterial_max_spin_splitting": record.max_ss,
         "_anyterial_avg_spin_splitting": record.avg_ss,
         "_anyterial_spin_splitting_fraction": (None if record.fdelta_pct is None else record.fdelta_pct / 100.0),
@@ -244,11 +276,11 @@ def build_dataset(
 ) -> tuple[
     dict[str, Any],
     dict[str, dict[str, Any]],
-    dict[str, dict[str, tuple[str, ...]]],
+    dict[str, dict[str, tuple[str | RelatedEntry, ...]]],
     dict[str, dict[str, Any]],
 ]:
     """Assemble the slim structures (by structure id), per-result science properties,
-    each result's structures/references relationships, and the references."""
+    each result's structures/references/_httk_records relationships, and the references."""
     data_dir = material_store.resolve_data_dir()
     details_dir = material_store.resolve_details_dir()
     public_base_url = public_base_url.rstrip("/")
@@ -279,11 +311,18 @@ def build_dataset(
                     file_record = result["file"]
                     files_out[file_record.id] = file_record
             if data_records_out is not None:
-                record_searcher = opened.store.searcher()
-                record_var = record_searcher.variable(material_store.AltermagnetDataRecord)
-                for result in record_searcher.results(record=record_var):
-                    data_record = result["record"]
-                    data_records_out[data_record.id] = data_record
+                # Both ``_httk_records`` backings: every screened material's screening
+                # values, plus the coupled runs' declared total energies.
+                screening_searcher = opened.store.searcher()
+                screening_var = screening_searcher.variable(material_store.ScreeningResultRecord)
+                for result in screening_searcher.results(screening=screening_var):
+                    screening_record = result["screening"]
+                    data_records_out[screening_record.id] = screening_record
+                calculation_searcher = opened.store.searcher()
+                calculation_var = calculation_searcher.variable(material_store.CalculationOutputRecord)
+                for result in calculation_searcher.results(calculation=calculation_var):
+                    calculation_record = result["calculation"]
+                    data_records_out[calculation_record.id] = calculation_record
         finally:
             # Record-backed views read lazily, so the store must outlive them. A
             # file-backed engine reconnects after dispose, but disposing the
@@ -312,12 +351,12 @@ def build_dataset(
                 references[reference_id] = {"doi": doi}
 
     properties: dict[str, dict[str, Any]] = {}
-    relationships: dict[str, dict[str, tuple[str, ...]]] = {}
+    relationships: dict[str, dict[str, tuple[str | RelatedEntry, ...]]] = {}
 
     for material_id, record in material_records.items():
         properties[material_id] = _material_properties(record, public_base_url)
 
-        related: dict[str, tuple[str, ...]] = {}
+        related: dict[str, tuple[str | RelatedEntry, ...]] = {}
         if record.structure_id is not None:
             related["structures"] = (record.structure_id,)
         reference_ids: list[str] = []
@@ -327,6 +366,19 @@ def build_dataset(
                 reference_ids.append(matched)
         if reference_ids:
             related["references"] = tuple(reference_ids)
+        # The typed calculation_output/screening_record references (E3), same one
+        # ``_httk_records`` relationship the store-native route serves; absent
+        # entirely in the degraded in-memory/--validate path with no records family.
+        record_entries = tuple(
+            RelatedEntry(entry_type="_httk_records", id=str(related_record.id), role=role)
+            for related_record, role in (
+                (record.calculation_output, "calculation_output_record"),
+                (record.screening_record, "screening_result_record"),
+            )
+            if related_record is not None
+        )
+        if record_entries:
+            related["_httk_records"] = record_entries
         if related:
             relationships[material_id] = related
 
@@ -366,28 +418,33 @@ def build_providers(
     if files:
         providers.append(FileEntryProvider(files))
     if data_records:
-        providers.append(DataRecordEntryProvider(data_records, definitions=_record_definitions(data_records)))
+        providers.append(AltermagnetDataRecordProvider(_record_properties(data_records)))
     return providers
 
 
-def _record_definitions(data_records: Mapping[str, Any]) -> dict[str, PropertyDefinition]:
-    """Resolve each stored data record's served property definition from httk-schemas.
+def _record_properties(data_records: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Project each stored ``_httk_records`` backing row into its typed served properties.
 
-    The record's ``definition_id`` IRI ``.../properties/<relpath>`` maps to
-    ``<relpath>.json`` under the httk-schemas tree, keyed by the record's served
-    property name for :class:`DataRecordEntryProvider`.
+    Mirrors the store-native projections in ``material_store`` exactly (including the
+    percent-to-fraction convention for ``_anyterial_spin_splitting_fraction``): a
+    :class:`~material_store.CalculationOutputRecord` serves only ``_httk_total_energy``;
+    a :class:`~material_store.ScreeningResultRecord` serves the five screening properties.
 
-    :param data_records: The stored data records keyed by id.
-    :return: The served-property-name to definition map for the records present.
+    :param data_records: The stored ``_httk_records`` rows keyed by id.
+    :return: The served-property-name to value map for each row, keyed by id.
     """
-    marker = "/properties/"
-    definitions: dict[str, PropertyDefinition] = {}
-    for record in data_records.values():
-        if record.name in definitions or marker not in record.definition_id:
-            continue
-        path = HTTK_DEFS_DIR / f"{record.definition_id.split(marker, 1)[1]}.json"
-        if path.is_file():
-            definitions[record.name] = PropertyDefinition.from_optimade(
-                record.name, json.loads(path.read_text(encoding="utf-8"))
-            )
-    return definitions
+    properties: dict[str, dict[str, Any]] = {}
+    for record_id, record in data_records.items():
+        if isinstance(record, material_store.CalculationOutputRecord):
+            properties[record_id] = {"_httk_total_energy": record.total_energy}
+        else:
+            properties[record_id] = {
+                "_anyterial_max_spin_splitting": record.max_ss,
+                "_anyterial_avg_spin_splitting": record.avg_ss,
+                "_anyterial_spin_splitting_fraction": (
+                    None if record.fdelta_pct is None else record.fdelta_pct / 100.0
+                ),
+                "_httk_dft_band_gap": record.bandgap,
+                "_anyterial_electronic_type": record.electronic_type,
+            }
+    return properties

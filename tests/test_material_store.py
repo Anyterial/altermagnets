@@ -158,9 +158,7 @@ def test_build_stores_conventional_and_primitive_alternatives(tmp_path: Path) ->
         # Not silently alternatives-free: the fixture cells derive both kinds per structure.
         assert alternatives, "build stored no alternative cell records"
         assert alternatives == {
-            f"anyt.am.structure-1-{number}~{kind}~1"
-            for number in (1, 2)
-            for kind in ("conventional", "primitive")
+            f"anyt.am.structure-1-{number}~{kind}~1" for number in (1, 2) for kind in ("conventional", "primitive")
         }
     finally:
         opened.database.dispose()
@@ -236,7 +234,9 @@ def test_build_saves_only_coupled_runs_and_recovers_moments(tmp_path: Path) -> N
     runs = tmp_path / "runs"
     _scf_run(runs, "CrSb")  # couples anyt.am-1-1 by name; OUTCAR has no moments
     _scf_run(runs, "Zzz")  # collected but no CSV material: never coupled or saved
-    target = build_store(tmp_path / "store.duckdb", data_dir=source, tables_dir=source, details_dir=details, runs_dir=runs)
+    target = build_store(
+        tmp_path / "store.duckdb", data_dir=source, tables_dir=source, details_dir=details, runs_dir=runs
+    )
 
     # Only the one coupled run is saved, not every collected task.
     connection = duckdb.connect(str(target), read_only=True)
@@ -273,57 +273,68 @@ def _single(store: object, cls: type):
 
 
 def test_coupled_material_reconstructs_run_with_resolvable_edges(tmp_path: Path) -> None:
-    """The coupled build reconstructs the run with store-resolvable edges and rewrites its products.
+    """The coupled build reconstructs the run with store-resolvable, PAIRED edges.
 
-    Replaces the retired ``produced_by`` weak link: the run's ``relaxed_structure``
-    edge targets the material's own served id (S1), the record/file edges carry the
-    minted ids of the outputs the bulk pass saved, and ``item.products`` are rewritten
-    through the same id map -- so no collection-time content id survives on any edge.
+    The run's ``relaxed_structure`` edge targets the stamped structure main, the
+    ``total_energy`` edge the material's typed ``CalculationOutputRecord``, and the file
+    edge the id minted for the bulk-saved output; ``item.products`` are rewritten through
+    the same maps, so no collection-time content id survives anywhere. ``outputs`` and
+    ``artifacts`` are the same tuple (no sub-workflows), and nothing targets the result.
     """
     source = write_source_tables(tmp_path / "tables")
     details = write_detail_assets(tmp_path / "details")
     runs = tmp_path / "runs"
     _scf_run(runs, "CrSb")  # couples anyt.am-1-1; OUTCAR TOTEN is -1.0 eV; also writes a vasprun output
-    target = build_store(tmp_path / "store.duckdb", data_dir=source, tables_dir=source, details_dir=details, runs_dir=runs)
+    target = build_store(
+        tmp_path / "store.duckdb", data_dir=source, tables_dir=source, details_dir=details, runs_dir=runs
+    )
 
     opened = open_prebuilt_store(target)
     assert opened is not None
     try:
         store = opened.store
         coupled = _material(store, "anyt.am-1-1")
-        assert coupled.total_energy == -1.0
+        # The energy scalar is gone from the result; the typed record carries it.
+        assert not hasattr(coupled, "total_energy")
+        calculation = _single(store, material_store.CalculationOutputRecord)
+        assert calculation.total_energy == -1.0
+        assert coupled.calculation_output == calculation
+        # Every screened material -- coupled or not -- carries its own screening record.
+        screening = {row.id: row for row in _all(store, material_store.ScreeningResultRecord)}
+        assert len(screening) == 3
+        assert coupled.screening_record is not None
+        assert coupled.screening_record.max_ss == coupled.max_ss
 
         run = _single(store, Run)
         assert run.source_id  # carried over unchanged from the collected run
-        # DataRecord outputs are stored as the AMDB records-family subclass (served at
-        # _httk_records); the base DataRecord table holds none.
+        # No plain one-value DataRecord is stored any more; the typed backings replace it.
         assert _all(store, DataRecord) == []
-        record_id = _single(store, material_store.AltermagnetDataRecord).id  # minted id of the bulk-saved output
+        record_id = calculation.id
         file_id = _single(store, FileRecord).id
         assert record_id and file_id
         structure_id = coupled.structure_id
         assert structure_id is not None
 
-        # The run's outputs carry the relaxed structure (retargeted at its stamped id) plus
-        # the record/file edges; the artifacts add the fresh has_artifact edge to the result.
         by_output = {edge.label: (edge.entry_type, edge.entry_id) for edge in run.outputs}
         assert by_output["relaxed_structure"] == ("structures", structure_id)
         assert by_output["total_energy"] == ("records", record_id)
         assert by_output["vasprun"] == ("files", file_id)
-        assert "screening_result" not in by_output
-        by_artifact = {edge.label: (edge.entry_type, edge.entry_id) for edge in run.artifacts}
-        assert by_artifact["screening_result"] == ("altermagnet_screening_result", "anyt.am-1-1")
-        # Every output is also an artifact (this workflow), plus the appended result edge.
-        assert set(run.outputs) < set(run.artifacts)
+        # AMDB rule: no sub-workflows, so every artifact edge is also an output edge, and
+        # the result is a curated collection entry that no run edge may target.
+        assert set(run.outputs) == set(run.artifacts)
+        assert not any(edge.entry_type == "altermagnet_screening_result" for edge in run.artifacts)
+        assert not any(edge.entry_id in screening for edge in run.artifacts)  # Q5: no screening-record edge
 
         # The product links are rewritten through the same id map -- no content ids remain.
         products = {link.label: (link.source_id, link.target_id) for link in _all(store, ProductLink)}
         assert products["total_energy"] == (structure_id, record_id)
         assert products["vasprun"] == (structure_id, file_id)
+        assert not any(link.target_id in screening for link in _all(store, ProductLink))
 
-        # An uncoupled material carries neither the scalar nor any run edge targeting it.
+        # An uncoupled material has no calculation record and no run edge targeting it.
         uncoupled = _material(store, "anyt.am-1-2")
-        assert uncoupled.total_energy is None
+        assert uncoupled.calculation_output is None
+        assert uncoupled.screening_record is not None
         assert not any(edge.entry_id == "anyt.am-1-2" for edge in run.outputs)
     finally:
         opened.database.dispose()
@@ -338,6 +349,21 @@ def test_resolve_edge_id_rejects_non_relaxed_structures_edge() -> None:
             "structures",
             "some-content-id",
             structure_id="anyt.am.structure-1-1",
+            record_ids={},
+            memo={},
+        )
+
+
+def test_resolve_edge_id_rejects_an_unmapped_records_edge() -> None:
+    """A records edge with no typed AMDB record behind it raises rather than fetching by content id."""
+    with pytest.raises(ValueError, match="no typed AMDB record"):
+        material_store._resolve_edge_id(
+            None,  # type: ignore[arg-type]  # the records guard fires before the store is touched
+            "some_other_output",
+            "records",
+            "some-content-id",
+            structure_id="anyt.am.structure-1-1",
+            record_ids={"total_energy": "anyt.am.records-1-1"},
             memo={},
         )
 

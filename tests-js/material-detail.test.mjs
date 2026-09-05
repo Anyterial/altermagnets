@@ -43,7 +43,7 @@ const resultFields = [
   "_anyterial_electronic_type", "_anyterial_magnetic_phases", "_anyterial_wave_classes",
   "_anyterial_parent_spacegroups", "_anyterial_icsd_ids", "_httk_magndata_ids", "_httk_dft_band_gap",
   "_anyterial_max_spin_splitting", "_anyterial_avg_spin_splitting", "_anyterial_spin_splitting_fraction",
-  "_anyterial_min_crustal_abundance", "_anyterial_magndata_variants", "_httk_custom_figures", "_httk_custom_total_energy",
+  "_anyterial_min_crustal_abundance", "_anyterial_magndata_variants", "_httk_custom_figures",
 ];
 // The five CrysViz structural fields the INCLUDED structure carries (+ the standard formula).
 const structureFields = ["lattice_vectors", "cartesian_site_positions", "species", "species_at_sites", "_httk_site_moments", "chemical_formula_reduced"];
@@ -148,7 +148,6 @@ const realisticResultAttributes = {
     symprec: 1e-5, bns_mcif_latex: ["P2_1/c"], g_laue_classes: ["m-3m"], h_laue_classes: ["4/mmm"],
     warnings: ["<script>alert(1)</script>"], notes: ["note <img src=x>"], reference_dois: ["10.1234/über"],
   }],
-  _httk_custom_total_energy: null,
   _httk_custom_figures: [
     { key: "band", available: true, url: `${API}/extensions/files/band.svg`, dark_url: `${API}/extensions/files/dark-band.svg` },
     { key: "structure", available: true, url: "https://evil.example/structure.svg" },
@@ -562,250 +561,266 @@ test("structure iframe payload carries CIF and POSCAR download links re-keyed to
   ]);
 });
 
-// --- Provenance section (StrongLink relationships off the RESULT resource) ---
+// --- Provenance section (records-based relationships off the RESULT resource) ---
 
+const CALC_RECORD_ID = "anyt.am.records-1-7";
+const SCREENING_RECORD_ID = "anyt.am.records-1-9";
 const RUN_ID = "anyt.am.runs-1-1";
+const RECORD_FIELDS = ["_httk_total_energy"];
 const RUN_FIELDS = ["_httk_workflow_declaration_uri", "_httk_source_id"];
 const RESULT_WITH_RUN_ID = "anyt.am-1-7";
 const STRUCTURE_EDGE_ID = "anyt.am.structure-1-7";
+const FILE_EDGE_ID = "file-hash-000";
 const WORKFLOW_URI = "https://schemas.httk.org/defs/v0.1/workflows/x";
 
-// The producing run's forward blocks. has_artifact carries the slim structure, the
-// appended RESULT edge (the material page), and the record/file edges; has_output
-// carries everything except the result edge (mirrors test_serve_optimade's assertions).
-function forwardArtifact() {
-  return [
-    { type: "structures", id: STRUCTURE_EDGE_ID, meta: { role: "artifact", _httk_label: "relaxed_structure" } },
-    { type: RESULT_TYPE, id: RESULT_WITH_RUN_ID, meta: { role: "artifact", _httk_label: "screening_result" } },
-    { type: "_httk_records", id: "rec-hash-000", meta: { role: "artifact", _httk_label: "total_energy" } },
-    { type: "files", id: "file-hash-000", meta: { role: "artifact", _httk_label: "vasprun" } },
-  ];
+// The result's `_httk_records` relationship: a screening_result_record entry is served
+// for every material; the calculation_output_record entry only for run-coupled ones.
+function recordsRelationship(calcRecordId = null) {
+  const data = [{ type: "_httk_records", id: SCREENING_RECORD_ID, meta: { role: "screening_result_record" } }];
+  if (calcRecordId) data.push({ type: "_httk_records", id: calcRecordId, meta: { role: "calculation_output_record" } });
+  return { data };
 }
-function forwardOutput() {
+
+// The coupled RESULT resource: its `_httk_records` block names the calculation record.
+function resultWithRun(extra = {}) {
+  return {
+    id: RESULT_WITH_RUN_ID, type: RESULT_TYPE,
+    attributes: { ...extra },
+    relationships: {
+      structures: { data: [{ type: "structures", id: STRUCTURE_EDGE_ID }] },
+      references: { data: [] },
+      _httk_records: recordsRelationship(CALC_RECORD_ID),
+    },
+  };
+}
+
+// The calculation record: total energy plus the reverse block naming the producing run.
+function recordResource(relationships = {}, attrs = {}) {
+  return { id: CALC_RECORD_ID, type: "_httk_records", attributes: { _httk_total_energy: -1.0, ...attrs }, relationships };
+}
+const RECORD_WITH_RUN = recordResource({
+  _httk_is_output: { data: [{ type: "_httk_runs", id: RUN_ID, meta: { role: "output", _httk_label: "total_energy" } }] },
+  _httk_is_artifact: { data: [{ type: "_httk_runs", id: RUN_ID, meta: { role: "artifact", _httk_label: "total_energy" } }] },
+});
+
+// The run's forward edges: relaxed structure, the calculation record itself, and an
+// output file. `_httk_has_output` and `_httk_has_artifact` name IDENTICAL target sets
+// on the wire — there is no result-typed edge any more.
+function forwardEdges(role) {
   return [
-    { type: "structures", id: STRUCTURE_EDGE_ID, meta: { role: "output", _httk_label: "relaxed_structure" } },
-    { type: "_httk_records", id: "rec-hash-000", meta: { role: "output", _httk_label: "total_energy" } },
-    { type: "files", id: "file-hash-000", meta: { role: "output", _httk_label: "vasprun" } },
+    { type: "structures", id: STRUCTURE_EDGE_ID, meta: { role, _httk_label: "relaxed_structure" } },
+    { type: "_httk_records", id: CALC_RECORD_ID, meta: { role, _httk_label: "total_energy" } },
+    { type: "files", id: FILE_EDGE_ID, meta: { role, _httk_label: "vasprun" } },
   ];
 }
 const RUN_RESOURCE = {
   id: RUN_ID, type: "_httk_runs",
   attributes: { _httk_source_id: "httk-v1:abc", _httk_workflow_declaration_uri: WORKFLOW_URI },
   relationships: {
-    _httk_has_artifact: { data: forwardArtifact() },
-    _httk_has_output: { data: forwardOutput() },
+    _httk_has_output: { data: forwardEdges("output") },
+    _httk_has_artifact: { data: forwardEdges("artifact") },
   },
 };
 
-// The coupled RESULT resource: its reverse _httk_is_artifact/_httk_is_output block names
-// the producing run, plus the result-level energy scalar.
-function resultWithRun(extra = {}) {
-  return {
-    id: RESULT_WITH_RUN_ID, type: RESULT_TYPE,
-    attributes: { _httk_custom_total_energy: -1.0, ...extra },
-    relationships: {
-      structures: { data: [{ type: "structures", id: STRUCTURE_EDGE_ID }] },
-      _httk_is_artifact: { data: [{ type: "_httk_runs", id: RUN_ID, meta: { role: "artifact", _httk_label: "screening_result" } }] },
-      _httk_is_output: { data: [{ type: "_httk_runs", id: RUN_ID, meta: { role: "output", _httk_label: "screening_result" } }] },
-    },
-  };
-}
-
-// A fake transport that answers the narrow _httk_runs lookups without the network,
-// recording each config, each filter, and each id fetched.
-class FakeRunTransport {
-  constructor(config) { this.config = config; FakeRunTransport.configs.push(config); }
-  async fetchPage({ filter }) {
-    FakeRunTransport.filters.push(filter);
-    if (this.config.entry_type === "files") return { resources: [] };
-    return { resources: [RUN_RESOURCE] };
-  }
-  async fetchOne(id) { FakeRunTransport.fetched.push(id); return { resource: { ...RUN_RESOURCE, id } }; }
-}
-
-// The deduped produced model: structure edge, RESULT edge, record, file.
+// The produced model built from RUN_RESOURCE (`_httk_has_output` is read; `_httk_has_artifact`
+// is never consulted when the output block is present).
 const EXPECTED_PRODUCED = [
   { type: "structures", id: STRUCTURE_EDGE_ID, label: "relaxed_structure" },
-  { type: RESULT_TYPE, id: RESULT_WITH_RUN_ID, label: "screening_result" },
-  { type: "_httk_records", id: "rec-hash-000", label: "total_energy" },
-  { type: "files", id: "file-hash-000", label: "vasprun" },
+  { type: "_httk_records", id: CALC_RECORD_ID, label: "total_energy" },
+  { type: "files", id: FILE_EDGE_ID, label: "vasprun" },
 ];
 
-test("fetchProvenance finds the run via the _httk_relationships filter route on the result id", async () => {
+// A fake transport answering the direct `_httk_records/<id>` and `_httk_runs/<id>` GETs
+// (fetchOne) without the network; the batched files lookup still uses fetchPage. No
+// route ever accepts a `filter`-based lookup for records or runs.
+class FakeRecordRunTransport {
+  constructor(config) { this.config = config; FakeRecordRunTransport.configs.push(config); }
+  async fetchOne(id) {
+    FakeRecordRunTransport.fetched.push({ entryType: this.config.entry_type, id });
+    if (this.config.entry_type === "_httk_records") return { resource: FakeRecordRunTransport.record };
+    if (this.config.entry_type === "_httk_runs") return { resource: FakeRecordRunTransport.run };
+    throw new Error(`unexpected fetchOne entry_type ${this.config.entry_type}`);
+  }
+  async fetchPage({ filter }) {
+    FakeRecordRunTransport.filters.push(filter);
+    if (this.config.entry_type === "files") return { resources: [] };
+    throw new Error(`unexpected fetchPage entry_type ${this.config.entry_type}`);
+  }
+}
+function resetFakeTransport(record, run) {
+  FakeRecordRunTransport.configs = [];
+  FakeRecordRunTransport.filters = [];
+  FakeRecordRunTransport.fetched = [];
+  FakeRecordRunTransport.record = record;
+  FakeRecordRunTransport.run = run;
+}
+
+test("fetchProvenance follows the calculation_output_record relationship to the record, then the record's reverse block to the run", async () => {
   installDom(new DomDocument("https://site.example.test/material"));
-  FakeRunTransport.configs = []; FakeRunTransport.filters = []; FakeRunTransport.fetched = [];
-  const obj = await material.fetchProvenance(FakeRunTransport, { base_url: API }, resultWithRun());
-  // ONE filter request (keyed on the RESULT id) then ONE batched files request.
-  assert.deepEqual(FakeRunTransport.filters, [
-    `_httk_relationships._httk_has_artifact.id HAS "${RESULT_WITH_RUN_ID}"`,
-    `id="file-hash-000"`,
+  resetFakeTransport(RECORD_WITH_RUN, RUN_RESOURCE);
+  const obj = await material.fetchProvenance(FakeRecordRunTransport, { base_url: API }, resultWithRun());
+  // Direct id fetches only — no filter route for records or runs, ever.
+  assert.deepEqual(FakeRecordRunTransport.fetched, [
+    { entryType: "_httk_records", id: CALC_RECORD_ID },
+    { entryType: "_httk_runs", id: RUN_ID },
   ]);
-  assert.deepEqual(FakeRunTransport.configs[0], { base_url: API, entry_type: "_httk_runs", response_fields: RUN_FIELDS, page_size: 1 });
-  assert.deepEqual(FakeRunTransport.fetched, []); // filter route resolved → no id fallback
-  assert.equal(obj.sourceId, "httk-v1:abc");
-  assert.equal(obj.workflowUri, WORKFLOW_URI);
-  assert.equal(obj.totalEnergy, -1.0);
-  // Forward groups deduped across the artifact/output roles.
-  assert.deepEqual(obj.produced, EXPECTED_PRODUCED);
-});
-
-test("fetchProvenance falls back to the reverse-block run id when the filter route fails", async () => {
-  installDom(new DomDocument("https://site.example.test/material"));
-  class FilterFailsTransport {
-    constructor(config) { this.config = config; }
-    async fetchPage() { throw new Error("filter route unavailable"); }
-    async fetchOne(id) { FilterFailsTransport.fetched.push(id); return { resource: { ...RUN_RESOURCE, id } }; }
-  }
-  FilterFailsTransport.fetched = [];
-  const obj = await material.fetchProvenance(FilterFailsTransport, { base_url: API }, resultWithRun());
-  assert.deepEqual(FilterFailsTransport.fetched, [RUN_ID]);
-  assert.equal(obj.sourceId, "httk-v1:abc");
-  assert.equal(obj.workflowUri, WORKFLOW_URI);
-  assert.equal(obj.produced.length, 4);
-});
-
-test("fetchProvenance falls back to the reverse-block run id when the filter route returns an empty page", async () => {
-  installDom(new DomDocument("https://site.example.test/material"));
-  class EmptyPageTransport {
-    constructor(config) { this.config = config; }
-    async fetchPage() { return { resources: [] }; } // valid, non-throwing, but no match
-    async fetchOne(id) { EmptyPageTransport.fetched.push(id); return { resource: { ...RUN_RESOURCE, id } }; }
-  }
-  EmptyPageTransport.fetched = [];
-  const obj = await material.fetchProvenance(EmptyPageTransport, { base_url: API }, resultWithRun());
-  assert.deepEqual(EmptyPageTransport.fetched, [RUN_ID]);
+  assert.deepEqual(FakeRecordRunTransport.configs[0], { base_url: API, entry_type: "_httk_records", response_fields: RECORD_FIELDS, page_size: 1 });
+  assert.deepEqual(FakeRecordRunTransport.configs[1], { base_url: API, entry_type: "_httk_runs", response_fields: RUN_FIELDS, page_size: 1 });
+  // The only fetchPage call is the batched files lookup.
+  assert.deepEqual(FakeRecordRunTransport.filters, [`id="${FILE_EDGE_ID}"`]);
+  assert.equal(obj.calcRecordId, CALC_RECORD_ID);
   assert.equal(obj.sourceId, "httk-v1:abc");
   assert.equal(obj.workflowUri, WORKFLOW_URI);
   assert.equal(obj.totalEnergy, -1.0);
   assert.deepEqual(obj.produced, EXPECTED_PRODUCED);
 });
 
-test("fetchProvenance is null with no run and no energy, builds energy-only without a run request, and degrades when the run endpoint is dead", async () => {
+test("fetchProvenance is null with no calculation_output_record entry, and issues no request at all", async () => {
   installDom(new DomDocument("https://site.example.test/material"));
-  FakeRunTransport.configs = []; FakeRunTransport.filters = []; FakeRunTransport.fetched = [];
-  assert.equal(await material.fetchProvenance(FakeRunTransport, { base_url: API }, { id: "x", attributes: {}, relationships: {} }), null);
-  const energyOnly = await material.fetchProvenance(FakeRunTransport, { base_url: API }, { id: "x", attributes: { _httk_custom_total_energy: -2.0 }, relationships: {} });
-  assert.equal(energyOnly.totalEnergy, -2.0);
-  assert.deepEqual(energyOnly.produced, []);
-  assert.deepEqual(FakeRunTransport.filters, []); // no reverse block → no run lookup at all
-  class DeadTransport {
-    constructor() {}
-    async fetchPage() { throw new Error("no _httk_runs endpoint"); }
-    async fetchOne() { throw new Error("no _httk_runs endpoint"); }
+  class ThrowsIfConstructed {
+    constructor() { throw new Error("must not be instantiated"); }
   }
-  const degraded = await material.fetchProvenance(DeadTransport, { base_url: API }, resultWithRun());
-  assert.equal(degraded.totalEnergy, -1.0);
-  assert.equal(degraded.workflowUri, null);
-  assert.equal(degraded.sourceId, null);
-  assert.deepEqual(degraded.produced, []);
+  const noRecords = { id: "x", attributes: {}, relationships: {} };
+  assert.equal(await material.fetchProvenance(ThrowsIfConstructed, { base_url: API }, noRecords), null);
+  // A `_httk_records` block with only the screening_result_record role is the same as none.
+  const screeningOnly = { id: "x", attributes: {}, relationships: { _httk_records: recordsRelationship(null) } };
+  assert.equal(await material.fetchProvenance(ThrowsIfConstructed, { base_url: API }, screeningOnly), null);
 });
 
-test("buildProvenance retypes produced edges: RESULT is the material link, structures are non-link entries", () => {
+test("fetchProvenance degrades to the energy line alone when the record has no run block, issuing no run request", async () => {
   installDom(new DomDocument("https://site.example.test/material"));
-  const obj = {
-    workflowUri: WORKFLOW_URI,
-    sourceId: "httk-v1:abc",
-    totalEnergy: -12.5,
-    produced: [
-      { type: "structures", id: STRUCTURE_EDGE_ID, label: "relaxed_structure" },
-      { type: RESULT_TYPE, id: RESULT_WITH_RUN_ID, label: "screening_result" },
-      { type: "_httk_records", id: "rec-hash-000", label: "total_energy" },
-      { type: "files", id: "file-hash-000", label: "vasprun" },
-    ],
-  };
-  const section = material.buildProvenance(obj, RESULT_WITH_RUN_ID, RESULT_TYPE);
+  resetFakeTransport(recordResource({}, { _httk_total_energy: -2.5 }), null);
+  const obj = await material.fetchProvenance(FakeRecordRunTransport, { base_url: API }, resultWithRun());
+  assert.deepEqual(FakeRecordRunTransport.fetched, [{ entryType: "_httk_records", id: CALC_RECORD_ID }]);
+  assert.equal(obj.totalEnergy, -2.5);
+  assert.equal(obj.workflowUri, null);
+  assert.equal(obj.sourceId, null);
+  assert.deepEqual(obj.produced, []);
+});
+
+test("fetchProvenance degrades to no energy line when the record fetch fails, issuing no run request", async () => {
+  installDom(new DomDocument("https://site.example.test/material"));
+  class RecordFailsTransport {
+    constructor(config) { this.config = config; }
+    async fetchOne() {
+      RecordFailsTransport.fetchedTypes.push(this.config.entry_type);
+      throw new Error("_httk_records endpoint offline");
+    }
+    async fetchPage() { throw new Error("must not be called"); }
+  }
+  RecordFailsTransport.fetchedTypes = [];
+  const obj = await material.fetchProvenance(RecordFailsTransport, { base_url: API }, resultWithRun());
+  assert.deepEqual(RecordFailsTransport.fetchedTypes, ["_httk_records"]);
+  assert.equal(obj.totalEnergy, null);
+  assert.equal(obj.workflowUri, null);
+  assert.equal(obj.sourceId, null);
+  assert.deepEqual(obj.produced, []);
+});
+
+test("fetchProvenance degrades to the energy line alone when the run fetch fails", async () => {
+  installDom(new DomDocument("https://site.example.test/material"));
+  class RunFailsTransport {
+    constructor(config) { this.config = config; }
+    async fetchOne() {
+      if (this.config.entry_type === "_httk_records") return { resource: RECORD_WITH_RUN };
+      throw new Error("_httk_runs endpoint offline");
+    }
+    async fetchPage() { throw new Error("must not be called"); }
+  }
+  const obj = await material.fetchProvenance(RunFailsTransport, { base_url: API }, resultWithRun());
+  assert.equal(obj.totalEnergy, -1.0);
+  assert.equal(obj.workflowUri, null);
+  assert.equal(obj.sourceId, null);
+  assert.deepEqual(obj.produced, []);
+});
+
+test("buildProvenance renders the calculation record as the (this material) non-link entry, and no produced entry is ever a link", () => {
+  installDom(new DomDocument("https://site.example.test/material"));
+  const obj = { calcRecordId: CALC_RECORD_ID, workflowUri: WORKFLOW_URI, sourceId: "httk-v1:abc", totalEnergy: -12.5, produced: EXPECTED_PRODUCED };
+  const section = material.buildProvenance(obj);
   assert.ok(section);
   assert.match(section.textContent, /Provenance/);
   assert.match(section.textContent, /httk-v1:abc/);
   assert.ok(section.querySelectorAll("a").some((a) => a.getAttribute("href") === WORKFLOW_URI));
   assert.match(section.textContent, /-12\.500000/);
-  // The RESULT edge is the ONLY material-page link, and carries the current-material marker.
-  const links = section.querySelectorAll("a.provenance-produced-link");
-  assert.equal(links.length, 1);
-  assert.ok(links[0].getAttribute("href").includes(encodeURIComponent(RESULT_WITH_RUN_ID)));
-  assert.ok(links[0].className.includes("is-current"));
-  assert.match(links[0].textContent, /\(this material\)/);
-  // The structure, record, and file edges are non-link labeled entries (kind word + id title).
+  // No produced entry is ever a real material-page link any more.
+  assert.equal(section.querySelectorAll("a.provenance-produced-link").length, 0);
   const entries = section.querySelectorAll("span.provenance-produced-entry");
-  assert.deepEqual(entries.map((s) => s.textContent), ["structure", "record", "file"]);
-  assert.deepEqual(entries.map((s) => s.title), [STRUCTURE_EDGE_ID, "rec-hash-000", "file-hash-000"]);
+  assert.deepEqual(entries.map((s) => s.textContent.replace(/\s*\(this material\)$/, "")), ["structure", "record", "file"]);
+  assert.deepEqual(entries.map((s) => s.title), [STRUCTURE_EDGE_ID, CALC_RECORD_ID, FILE_EDGE_ID]);
+  // Only the calculation-record entry carries the current-material annotation.
+  const current = entries.find((s) => s.title === CALC_RECORD_ID);
+  assert.ok(current.className.includes("is-current"));
+  assert.match(current.textContent, /\(this material\)/);
+  entries.filter((s) => s.title !== CALC_RECORD_ID).forEach((s) => {
+    assert.equal(s.className.includes("is-current"), false);
+    assert.doesNotMatch(s.textContent, /\(this material\)/);
+  });
   // Edge labels render as muted annotations.
   assert.match(section.textContent, /relaxed_structure/);
-  assert.match(section.textContent, /screening_result/);
-  // A non-current result edge omits the marker (a hypothetical second result).
-  const other = material.buildProvenance(
-    { workflowUri: null, sourceId: null, totalEnergy: null, produced: [{ type: RESULT_TYPE, id: "anyt.am-9-9", label: "" }] },
-    RESULT_WITH_RUN_ID, RESULT_TYPE,
-  );
-  const otherLink = other.querySelectorAll("a.provenance-produced-link")[0];
-  assert.equal(otherLink.className.includes("is-current"), false);
-  assert.doesNotMatch(otherLink.textContent, /\(this material\)/);
+  assert.match(section.textContent, /total_energy/);
   // Energy-only object (no produced entries) still renders the scalar and no produced list.
-  const energyOnly = material.buildProvenance({ workflowUri: null, sourceId: null, totalEnergy: -1.0, produced: [] }, "x", RESULT_TYPE);
+  const energyOnly = material.buildProvenance({ calcRecordId: "x", workflowUri: null, sourceId: null, totalEnergy: -1.0, produced: [] });
   assert.match(energyOnly.textContent, /-1\.000000/);
   assert.equal(energyOnly.querySelectorAll("ul.provenance-produced").length, 0);
   // Null object → no section.
-  assert.equal(material.buildProvenance(null, "x", RESULT_TYPE), null);
+  assert.equal(material.buildProvenance(null), null);
 });
 
 // --- Produced files as real download links (batched files endpoint) ---
 
 const FILE_URL = "https://api.example.test/optimade/amdb/extensions/files/entry/file-hash-000";
 
-// Serves the run for the result-scoped filter and the files page for the batched
-// files request; records every filter and config seen so the batch can be asserted.
-class FileAwareTransport {
-  constructor(config) { this.config = config; FileAwareTransport.configs.push(config); }
-  async fetchPage({ filter }) {
-    FileAwareTransport.filters.push(filter);
-    if (this.config.entry_type === "files") return { resources: FileAwareTransport.fileResources };
-    return { resources: [RUN_RESOURCE] };
-  }
-  async fetchOne(id) { return { resource: { ...RUN_RESOURCE, id } }; }
-}
-
 test("fetchProvenance turns produced files into download links via ONE batched files request", async () => {
   installDom(new DomDocument("https://site.example.test/material"));
-  FileAwareTransport.configs = []; FileAwareTransport.filters = [];
-  FileAwareTransport.fileResources = [
-    { id: "file-hash-000", type: "files", attributes: { name: "vasprun.xml", url: FILE_URL, size: 20480 } },
-  ];
+  class FileAwareTransport {
+    constructor(config) { this.config = config; FileAwareTransport.configs.push(config); }
+    async fetchOne() {
+      if (this.config.entry_type === "_httk_records") return { resource: RECORD_WITH_RUN };
+      return { resource: RUN_RESOURCE };
+    }
+    async fetchPage({ filter }) {
+      FileAwareTransport.filters.push(filter);
+      return { resources: [{ id: FILE_EDGE_ID, type: "files", attributes: { name: "vasprun.xml", url: FILE_URL, size: 20480 } }] };
+    }
+  }
+  FileAwareTransport.configs = [];
+  FileAwareTransport.filters = [];
   const obj = await material.fetchProvenance(FileAwareTransport, { base_url: API }, resultWithRun());
-  const fileFilters = FileAwareTransport.filters.filter((f) => f.startsWith("id="));
-  assert.deepEqual(fileFilters, [`id="file-hash-000"`]);
+  assert.deepEqual(FileAwareTransport.filters, [`id="${FILE_EDGE_ID}"`]);
   const filesConfig = FileAwareTransport.configs.find((c) => c.entry_type === "files");
   assert.deepEqual(filesConfig, { base_url: API, entry_type: "files", response_fields: ["name", "url", "size"], page_size: 1 });
   const file = obj.produced.find((item) => item.type === "files");
   assert.deepEqual(file.file, { name: "vasprun.xml", url: FILE_URL, size: 20480 });
   assert.equal("file" in obj.produced.find((item) => item.type === "_httk_records"), false);
-  const section = material.buildProvenance(obj, RESULT_WITH_RUN_ID, RESULT_TYPE);
+  const section = material.buildProvenance(obj);
   const links = section.querySelectorAll("a.provenance-produced-file");
   assert.equal(links.length, 1);
   assert.equal(links[0].getAttribute("href"), FILE_URL);
   assert.match(links[0].textContent, /vasprun\.xml/);
   assert.match(links[0].textContent, /20\.0 kB/);
-  assert.equal(links[0].title, "file-hash-000");
+  assert.equal(links[0].title, FILE_EDGE_ID);
   // The record and structure still render as non-link entries; the file no longer does.
   const entries = section.querySelectorAll("span.provenance-produced-entry");
-  assert.deepEqual(entries.map((s) => s.title), [STRUCTURE_EDGE_ID, "rec-hash-000"]);
+  assert.deepEqual(entries.map((s) => s.title), [STRUCTURE_EDGE_ID, CALC_RECORD_ID]);
 });
 
 test("fetchProvenance leaves produced files as non-link entries when the batched request fails", async () => {
   installDom(new DomDocument("https://site.example.test/material"));
   class FilesFailTransport {
     constructor(config) { this.config = config; }
-    async fetchPage() {
-      if (this.config.entry_type === "files") throw new Error("files endpoint offline");
-      return { resources: [RUN_RESOURCE] };
+    async fetchOne() {
+      if (this.config.entry_type === "_httk_records") return { resource: RECORD_WITH_RUN };
+      return { resource: RUN_RESOURCE };
     }
-    async fetchOne(id) { return { resource: { ...RUN_RESOURCE, id } }; }
+    async fetchPage() { throw new Error("files endpoint offline"); }
   }
   const obj = await material.fetchProvenance(FilesFailTransport, { base_url: API }, resultWithRun());
   const file = obj.produced.find((item) => item.type === "files");
   assert.equal("file" in file, false);
-  const section = material.buildProvenance(obj, RESULT_WITH_RUN_ID, RESULT_TYPE);
+  const section = material.buildProvenance(obj);
   assert.equal(section.querySelectorAll("a.provenance-produced-file").length, 0);
-  const fileSpan = section.querySelectorAll("span.provenance-produced-entry").find((s) => s.title === "file-hash-000");
+  const fileSpan = section.querySelectorAll("span.provenance-produced-entry").find((s) => s.title === FILE_EDGE_ID);
   assert.ok(fileSpan);
   assert.equal(fileSpan.textContent, "file");
 });
@@ -825,18 +840,18 @@ test("fetchProvenance renders a mixed link/non-link list when the files batch is
   const fileAUrl = "https://api.example.test/optimade/amdb/extensions/files/entry/file-a";
   class PartialTransport {
     constructor(config) { this.config = config; }
-    async fetchPage({ filter }) {
-      if (this.config.entry_type === "files") {
-        PartialTransport.filesFilter = filter;
-        return { resources: [{ id: "file-a", type: "files", attributes: { name: "a.txt", url: fileAUrl, size: 10 } }] };
-      }
-      return { resources: [twoFileRun] };
+    async fetchOne() {
+      if (this.config.entry_type === "_httk_records") return { resource: RECORD_WITH_RUN };
+      return { resource: twoFileRun };
     }
-    async fetchOne(id) { return { resource: { ...twoFileRun, id } }; }
+    async fetchPage({ filter }) {
+      PartialTransport.filesFilter = filter;
+      return { resources: [{ id: "file-a", type: "files", attributes: { name: "a.txt", url: fileAUrl, size: 10 } }] };
+    }
   }
   const obj = await material.fetchProvenance(PartialTransport, { base_url: API }, resultWithRun());
   assert.equal(PartialTransport.filesFilter, `id="file-a" OR id="file-b"`);
-  const section = material.buildProvenance(obj, RESULT_WITH_RUN_ID, RESULT_TYPE);
+  const section = material.buildProvenance(obj);
   const links = section.querySelectorAll("a.provenance-produced-file");
   assert.equal(links.length, 1);
   assert.equal(links[0].getAttribute("href"), fileAUrl);
@@ -845,24 +860,27 @@ test("fetchProvenance renders a mixed link/non-link list when the files batch is
   assert.deepEqual(spans.map((s) => s.title), ["file-b"]);
 });
 
-// Serves discovery, the result single-entry request, and the _httk_runs filter route.
+// Serves discovery, the result single-entry request, and the direct `_httk_records/<id>` /
+// `_httk_runs/<id>` GETs (fetchOne) — no filter route is ever mounted for either.
 function runAwareFetch(result, included = []) {
   return async (request) => {
     const url = new URL(request);
     if (url.pathname === "/optimade/amdb/versions") return textResponse("version\n1\n", url.href);
-    if (url.pathname === "/optimade/amdb/v1/info") return jsonResponse(infoRoot([RESULT_TYPE, "structures", "_httk_runs"]), url.href);
+    if (url.pathname === "/optimade/amdb/v1/info") return jsonResponse(infoRoot([RESULT_TYPE, "structures", "_httk_records", "_httk_runs"]), url.href);
     if (url.pathname === `/optimade/amdb/v1/info/${RESULT_TYPE}`) return jsonResponse(infoEntry(RESULT_TYPE, resultFields), url.href);
     if (url.pathname === "/optimade/amdb/v1/info/structures") return jsonResponse(infoEntry("structures", structureFields), url.href);
+    if (url.pathname === "/optimade/amdb/v1/info/_httk_records") return jsonResponse(infoEntry("_httk_records", RECORD_FIELDS), url.href);
     if (url.pathname === "/optimade/amdb/v1/info/_httk_runs") return jsonResponse(infoEntry("_httk_runs", RUN_FIELDS), url.href);
-    if (url.pathname === "/optimade/amdb/v1/_httk_runs") return jsonResponse(pageResponse([RUN_RESOURCE]), url.href);
+    if (url.pathname === `/optimade/amdb/v1/_httk_records/${encodeURIComponent(CALC_RECORD_ID)}`) return jsonResponse(pageResponse(RECORD_WITH_RUN), url.href);
+    if (url.pathname === `/optimade/amdb/v1/_httk_runs/${encodeURIComponent(RUN_ID)}`) return jsonResponse(pageResponse(RUN_RESOURCE), url.href);
     if (url.pathname.endsWith("/_httk_alts")) return jsonResponse(pageResponse([]), url.href);
     if (url.pathname.startsWith(`/optimade/amdb/v1/${RESULT_TYPE}/`)) return jsonResponse(pageResponse(result, included), url.href);
     throw new Error(`unexpected URL ${url}`);
   };
 }
 
-test("detail page appends a live Provenance section from the filter route, and omits it when absent", async () => {
-  const withRun = resultWithRun({ ...Object.fromEntries(resultFields.map((n) => [n, null])), _anyterial_formula: "CrSb", _httk_custom_total_energy: -1.0 });
+test("detail page appends a live Provenance section via direct record/run GETs, and omits it when absent", async () => {
+  const withRun = resultWithRun({ ...Object.fromEntries(resultFields.map((n) => [n, null])), _anyterial_formula: "CrSb" });
   const shown = shell({}, `?id=${encodeURIComponent(RESULT_WITH_RUN_ID)}`);
   const requests = [];
   const network = runAwareFetch(withRun, [structureResource(structureAttributes({ lattice_vectors: null }), STRUCTURE_EDGE_ID)]);
@@ -872,12 +890,13 @@ test("detail page appends a live Provenance section from the filter route, and o
   assert.match(shown.result.textContent, /httk-v1:abc/);
   assert.match(shown.result.textContent, /relaxed_structure/);
   assert.match(shown.result.textContent, /-1\.000000/);
-  // The run was located through the filter route with the exact result-scoped filter.
-  const filtered = requests.find((u) => u.pathname === "/optimade/amdb/v1/_httk_runs");
-  assert.ok(filtered, "the _httk_runs filter route was requested");
-  assert.equal(filtered.searchParams.get("filter"), `_httk_relationships._httk_has_artifact.id HAS "${RESULT_WITH_RUN_ID}"`);
-  // The produced RESULT edge is a real material-page link; the structure edge is not.
-  assert.equal(shown.result.querySelectorAll("a.provenance-produced-link").length, 1);
+  // The record and run were located by direct id GETs.
+  assert.ok(requests.some((u) => u.pathname === `/optimade/amdb/v1/_httk_records/${encodeURIComponent(CALC_RECORD_ID)}`), "the calculation record was fetched directly by id");
+  assert.ok(requests.some((u) => u.pathname === `/optimade/amdb/v1/_httk_runs/${encodeURIComponent(RUN_ID)}`), "the run was fetched directly by id");
+  // No `_httk_runs` or `_httk_records` request ever carries a `filter` query parameter.
+  assert.equal(requests.some((u) => (u.pathname === "/optimade/amdb/v1/_httk_runs" || u.pathname === "/optimade/amdb/v1/_httk_records") && u.searchParams.has("filter")), false);
+  // No produced entry is ever a real material-page link.
+  assert.equal(shown.result.querySelectorAll("a.provenance-produced-link").length, 0);
 
   const noProv = resultResource({ _anyterial_formula: "CrSb" }, { id: MATERIAL_ID });
   const hidden = shell();

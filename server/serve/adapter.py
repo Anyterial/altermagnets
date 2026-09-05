@@ -129,11 +129,13 @@ class AltermagnetStoreAdapter:
                 StoredEntrySource(store, material_store.AltermagnetScreeningResultEntry, "amdb-screening-results"),
                 StoredEntrySource(store, material_store.AltermagnetStructureEntry, "amdb-structures"),
                 StoredEntrySource(store, material_store.AltermagnetReferenceEntry, "amdb-references"),
-                # Serves the producing runs at _httk_runs so the screening result serves
-                # the run's appended reverse _httk_is_artifact relationship (and the slim
-                # structure serves the relaxed_structure reverse blocks), and the runs
-                # serve their forward _httk_has_* edges. The id/filter/sort remaps below
-                # are result/references-scoped, so runs/structures pass through unmangled.
+                # Serves the producing runs at _httk_runs: the runs serve their forward
+                # _httk_has_* edges (outputs and artifacts paired), and their edge
+                # targets — the typed records, the slim structure, the files — serve the
+                # derived reverse _httk_is_* blocks. The result itself carries no
+                # provenance edges; it reaches the run through its calculation-output
+                # record's reverse block. The id/filter/sort remaps below are
+                # result/references-scoped, so runs/structures pass through unmangled.
                 StoredEntrySource(store, material_store.RunEntry, "amdb-runs"),
                 # The records and files families the runs' edges point at. Both serve
                 # raw store-minted ids (anyt.am.records-1-N / anyt.am.files-1-N) with no

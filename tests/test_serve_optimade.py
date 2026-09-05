@@ -128,7 +128,7 @@ EXPECTED_DEFINITION_PROVENANCE = {
     ),
 }
 
-LOCAL_DEFINITION_NAMES = {"_httk_custom_figures", "_httk_custom_total_energy"}
+LOCAL_DEFINITION_NAMES = {"_httk_custom_figures"}
 EXPECTED_PROPERTY_NAMES = set(EXPECTED_DEFINITION_PROVENANCE) | LOCAL_DEFINITION_NAMES
 
 
@@ -210,18 +210,30 @@ def _relationship_ids(resource: dict[str, Any], key: str) -> list[tuple[str, str
     return [(entry["type"], entry["id"]) for entry in block["data"]]
 
 
-def test_serves_material_run_strong_link_relationships_and_energy(tmp_path: Path) -> None:
-    """A coupled material serves the producing run's reverse StrongLink blocks; the run serves the forward ones.
+_SCIENCE_MIRROR_FIELDS = (
+    "_anyterial_max_spin_splitting",
+    "_anyterial_avg_spin_splitting",
+    "_anyterial_spin_splitting_fraction",
+    "_httk_dft_band_gap",
+    "_anyterial_electronic_type",
+)
+
+
+def test_serves_paired_run_edges_and_records_relationship(tmp_path: Path) -> None:
+    """The redesigned provenance chain: result -> ``_httk_records`` -> record -> run.
 
     Drives the serving edge end-to-end through the real ``build_service_app(store=...)``
-    path with the retired ``produced_by`` weak link replaced by run edges: the
-    structure serves the derived reverse ``_httk_is_artifact``/``_httk_is_output``
-    naming the run, the run resolves at ``/v1/_httk_runs/<id>`` with non-null prefixed
-    values and forward ``_httk_has_*`` blocks whose ids resolve (the structure edge to
-    the material itself, plus the record/file edges), the ``_httk_relationships`` filter
-    route selects the run by material id, and the symmetric ``_httk_custom_total_energy``
-    scalar is served for the coupled material and null (with no reverse block) for an
-    uncoupled one in the SAME coupled build.
+    path with the retired result artifact edge gone (the result is a curated collection
+    entry, not a run product): the coupled result carries NO ``_httk_is_artifact``/
+    ``_httk_is_output`` relationships of its own, but serves a ``_httk_records``
+    relationship with BOTH role-tagged record entries (``calculation_output_record``/
+    ``screening_result_record``). The calculation record carries the reverse
+    ``_httk_is_output``/``_httk_is_artifact`` blocks naming the producing run and serves
+    ``_httk_total_energy``; the screening record carries neither (no execution produced
+    it) and mirrors the result's science properties. The run's forward ``_httk_has_*``
+    blocks are IDENTICAL (paired, no sub-workflows): the relaxed structure, the
+    calculation record, and the file output -- never a result-typed edge. An uncoupled
+    material in the same build serves only the screening entry.
     """
     source = write_source_tables(tmp_path / "tables")
     details = write_detail_assets(tmp_path / "details")
@@ -235,64 +247,83 @@ def test_serves_material_run_strong_link_relationships_and_energy(tmp_path: Path
     )
     try:
         with TestClient(app, base_url="http://testserver") as live:
-            # (a) the coupled screening RESULT serves the appended reverse _httk_is_artifact
-            # block naming the producing run, plus the symmetric result-level energy scalar.
+            # (a) the coupled screening RESULT carries no provenance edges of its own; it
+            # serves the _httk_records relationship with both role-tagged entries.
             result = live.get(
-                f"/v1/{RESULT}/anyt.am-1-1", params={"response_fields": "_httk_custom_total_energy"}
+                f"/v1/{RESULT}/anyt.am-1-1", params={"response_fields": ",".join(_SCIENCE_MIRROR_FIELDS)}
             ).json()["data"]
-            assert result["attributes"]["_httk_custom_total_energy"] == -1.0
-            result_is_artifact = result["relationships"]["_httk_is_artifact"]["data"]
-            assert [(e["type"], e["id"]) for e in result_is_artifact] == [("_httk_runs", result_is_artifact[0]["id"])]
-            assert result_is_artifact[0]["meta"]["role"] == "artifact"
-            assert result_is_artifact[0]["meta"]["_httk_label"] == "screening_result"
-            run_id = result_is_artifact[0]["id"]
+            assert _relationship_ids(result, "_httk_is_artifact") == []
+            assert _relationship_ids(result, "_httk_is_output") == []
+            records_block = result["relationships"]["_httk_records"]["data"]
+            assert all(entry["type"] == "_httk_records" for entry in records_block)
+            by_role = {entry["meta"]["role"]: entry["id"] for entry in records_block}
+            assert set(by_role) == {"calculation_output_record", "screening_result_record"}
+            calculation_id = by_role["calculation_output_record"]
+            screening_id = by_role["screening_result_record"]
             structure_id = _relationship_ids(result, "structures")[0][1]
 
-            # (b) the coupled STRUCTURE serves the relaxed_structure reverse blocks (the
-            # structure IS the relaxed output/artifact).
-            structure = live.get(f"/v1/structures/{structure_id}").json()["data"]
-            is_artifact = structure["relationships"]["_httk_is_artifact"]["data"]
-            is_output = structure["relationships"]["_httk_is_output"]["data"]
-            assert [(e["type"], e["id"]) for e in is_artifact] == [("_httk_runs", run_id)]
-            assert is_artifact[0]["meta"]["_httk_label"] == "relaxed_structure"
-            assert [(e["type"], e["id"]) for e in is_output] == [("_httk_runs", run_id)]
+            # (b) the calculation record serves the energy and the reverse run blocks
+            # (paired: has_output IS has_artifact, the AMDB no-sub-workflows rule).
+            calculation = live.get(
+                f"/v1/_httk_records/{calculation_id}", params={"response_fields": "_httk_total_energy"}
+            ).json()["data"]
+            assert calculation["attributes"]["_httk_total_energy"] == -1.0
+            calc_is_output = _relationship_ids(calculation, "_httk_is_output")
+            calc_is_artifact = _relationship_ids(calculation, "_httk_is_artifact")
+            assert calc_is_output and calc_is_output == calc_is_artifact
+            assert all(etype == "_httk_runs" for etype, _ in calc_is_output)
+            run_id = calc_is_output[0][1]
 
-            # (c) the run resolves at its wire endpoint with non-null prefixed values.
+            # (c) the screening record mirrors the result's science values and carries no
+            # reverse run blocks (the published CSV values were never a run's product).
+            screening = live.get(
+                f"/v1/_httk_records/{screening_id}", params={"response_fields": ",".join(_SCIENCE_MIRROR_FIELDS)}
+            ).json()["data"]
+            for field_name in _SCIENCE_MIRROR_FIELDS:
+                assert screening["attributes"][field_name] == result["attributes"][field_name]
+            assert _relationship_ids(screening, "_httk_is_output") == []
+            assert _relationship_ids(screening, "_httk_is_artifact") == []
+
+            # (d) the coupled STRUCTURE still serves the relaxed_structure reverse blocks
+            # (the structure IS the relaxed output/artifact; unaffected by the redesign).
+            structure = live.get(f"/v1/structures/{structure_id}").json()["data"]
+            structure_is_artifact = _relationship_ids(structure, "_httk_is_artifact")
+            structure_is_output = _relationship_ids(structure, "_httk_is_output")
+            assert structure_is_artifact == [("_httk_runs", run_id)]
+            assert structure_is_output == [("_httk_runs", run_id)]
+
+            # (e) the run resolves at its wire endpoint with non-null prefixed values, and
+            # its forward _httk_has_* blocks are the SAME tuple: the relaxed structure, the
+            # calculation record, and the file output -- never a result-typed edge.
             run = live.get(
                 f"/v1/_httk_runs/{run_id}",
                 params={"response_fields": "_httk_source_id,_httk_workflow_declaration_uri"},
             )
             assert run.status_code == 200
-            run_attrs = run.json()["data"]["attributes"]
-            assert run_attrs["_httk_source_id"]
-            assert run_attrs["_httk_workflow_declaration_uri"]
-
-            # (d) the run's forward _httk_has_* blocks resolve: has_artifact carries the
-            # relaxed structure, the record/file edges, AND the appended screening result;
-            # has_output carries the structure + record/file edges but NOT the result.
             run_resource = run.json()["data"]
+            assert run_resource["attributes"]["_httk_source_id"]
+            assert run_resource["attributes"]["_httk_workflow_declaration_uri"]
             has_output = _relationship_ids(run_resource, "_httk_has_output")
             has_artifact = _relationship_ids(run_resource, "_httk_has_artifact")
+            assert set(has_output) == set(has_artifact)
             assert ("structures", structure_id) in has_output
-            assert (RESULT, "anyt.am-1-1") in has_artifact
-            assert (RESULT, "anyt.am-1-1") not in has_output
-            assert set(has_output) < set(has_artifact)
-            assert any(etype == "_httk_records" for etype, _ in has_output)
+            assert ("_httk_records", calculation_id) in has_output
             assert any(etype == "files" for etype, _ in has_output)
+            assert not any(etype == RESULT for etype, _ in has_output)
 
-            # (e) the _httk_relationships filter route selects the run by result id.
+            # (f) the _httk_relationships filter route now selects the run by RECORD id
+            # (the provenance chain runs result -> record -> run, not result -> run).
             filtered = live.get(
                 "/v1/_httk_runs",
-                params={"filter": '_httk_relationships._httk_has_artifact.id HAS "anyt.am-1-1"'},
+                params={"filter": f'_httk_relationships._httk_has_artifact.id HAS "{calculation_id}"'},
             )
             assert filtered.status_code == 200
             assert [item["id"] for item in filtered.json()["data"]] == [run_id]
 
-            # (f) an uncoupled result in the same build serves a null energy and no reverse block.
-            other = live.get(
-                f"/v1/{RESULT}/anyt.am-1-2", params={"response_fields": "_httk_custom_total_energy"}
-            ).json()["data"]
-            assert other["attributes"]["_httk_custom_total_energy"] is None
+            # (g) an uncoupled result in the same build serves only the screening entry.
+            other = live.get(f"/v1/{RESULT}/anyt.am-1-2").json()["data"]
+            other_records = other["relationships"]["_httk_records"]["data"]
+            assert {entry["meta"]["role"] for entry in other_records} == {"screening_result_record"}
             assert _relationship_ids(other, "_httk_is_artifact") == []
     finally:
         opened.database.dispose()
@@ -325,8 +356,11 @@ def test_files_and_records_endpoints_serve_content_and_bytes(tmp_path: Path) -> 
 
     Runs against the prebuilt-store path (the stale-layout fallback would serve empty
     files/records) and asserts non-empty exact content: the files entry carries the
-    serve-time-rewritten absolute byte-route url plus name/size, the records entry carries
-    the record name and value, and the byte route streams the fixture file byte-exact while
+    serve-time-rewritten absolute byte-route url plus name/size; the records listing
+    carries BOTH typed backings (one ``CalculationOutputRecord`` for the coupled material,
+    one ``ScreeningResultRecord`` per screened material) with typed properties -- the
+    other backing's properties serving null, and no retired ``_httk_custom_record_*``
+    meta-triple anywhere; the byte route streams the fixture file byte-exact while
     404ing unknown ids and refusing a traversal-shaped id.
     """
     opened, app, _details, _runs = _build_run_backed_store(tmp_path)
@@ -340,12 +374,29 @@ def test_files_and_records_endpoints_serve_content_and_bytes(tmp_path: Path) -> 
             assert attrs["name"] == "vasprun.xml"
             assert attrs["size"] == len(b"<modeling/>\n")
 
-            records = live.get("/v1/_httk_records").json()["data"]
-            assert len(records) == 1
-            record_attrs = records[0]["attributes"]
-            assert record_attrs["_httk_custom_record_name"] == "_httk_total_energy"
-            assert record_attrs["_httk_custom_record_value_number"] == -1.0
-            assert json.loads(record_attrs["_httk_custom_record_value_json"]) == -1.0
+            records = live.get(
+                "/v1/_httk_records",
+                params={
+                    "page_limit": "200",
+                    "response_fields": "_httk_total_energy," + ",".join(_SCIENCE_MIRROR_FIELDS),
+                },
+            ).json()["data"]
+            # One CalculationOutputRecord (the coupled material) plus one ScreeningResultRecord
+            # per screened material (three, from write_source_tables' fixture rows).
+            assert len(records) == 4
+            for record in records:
+                record_attrs = record["attributes"]
+                assert "_httk_custom_record_name" not in record_attrs
+                assert "_httk_custom_record_value_json" not in record_attrs
+                assert "_httk_custom_record_value_number" not in record_attrs
+            calculations = [r for r in records if r["attributes"].get("_httk_total_energy") is not None]
+            screenings = [r for r in records if r["attributes"].get("_httk_total_energy") is None]
+            assert len(calculations) == 1
+            assert len(screenings) == 3
+            assert calculations[0]["attributes"]["_httk_total_energy"] == -1.0
+            # The other backing's properties serve null on a calculation-only row.
+            for field_name in _SCIENCE_MIRROR_FIELDS:
+                assert calculations[0]["attributes"].get(field_name) is None
 
             served = live.get(f"/extensions/files/entry/{file_id}")
             assert served.status_code == 200
@@ -365,7 +416,10 @@ def test_five_entry_type_id_forms(tmp_path: Path) -> None:
     """Every served family mints/carries its pinned ``anyt.am[.<type>]-1-N`` id form.
 
     Numbers are matched by regex, never pinned exactly, since minted-number stability is
-    not guaranteed.
+    not guaranteed. The records family now covers both the inherited calculation-record
+    id (the revision of the retired one-value total_energy DataRecord) and a fresh
+    screening-record id, reached through the result's ``_httk_records`` relationship
+    (the provenance chain runs result -> record -> run, not result -> run).
     """
     opened, app, _details, _runs = _build_run_backed_store(tmp_path)
     try:
@@ -393,13 +447,22 @@ def test_five_entry_type_id_forms(tmp_path: Path) -> None:
             ):
                 assert crysviz.get(field_name) is not None, field_name
 
-            run_id = result["relationships"]["_httk_is_artifact"]["data"][0]["id"]
+            records_block = {
+                entry["meta"]["role"]: entry["id"] for entry in result["relationships"]["_httk_records"]["data"]
+            }
+            calc_id = records_block["calculation_output_record"]
+            screening_id = records_block["screening_result_record"]
+            assert re.fullmatch(r"anyt\.am\.records-1-\d+", calc_id)
+            assert re.fullmatch(r"anyt\.am\.records-1-\d+", screening_id)
+            assert calc_id != screening_id
+
+            run_id = live.get(f"/v1/_httk_records/{calc_id}").json()["data"]["relationships"]["_httk_is_output"][
+                "data"
+            ][0]["id"]
             assert re.fullmatch(r"anyt\.am\.runs-1-\d+", run_id)
 
             file_id = live.get("/v1/files").json()["data"][0]["id"]
             assert re.fullmatch(r"anyt\.am\.files-1-\d+", file_id)
-            record_id = live.get("/v1/_httk_records").json()["data"][0]["id"]
-            assert re.fullmatch(r"anyt\.am\.records-1-\d+", record_id)
     finally:
         opened.database.dispose()
 
@@ -825,6 +888,38 @@ def test_structures_nsites_depth1_filter_e2e(tmp_path: Path) -> None:
         prebuilt.database.dispose()
 
 
+def test_records_relationship_depth1_filter_e2e(tmp_path: Path) -> None:
+    """Depth-1 ``_httk_records.<prop>`` filtering on the result endpoint through the
+    ``screening_record`` typed reference field -- the regression proof for the
+    httk-store fix where a relationship filter through a second typed reference field
+    to a shared wire type used to silently return empty (``calculation_output`` is the
+    first-declared reference to ``_httk_records`` on :class:`~material_store.AltermagnetScreeningResult`,
+    ``screening_record`` the second).
+
+    ``_httk_total_energy`` (the OTHER backing, :class:`~material_store.CalculationOutputRecord`,
+    reached through the first-declared ``calculation_output`` field) is deliberately NOT
+    exercised as a working filter here: its vendored definition
+    (``httk-schemas`` ``core/total_energy.json``) declares ``query-support: none``, so the
+    HTTP filter layer refuses it with 400 regardless of relationship depth -- confirmed
+    below instead, to lock in that documented (not this packet's) contract rather than
+    silently drop coverage of it.
+    """
+    opened, app, _details, _runs = _build_run_backed_store(tmp_path)
+    try:
+        with TestClient(app, base_url="http://testserver") as live:
+            # CrSb (MaxSS=1.8724) and MnTe (MaxSS=0.9227) both clear 0.5; the third
+            # fixture row (P6Fe_As, MaxSS="inf") parses to a null science value.
+            assert _result_filter_ids(live, "_httk_records._anyterial_max_spin_splitting > 0.5") == (
+                200,
+                ["anyt.am-1-1", "anyt.am-1-2"],
+            )
+            refused = live.get(f"/v1/{RESULT}", params={"filter": "_httk_records._httk_total_energy < 0"})
+            assert refused.status_code == 400
+            assert "_httk_total_energy" in refused.json()["errors"][0]["detail"]
+    finally:
+        opened.database.dispose()
+
+
 def _figure_dataset(details_root: Path) -> tuple[dict[str, Any], str, Path, Path]:
     material_id = "anyt.am-1-1"
     details_dir = details_root / "am-1" / "0" / "00" / "001" / material_id
@@ -1089,6 +1184,23 @@ def test_live_definition_contract() -> None:
     assert figures["x-optimade-type"] == "list"
     assert figures["items"]["x-optimade-type"] == "dictionary"
     assert figures["x-optimade-requirements"]["response-level"] == "should not"
+
+    # The retired one-value energy scalar is gone; the record serves it instead.
+    assert "_httk_custom_total_energy" not in definitions
+
+    # The ``_httk_records`` family's served entry type is the union of both typed
+    # record backings' properties -- exactly the six, no retired meta-triple.
+    records_properties = material_store.AltermagnetDataRecordEntry.entry_type_definition().properties
+    custom_record_properties = {name for name in records_properties if name.startswith(("_anyterial_", "_httk_"))}
+    assert custom_record_properties == {
+        "_httk_total_energy",
+        "_anyterial_max_spin_splitting",
+        "_anyterial_avg_spin_splitting",
+        "_anyterial_spin_splitting_fraction",
+        "_anyterial_electronic_type",
+        "_httk_dft_band_gap",
+    }
+    assert not any(name.startswith("_httk_custom_record") for name in records_properties)
 
 
 def test_structureless_result_has_no_structures_relationship(providers: list) -> None:
@@ -1384,7 +1496,7 @@ def test_structureless_and_unresolved_variant_projection(providers: list) -> Non
     assert science[structureless_id]["_anyterial_formula"]
     assert science[structureless_id]["_anyterial_elements"]
 
-    structures, properties, relationships, _references = dataset_module.build_dataset()
+    _structures, properties, relationships, _references = dataset_module.build_dataset()
     # A structureless result has science but no stored structure and no structures relationship.
     assert "structures" not in relationships.get(structureless_id, {})
     assert properties[structureless_id]["_anyterial_formula"]

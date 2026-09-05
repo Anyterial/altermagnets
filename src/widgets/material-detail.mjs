@@ -58,6 +58,8 @@ const ALT_PAGE_LIMIT = 8;
 const ALT_KIND_ORDER = ["conventional", "primitive"];
 // The only run fields the Provenance section needs from each linked _httk_runs entry.
 const RUN_RESPONSE_FIELDS = ["_httk_workflow_declaration_uri", "_httk_source_id"];
+// The only field the Provenance section needs off the linked calculation _httk_records entry.
+const RECORD_RESPONSE_FIELDS = ["_httk_total_energy"];
 // The served fields each produced `files` entry needs to become a download link:
 // the human name (anchor text), the absolute byte-route url (href), and the size
 // shown as a compact annotation.
@@ -542,38 +544,28 @@ function buildVariantCards(variants) {
   return list;
 }
 
-// Same-page link to another material's detail view (keeps the current path, swaps ?id=).
-const materialPageHref = (id) => new URL(`?id=${encodeURIComponent(id)}`, document.baseURI).href;
-
-// Human word for a produced entry, keyed by its served (wire) type — the label
-// on the non-link fallback and the anchor-text fallback for a file with no served
-// name. The RESULT entry (its wire type is passed in from the config) resolves to
-// the real material page; `structures` entries are the slim crystal record with no
-// page of its own, so they render as plain typed entries; `files` entries become
-// download links from the mounted files endpoint (see attachFileDownloads),
-// degrading to a labeled non-link entry; `_httk_records` are rendered from the run
-// blocks alone and stay non-link. The full id is kept in a title attribute.
+// Human word for a produced entry, keyed by its served (wire) type — the label on
+// the non-link fallback and the anchor-text fallback for a file with no served
+// name. There is no result-typed produced edge any more: `_httk_records` entries
+// (including the calculation record itself) render as plain typed non-link
+// entries, annotated "(this material)" when the id matches the calculation
+// record that anchors this Provenance section; `structures` entries are the slim
+// crystal record with no page of its own, so they render the same way; `files`
+// entries become download links from the mounted files endpoint (see
+// attachFileDownloads), degrading to a labeled non-link entry. The full id is
+// kept in a title attribute.
 const PRODUCED_KIND_WORDS = { _httk_records: "record", files: "file", structures: "structure" };
 
-// The forward-relationship keys a run exposes for what it produced, and the
-// reverse keys a material carries naming its producing run.
-const RUN_FORWARD_KEYS = ["_httk_has_artifact", "_httk_has_output"];
-const MATERIAL_REVERSE_KEYS = ["_httk_is_artifact", "_httk_is_output"];
-
-// Deduplicated list of what a run produced, from its forward StrongLink blocks.
-// The same (type, id) can appear under both the artifact and output roles (an
-// output returned as an artifact) — collapse to one entry, keeping its label.
+// List of what a run produced, from its forward StrongLink blocks. `_httk_has_output`
+// and `_httk_has_artifact` name identical target sets on the wire, so only one is
+// read: prefer `_httk_has_output`, falling back to `_httk_has_artifact` when the
+// output block is absent or empty.
 function producedEntries(run) {
-  const seen = new Map();
-  RUN_FORWARD_KEYS.forEach((key) => {
-    arrayValue(run.relationships?.[key]?.data).forEach((entry) => {
-      if (!entry || typeof entry.id !== "string" || !entry.id) return;
-      const type = String(entry.type || "");
-      const dedupKey = `${type} ${entry.id}`;
-      if (!seen.has(dedupKey)) seen.set(dedupKey, { type, id: entry.id, label: String(entry.meta?._httk_label || "") });
-    });
-  });
-  return [...seen.values()];
+  const output = arrayValue(run.relationships?._httk_has_output?.data);
+  const source = output.length ? output : arrayValue(run.relationships?._httk_has_artifact?.data);
+  return source
+    .filter((entry) => entry && typeof entry.id === "string" && entry.id)
+    .map((entry) => ({ type: String(entry.type || ""), id: entry.id, label: String(entry.meta?._httk_label || "") }));
 }
 
 // Turn the `files`-type produced entries into real download links by fetching
@@ -608,56 +600,54 @@ async function attachFileDownloads(Transport, config, produced) {
   return produced;
 }
 
-// Locate the producing run resource. Primary lookup: the `_httk_relationships`
-// filter route on `/_httk_runs` selects the run by material id in one request.
-// If that route is unavailable (the in-memory `--validate` service has no
-// `_httk_runs` endpoint) or returns nothing, fall back to the run id the
-// material's own reverse block already named and fetch it directly. Any failure
-// returns null so the section degrades to the energy already in hand.
-async function fetchProducingRun(Transport, config, materialId, reverseRunIds) {
-  const makeTransport = () =>
-    new Transport(
-      { base_url: config.base_url, entry_type: "_httk_runs", response_fields: RUN_RESPONSE_FIELDS, page_size: 1 },
+// The first relationship-block id, or null when the block is absent/empty/malformed.
+function firstRelationshipId(resource, key) {
+  const entry = arrayValue(resource?.relationships?.[key]?.data)[0];
+  return typeof entry?.id === "string" && entry.id ? entry.id : null;
+}
+
+// Fetch one `_httk_records` or `_httk_runs` resource directly by id. Any failure
+// (network, validation, not-found) is swallowed to null so the caller degrades
+// rather than blocking the page.
+async function fetchLinkedResource(Transport, config, entryType, responseFields, id, errorLabel) {
+  try {
+    const transport = new Transport(
+      { base_url: config.base_url, entry_type: entryType, response_fields: responseFields, page_size: 1 },
       { documentBase: document.baseURI },
     );
-  const filter = `_httk_relationships._httk_has_artifact.id HAS ${JSON.stringify(materialId)}`;
-  try {
-    const page = await makeTransport().fetchPage({ filter });
-    if (page.resources.length) return page.resources[0];
-  } catch (error) {
-    console.error("Run provenance filter lookup failed", error);
-  }
-  try {
-    const fetched = await makeTransport().fetchOne(reverseRunIds[0]);
+    const fetched = await transport.fetchOne(id);
     return fetched?.resource || null;
   } catch (error) {
-    console.error("Run provenance id lookup failed", error);
+    console.error(errorLabel, error);
     return null;
   }
 }
 
-// Build the plain provenance OBJECT the renderer consumes, driven by the new
-// StrongLink OPTIMADE relationships. The material's reverse
-// `_httk_is_artifact`/`_httk_is_output` block names its producing run; the run
-// carries the workflow uri, source id, and forward `_httk_has_*` blocks listing
-// what it produced. Total energy comes from the material's served
-// `_httk_custom_total_energy` scalar (the records/files endpoints are not
-// mounted). Returns null when the material was produced by no run and has no
-// energy; a run-lookup failure degrades to the energy already in hand.
+// Build the plain provenance OBJECT the renderer consumes, driven by the material's
+// `_httk_records` relationship. The `calculation_output_record`-role entry (present
+// only for run-coupled materials) names the calculation record; no such entry (or no
+// `_httk_records` block at all) → no Provenance section. The record itself serves the
+// total energy and, via its own `_httk_is_output`/`_httk_is_artifact` reverse blocks,
+// the id of the producing run; the run carries the workflow uri, source id, and a
+// forward `_httk_has_*` block listing what it produced. A record-fetch failure or a
+// record with no run id degrades to the energy line alone, issuing no run request; a
+// run-fetch failure degrades to the same energy-only rendering.
 async function fetchProvenance(Transport, config, resource) {
-  const attributes = resource.attributes || {};
-  const totalEnergy = safeNumber(attributes._httk_custom_total_energy);
-  const reverseRunIds = [
-    ...new Set(
-      MATERIAL_REVERSE_KEYS.flatMap((key) => arrayValue(resource.relationships?.[key]?.data).map((entry) => entry?.id)).filter(
-        (id) => typeof id === "string" && id,
-      ),
-    ),
-  ];
-  if (!reverseRunIds.length && totalEnergy === null) return null;
-  const run = reverseRunIds.length ? await fetchProducingRun(Transport, config, resource.id, reverseRunIds) : null;
+  const records = arrayValue(resource.relationships?._httk_records?.data);
+  const calcEntry = records.find((entry) => entry?.meta?.role === "calculation_output_record");
+  const calcRecordId = typeof calcEntry?.id === "string" && calcEntry.id ? calcEntry.id : null;
+  if (!calcRecordId) return null;
+  const record = await fetchLinkedResource(
+    Transport, config, "_httk_records", RECORD_RESPONSE_FIELDS, calcRecordId, "Calculation record OPTIMADE request failed",
+  );
+  const totalEnergy = safeNumber(record?.attributes?._httk_total_energy);
+  const runId = record ? firstRelationshipId(record, "_httk_is_output") || firstRelationshipId(record, "_httk_is_artifact") : null;
+  const run = runId
+    ? await fetchLinkedResource(Transport, config, "_httk_runs", RUN_RESPONSE_FIELDS, runId, "Run provenance OPTIMADE request failed")
+    : null;
   const runAttrs = run?.attributes || {};
   return {
+    calcRecordId,
     workflowUri: runAttrs._httk_workflow_declaration_uri != null ? String(runAttrs._httk_workflow_declaration_uri) : null,
     sourceId: runAttrs._httk_source_id != null ? String(runAttrs._httk_source_id) : null,
     totalEnergy,
@@ -665,25 +655,17 @@ async function fetchProvenance(Transport, config, resource) {
   };
 }
 
-// The compact "This run produced" list: the RESULT edge (its wire type passed in as
-// `resultType`) is the real material-page link, with a "(this material)" marker on the
-// current id; `structures` edges are the slim crystal record (no page of its own) and
-// render as plain typed non-link entries; files with a served url (attached by
-// attachFileDownloads) are download links (served name + compact size); records — and
-// any file whose batch entry did not resolve — are labeled non-link entries (edge label
-// + a human kind word; full id in a title).
-function buildProducedList(produced, currentId, resultType) {
+// The compact "This run produced" list: every entry is a plain typed non-link span
+// (kind word; full id in a title) EXCEPT a `files` entry with a served url (attached
+// by attachFileDownloads), which becomes a real download link (served name + compact
+// size). The entry whose id is the calculation record anchoring this section carries
+// a "(this material)" annotation.
+function buildProducedList(produced, calcRecordId) {
   const list = node("ul", "provenance-produced");
   produced.forEach((item) => {
     const li = node("li", "provenance-produced-item");
     if (item.label) li.append(node("span", "provenance-produced-label", item.label));
-    if (item.type === resultType) {
-      const current = item.id === currentId;
-      const link = node("a", current ? "provenance-produced-link is-current" : "provenance-produced-link", item.id);
-      link.href = materialPageHref(item.id);
-      if (current) link.append(document.createTextNode(" (this material)"));
-      li.append(link);
-    } else if (item.type === "files" && item.file) {
+    if (item.type === "files" && item.file) {
       // Served-time url (absolute byte route) → a real download link; anchor text
       // is the served name (full id kept in the title), compact size appended.
       const link = node("a", "provenance-produced-link provenance-produced-file", item.file.name || PRODUCED_KIND_WORDS.files);
@@ -693,8 +675,10 @@ function buildProducedList(produced, currentId, resultType) {
       if (size) link.append(node("span", "provenance-produced-size", ` (${size})`));
       li.append(link);
     } else {
-      const entry = node("span", "provenance-produced-entry", PRODUCED_KIND_WORDS[item.type] || "entry");
+      const current = item.id === calcRecordId;
+      const entry = node("span", current ? "provenance-produced-entry is-current" : "provenance-produced-entry", PRODUCED_KIND_WORDS[item.type] || "entry");
       entry.title = item.id;
+      if (current) entry.append(document.createTextNode(" (this material)"));
       li.append(entry);
     }
     list.append(li);
@@ -704,7 +688,7 @@ function buildProducedList(produced, currentId, resultType) {
 
 // Render the Provenance section from a plain provenance object (renderer contract:
 // object in, section element out; null in → null out so the caller omits it).
-function buildProvenance(provenance, currentId, resultType) {
+function buildProvenance(provenance) {
   if (!provenance) return null;
   const sec = section("Provenance");
   sec.append(node("p", "section-note", "How this material was produced: the workflow run that generated it, its identifiers, and the entries that run produced."));
@@ -720,12 +704,12 @@ function buildProvenance(provenance, currentId, resultType) {
   if (dl.childNodes.length) sec.append(dl);
   if (provenance.produced.length) {
     sec.append(node("p", "section-note", "This run produced:"));
-    sec.append(buildProducedList(provenance.produced, currentId, resultType));
+    sec.append(buildProducedList(provenance.produced, provenance.calcRecordId));
   }
   return sec;
 }
 
-function buildDetail(resource, included, structure, apiBase, alternatives = [], provenance = null, resultType = "") {
+function buildDetail(resource, included, structure, apiBase, alternatives = [], provenance = null) {
   const attributes = resource.attributes || {};
   const structureAttributes = structure?.attributes || {};
   const structureId = structure?.id || "";
@@ -801,7 +785,7 @@ function buildDetail(resource, included, structure, apiBase, alternatives = [], 
     article.append(messages);
   }
 
-  const provenanceSection = buildProvenance(provenance, resource.id, resultType);
+  const provenanceSection = buildProvenance(provenance);
   if (provenanceSection) article.append(provenanceSection);
   return article;
 }
@@ -890,7 +874,7 @@ async function loadShell(shell, Transport = OptimadeTransport) {
     const alternatives = structure ? await fetchAlternatives(Transport, config, discovery.apiBaseUrl, structure.id) : null;
     const provenance = await fetchProvenance(Transport, config, result.resource);
     shell.replaceChildren(
-      buildDetail(result.resource, result.included, structure, discovery.apiBaseUrl, alternatives, provenance, config.entry_type),
+      buildDetail(result.resource, result.included, structure, discovery.apiBaseUrl, alternatives, provenance),
     );
     shell.setAttribute("aria-busy", "false");
     window.altermagnetsUi?.initSubtree(shell);

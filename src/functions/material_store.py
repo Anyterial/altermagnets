@@ -9,6 +9,7 @@ httk-core's storage markers and implemented by ``httk.store.backend.sql.SqlStore
 
 import bz2
 import csv
+import datetime
 import hashlib
 import json
 import logging
@@ -42,13 +43,13 @@ from httk.atomistic.storage.records import (
     UnitcellStructureRecord,
 )
 from httk.core import (
-    DataRecord,
     EntryTypeDefinition,
     File,
     FileRecord,
     IdentitySkip,
     Indexed,
     PropertyDefinition,
+    Related,
     Skip,
     StorageInfo,
     Unique,
@@ -80,18 +81,19 @@ __all__ = [
     "SCREENING_RESULTS_FILENAME",
     "STORE_LAYOUT_VERSION",
     "STORE_PATH_ENVIRONMENT",
-    "AltermagnetDataRecord",
     "AltermagnetDataRecordEntry",
     "AltermagnetReferenceEntry",
     "AltermagnetReferenceRecord",
     "AltermagnetScreeningResult",
     "AltermagnetScreeningResultEntry",
     "AltermagnetStructureEntry",
+    "CalculationOutputRecord",
     "MagndataRecord",
     "MaterialFigure",
     "MaterialMagndataLink",
     "OpenedMaterialStore",
     "PlotFile",
+    "ScreeningResultRecord",
     "StoreLayout",
     "SymmetryVariant",
     "build_material_records",
@@ -145,7 +147,15 @@ logger = report.context_logger(logging.getLogger("httk.altermagnets.material_sto
 # ``anyt.am.structure-1-N``) that now carries the structural properties, alternatives, and
 # the ``relaxed_structure`` provenance edge; the result gains the stored ``structure_id``
 # serving its ``structures`` relationship block plus an appended ``has_artifact`` run edge.
-STORE_LAYOUT_VERSION = 12
+# Bump 13: the records/provenance redesign. Two typed record backings
+# (``CalculationOutputRecord`` in ``altermagnets_calculation_outputs``, ``ScreeningResultRecord``
+# in ``altermagnets_screening_records``) replace the one-value ``DataRecord`` served through
+# ``_httk_custom_record_*``; the reconstructed run's ``outputs`` and ``artifacts`` are the same
+# paired edge tuple and the appended run->result ``has_artifact`` edge is gone (the result is a
+# curated collection entry, not a run product); the result gains the typed ``calculation_output``
+# and ``screening_record`` references and loses its ``total_energy`` scalar
+# (``_httk_custom_total_energy``). New tables and a dispatch table force the rebuild.
+STORE_LAYOUT_VERSION = 13
 RELAXED_STRUCTURE_PRECISION = 5e-4  # Cartesian Å; relaxed-DFT coordinate precision, so symmetry tolerance is realistic (not ~machine epsilon from full-precision CONTCAR digits)
 
 ELEMENT_PATTERN = re.compile(r"[A-Z][a-z]?")
@@ -299,22 +309,78 @@ class MaterialFigure:
 
 
 @dataclass(frozen=True)
+class CalculationOutputRecord:
+    """The coupled DFT run's declared outputs, one row per coupled material.
+
+    A backing of the AMDB ``_httk_records`` family: a normalized results table whose
+    every field is served under its own property definition, replacing the meta-level
+    one-value :class:`~httk.core.DataRecord`. It inherits the ledger id of the record
+    it replaces (key ``amdb:<id>:total_energy``), so the reconstructed run's edges and
+    the ProductLinks targeting it keep resolving.
+    """
+
+    __httk_storage__: ClassVar[StorageInfo] = StorageInfo(storage_name="altermagnets_calculation_outputs")
+
+    total_energy: float
+    # Entry-id fields per the store contract; id is always the ledger id at construction.
+    id: Annotated[str | None, IdentitySkip(), Indexed()] = field(default=None, compare=False)
+    immutable_id: Annotated[str | None, IdentitySkip(), Unique()] = field(default=None, compare=False)
+    last_modified: Annotated[datetime.datetime | None, IdentitySkip()] = field(default=None, compare=False)
+
+    @property
+    def type(self) -> str:
+        """Return the internal (unprefixed) entry type name."""
+        return "records"
+
+
+@dataclass(frozen=True)
+class ScreeningResultRecord:
+    """The published screening analysis's values, one row per screened material.
+
+    The second backing of the AMDB ``_httk_records`` family. These values come from
+    the published screening CSV rather than from any run we collected, so the record
+    carries NO provenance edges and no ProductLink (design Q5); it is related to its
+    material solely by the result's :attr:`AltermagnetScreeningResult.screening_record`
+    reference. The result keeps queryable/sortable mirrors of the same five values.
+    No indexes: a few hundred rows scan faster than they index.
+    """
+
+    __httk_storage__: ClassVar[StorageInfo] = StorageInfo(storage_name="altermagnets_screening_records")
+
+    max_ss: float | None
+    avg_ss: float | None
+    #: Percent, exactly as the result's mirror column stores it; served as a fraction.
+    fdelta_pct: float | None
+    bandgap: float | None
+    electronic_type: str
+    # Entry-id fields per the store contract; id is always the ledger id at construction.
+    id: Annotated[str | None, IdentitySkip(), Indexed()] = field(default=None, compare=False)
+    immutable_id: Annotated[str | None, IdentitySkip(), Unique()] = field(default=None, compare=False)
+    last_modified: Annotated[datetime.datetime | None, IdentitySkip()] = field(default=None, compare=False)
+
+    @property
+    def type(self) -> str:
+        """Return the internal (unprefixed) entry type name."""
+        return "records"
+
+
+@dataclass(frozen=True)
 class AltermagnetScreeningResult:
     """The AMDB main entity: one screened material's screening science and figures.
 
     Served under the provider-specific ``_anyterial_altermagnet_screening_result``
-    entry type. It owns the science, figures, total energy, MAGNDATA variants, DOIs,
-    and the primary ids (``anyt.am-1-N``); the screened crystal structure is a
-    separate standard ``structures`` main referenced through :attr:`structure`.
+    entry type. It owns the science, figures, MAGNDATA variants, DOIs, and the primary
+    ids (``anyt.am-1-N``); the screened crystal structure is a separate standard
+    ``structures`` main referenced through :attr:`structure`, and the authoritative
+    record values through :attr:`calculation_output` / :attr:`screening_record`.
     """
 
     __httk_storage__: ClassVar[StorageInfo] = StorageInfo(
         storage_name="altermagnets_screening_results",
-        # Provenance is served through the producing run's StrongLink edges, not a
-        # stored link table: the run carries an appended ``has_artifact`` edge to this
-        # result's own served id, so the result serves the derived reverse
-        # ``_httk_is_artifact`` relationship (see ``_save_reconstructed_runs``). The
-        # result-level ``_httk_custom_total_energy`` scalar is served beside it.
+        # The result is NOT a provenance node: it is a curated collection entry, so no
+        # run edge targets it. Provenance runs result -> ``_httk_records`` relationship
+        # -> record -> reverse ``_httk_is_output``/``_httk_is_artifact`` -> run. The
+        # science columns below stay as the queryable/sortable mirrors of the records.
         indexes=(
             ("classification", "screening_rank"),
             ("electronic_type", "screening_rank"),
@@ -356,9 +422,22 @@ class AltermagnetScreeningResult:
     # the build carries the SAME structure instance (id=None) that content-id dedup
     # unifies with the stamped structure main saved just before this result row.
     structure: UnitcellStructureRecord | None = None
-    # The coupled run's total-energy DataRecord value, served symmetrically as the
-    # material-level ``_httk_custom_total_energy`` scalar beside the live run link.
-    total_energy: float | None = None
+    # The two typed ``_httk_records`` references, stamped at build time onto the saved
+    # record mains (content dedup unifies them, exactly as ``structure`` does). Both
+    # serve under the one ``_httk_records`` relationship key, told apart by the
+    # ``Related`` role, and they make depth-1 ``_httk_records.<property>`` filters work
+    # on the results endpoint with the machinery that already exists.
+    calculation_output: Annotated[
+        CalculationOutputRecord | None,
+        Related(role="calculation_output_record", description="The coupled DFT run's declared outputs."),
+    ] = None
+    screening_record: Annotated[
+        ScreeningResultRecord | None,
+        Related(
+            role="screening_result_record",
+            description="The published screening analysis's values for this material.",
+        ),
+    ] = None
     # The densely enumerated ``anyt.am.refs-1-N`` ids of this material's DOIs, aligned
     # with ``dois``, stamped at build/seed time (the enumeration needs the whole
     # deployment's DOI order). Serving reads them straight off the row, so the
@@ -488,84 +567,40 @@ class AltermagnetReferenceEntry:
         )
 
 
-#: The served record-content properties added to the base ``_httk_records`` definition,
-#: mapped to the ``AltermagnetDataRecord`` field each reads. They expose every record's
-#: raw content (its property name, definition IRI, canonical JSON value, and the numeric
-#: value for numeric queries) so ``/_httk_records`` lists all records and their contents.
-_RECORD_CONTENT_FIELDS: tuple[tuple[str, str, str], ...] = (
-    ("_httk_custom_record_name", "name", "string"),
-    ("_httk_custom_record_definition_id", "definition_id", "string"),
-    ("_httk_custom_record_value_json", "value_json", "string"),
-    ("_httk_custom_record_value_number", "value_number", "float"),
+#: The five served properties of :class:`ScreeningResultRecord`, mapped to the field
+#: each reads. Their definitions are the vendored ones the result's mirrors already use.
+_SCREENING_RECORD_FIELDS: tuple[tuple[str, str], ...] = (
+    ("_anyterial_max_spin_splitting", "max_ss"),
+    ("_anyterial_avg_spin_splitting", "avg_ss"),
+    ("_anyterial_spin_splitting_fraction", "fdelta_pct"),
+    ("_anyterial_electronic_type", "electronic_type"),
+    ("_httk_dft_band_gap", "bandgap"),
 )
 
 
-def _record_content_definition(served_name: str, fulltype: str) -> PropertyDefinition:
-    """Build one served record-content property definition.
-
-    :param served_name: The prefixed served property name.
-    :param fulltype: The OPTIMADE simple fulltype of the value.
-    :return: The property definition, marked queryable-none and response-level should.
-    """
-    document = PropertyDefinition.from_simple(
-        served_name,
-        description=f"The record's {served_name.rsplit('_', 1)[-1]} value, served straight from the stored data record.",
-        fulltype=fulltype,
-    ).as_optimade()
-    document["x-optimade-requirements"] = {"support": "may", "query-support": "none", "response-level": "should"}
-    return PropertyDefinition.from_optimade(served_name, document)
-
-
-@dataclass(frozen=True)
-class AltermagnetDataRecord(DataRecord):
-    """A stored :class:`~httk.core.DataRecord` served under the AMDB ``_httk_records`` family.
-
-    Only the physical storage name differs from :class:`~httk.core.DataRecord`; the
-    identity name is kept so a converted record shares its base content id and the
-    provenance edges (which carry the collected DataRecord's content id) still resolve.
-    """
-
-    __httk_storage__: ClassVar[StorageInfo] = StorageInfo(
-        storage_name="altermagnets_data_records",
-        identity_name="core_data_record",
-        indexes=(("definition_id",), ("name",)),
-    )
-
-
 class AltermagnetDataRecordEntry:
-    """The store-native AMDB ``_httk_records`` family carrying per-record content properties."""
+    """The store-native AMDB ``_httk_records`` family, backed by two normalized tables.
+
+    :class:`CalculationOutputRecord` and :class:`ScreeningResultRecord` are the AMDB
+    deployment's results tables, one per producer kind; the family's served entry type
+    is the union of their property definitions, and a property a backing lacks serves
+    as null (every one of them is declared nullable in its vendored document).
+    """
 
     type = "records"
     definition_id = RECORDS_DEFINITION_ID
 
     @classmethod
     def entry_type_definition(cls) -> EntryTypeDefinition:
-        """Return the base records definition extended with the served content properties."""
-        return load_entry_type_definition(RECORDS_DEFINITION_ID).extended(
-            {name: _record_content_definition(name, fulltype) for name, _field, fulltype in _RECORD_CONTENT_FIELDS}
-        )
-
-
-def _as_records_family(value: object) -> object:
-    """Convert a collected :class:`~httk.core.DataRecord` output to the AMDB records subclass.
-
-    Non-data-record outputs (files, structures) pass through unchanged. The subclass
-    preserves the base content id, so a run edge to the original record still resolves.
-
-    :param value: One collected run output.
-    :return: The value, converted when it is a plain ``DataRecord``.
-    """
-    if type(value) is DataRecord:
-        record = cast(DataRecord, value)
-        return AltermagnetDataRecord(
-            record.definition_id,
-            record.name,
-            record.value_json,
-            id=record.id,
-            immutable_id=record.immutable_id,
-            last_modified=record.last_modified,
-        )
-    return value
+        """Return the base records definition extended with both backings' properties."""
+        shared = _optimade_definitions()
+        properties = {
+            "_httk_total_energy": _load_property_definition(
+                HTTK_DEFS_DIR / "core/total_energy.json", "_httk_total_energy"
+            ),
+            **{served_name: shared[served_name] for served_name, _field in _SCREENING_RECORD_FIELDS},
+        }
+        return load_entry_type_definition(RECORDS_DEFINITION_ID).extended(properties)
 
 
 ANYTERIAL_DEFS_BASE = "https://schemas.anyterial.se/defs/v0.1/properties"
@@ -632,21 +667,6 @@ def _local_figure_definition() -> PropertyDefinition:
     return PropertyDefinition.from_optimade("_httk_custom_figures", document)
 
 
-def _local_total_energy_definition() -> PropertyDefinition:
-    document = PropertyDefinition.from_simple(
-        "_httk_custom_total_energy",
-        description="Total energy (eV) of the workflow run that produced this material.",
-        fulltype="float",
-        unit="eV",
-    ).as_optimade()
-    document["x-optimade-requirements"] = {
-        "support": "may",
-        "query-support": "none",
-        "response-level": "should not",
-    }
-    return PropertyDefinition.from_optimade("_httk_custom_total_energy", document)
-
-
 def _private_reference_ids_definition() -> PropertyDefinition:
     document = PropertyDefinition.from_simple(
         "_httk_custom_reference_ids",
@@ -661,6 +681,16 @@ def _private_reference_ids_definition() -> PropertyDefinition:
     return PropertyDefinition.from_optimade("_httk_custom_reference_ids", document)
 
 
+def _load_property_definition(path: Path, served_name: str) -> PropertyDefinition:
+    """Load one vendored OPTIMADE property definition document under its served name."""
+    if not path.is_file():
+        raise RuntimeError(
+            f"Property definition file {path} is missing; initialize the schema submodules "
+            "via `git submodule update --init` or `make update_schemas`."
+        )
+    return PropertyDefinition.from_optimade(served_name, json.loads(path.read_text(encoding="utf-8")))
+
+
 @cache
 def _optimade_definitions() -> dict[str, PropertyDefinition]:
     """Load the curated AMDB definitions used by both stored schema and docs tests."""
@@ -673,17 +703,8 @@ def _optimade_definitions() -> dict[str, PropertyDefinition]:
     definitions: dict[str, PropertyDefinition] = {}
     for base, paths in ((ANYTERIAL_DEFS_DIR, ANYTERIAL_DEFINITION_PATHS), (HTTK_DEFS_DIR, HTTK_DEFINITION_PATHS)):
         for served_name, relative_path in paths.items():
-            path = base / relative_path
-            if not path.is_file():
-                raise RuntimeError(
-                    f"Property definition file {path} is missing; initialize the schema submodules "
-                    "via `git submodule update --init` or `make update_schemas`."
-                )
-            definitions[served_name] = PropertyDefinition.from_optimade(
-                served_name, json.loads(path.read_text(encoding="utf-8"))
-            )
+            definitions[served_name] = _load_property_definition(base / relative_path, served_name)
     definitions["_httk_custom_figures"] = _local_figure_definition()
-    definitions["_httk_custom_total_energy"] = _local_total_energy_definition()
     definitions["_httk_custom_public_id"] = _private_id_definition("structure")
     definitions["_httk_custom_reference_ids"] = _private_reference_ids_definition()
     return definitions
@@ -705,31 +726,24 @@ def _run_key(amdb_id: str) -> str:
 
 
 def _record_key(amdb_id: str, role: str) -> str:
-    """Return the stable ledger key for a run output record (``role`` = output role)."""
+    """Return the stable ledger key for a run output record (``role`` = output role).
+
+    The ``total_energy`` role keys the material's :class:`CalculationOutputRecord`: the
+    typed record INHERITS the id the retired one-value ``DataRecord`` held, so existing
+    run edges and ProductLinks keep resolving and the content change is an ordinary
+    revision rather than a supersession.
+    """
     return f"amdb:{amdb_id}:{role}"
+
+
+def _screening_record_key(amdb_id: str) -> str:
+    """Return the stable ledger key for a material's :class:`ScreeningResultRecord`."""
+    return f"amdb:{amdb_id}:screening_record"
 
 
 def _file_key(amdb_id: str, relpath: str) -> str:
     """Return the stable ledger key for a run output file (``relpath`` = its locator url)."""
     return f"amdb:{amdb_id}:file:{relpath}"
-
-
-def _assign_output_id(ledger: IdLedger, amdb_id: str, role: str, value: object) -> str:
-    """Assign the ledger id for one coupled-run output (a file or a data record).
-
-    Files key on their locator url (``amdb:<id>:file:<url>``), everything else on
-    the output role (``amdb:<id>:<role>``); the families are the store-served
-    ``files`` and ``records``.
-
-    :param ledger: The open ledger to allocate from.
-    :param amdb_id: The coupled material's amdb id.
-    :param role: The collected output role (e.g. ``total_energy``, ``vasprun``).
-    :param value: The converted output record whose id is being allocated.
-    :return: The assigned entry id.
-    """
-    if isinstance(value, File):
-        return ledger.assign(_file_key(amdb_id, value.url), "files")
-    return ledger.assign(_record_key(amdb_id, role), "records")
 
 
 def _normalize_magndata_cell(cell: str) -> str:
@@ -979,11 +993,15 @@ def _stamp_material(
     reference_id_by_doi: Mapping[str, str],
     structure_id_by_material: Mapping[str, str],
     structure_mains: Mapping[str, UnitcellStructureRecord],
+    screening_records: Mapping[str, "ScreeningResultRecord"],
+    calculation_outputs: Mapping[str, "CalculationOutputRecord"],
 ) -> "AltermagnetScreeningResult":
-    """Stamp a result's reference ids, structure id, and canonical structure main once.
+    """Stamp a result's reference ids, structure id, and canonical structure/record mains once.
 
-    Repointing ``structure`` at the canonical stamped main lets the result's nested
-    reference dedup onto the already-saved structure main with identical metadata.
+    Repointing ``structure``, ``screening_record`` and ``calculation_output`` at the
+    canonical stamped mains lets the result's nested references dedup onto the
+    already-saved mains with identical metadata. The record maps are empty on the
+    legacy/in-memory paths, which store no records family.
     """
     assert material.id is not None  # always set to the amdb id at construction
     structure_id = structure_id_by_material.get(material.id)
@@ -992,6 +1010,8 @@ def _stamp_material(
         reference_ids=tuple(reference_id_by_doi[doi] for doi in material.dois),
         structure_id=structure_id,
         structure=material.structure if structure_id is None else structure_mains.get(structure_id, material.structure),
+        screening_record=screening_records.get(material.id),
+        calculation_output=calculation_outputs.get(material.id),
     )
 
 
@@ -1088,6 +1108,12 @@ def _fraction_literal_to_percent(value: object) -> object:
     return cast(Any, value) * 100
 
 
+def _record_fraction(record: object) -> float | None:
+    """The screening record's percent column served as a fraction (the result's convention)."""
+    percent = cast(ScreeningResultRecord, record).fdelta_pct
+    return None if percent is None else percent / 100.0
+
+
 def _material_public_id(record: object) -> str:
     public_id = cast(AltermagnetScreeningResult, record).id
     assert public_id is not None  # always set to the amdb id at construction
@@ -1162,7 +1188,6 @@ def _material_projections() -> dict[str, StoredPropertyProjection]:
     for name in (
         "_anyterial_magndata_variants",
         "_httk_custom_figures",
-        "_httk_custom_total_energy",
         "_httk_magnetic_space_group_bns",
     ):
         projections[name] = StoredPropertyProjection(response=_provider_response(name))
@@ -1194,11 +1219,29 @@ cast(Any, AltermagnetReferenceRecord).__httk_stored_properties__ = {
         sort=_field_sort("public_id"),
     ),
 }
-# Response-only projections reading each record's content field verbatim (keyed by the
-# served content-property name); the served ``_httk_records`` schema drives which appear.
-cast(Any, AltermagnetDataRecord).__httk_stored_properties__ = {
-    served_name: StoredPropertyProjection(response=_record_field_response(field_name))
-    for served_name, field_name, _fulltype in _RECORD_CONTENT_FIELDS
+# The two records backings each serve their own subset of the family's union entry type
+# (a property the other backing lacks serves as null). ``_anyterial_spin_splitting_fraction``
+# keeps the result mirror's convention exactly: the column is percent, the served value a
+# fraction, so the query literal is scaled back up by 100.
+cast(Any, CalculationOutputRecord).__httk_stored_properties__ = {
+    "_httk_total_energy": StoredPropertyProjection(
+        response=_record_field_response("total_energy"),
+        query=_scalar_query("total_energy"),
+    )
+}
+cast(Any, ScreeningResultRecord).__httk_stored_properties__ = {
+    **{
+        served_name: StoredPropertyProjection(
+            response=_record_field_response(field_name),
+            query=_scalar_query(field_name),
+        )
+        for served_name, field_name in _SCREENING_RECORD_FIELDS
+        if served_name != "_anyterial_spin_splitting_fraction"
+    },
+    "_anyterial_spin_splitting_fraction": StoredPropertyProjection(
+        response=_record_fraction,
+        query=_scalar_query("fdelta_pct", literal_transform=_fraction_literal_to_percent),
+    ),
 }
 
 register_entry_family(
@@ -1229,9 +1272,14 @@ register_entry_family(
     definition_id=AltermagnetDataRecordEntry.definition_id,
 )
 register_entry_record(
-    name="altermagnets-record",
+    name="altermagnets-calculation-record",
     family="altermagnets-records",
-    record=f"{__name__}:AltermagnetDataRecord",
+    record=f"{__name__}:CalculationOutputRecord",
+)
+register_entry_record(
+    name="altermagnets-screening-record",
+    family="altermagnets-records",
+    record=f"{__name__}:ScreeningResultRecord",
 )
 
 
@@ -2382,9 +2430,9 @@ def _entry_records_layout() -> dict[type, type | tuple[type, ...]]:
         AltermagnetStructureEntry: UnitcellStructureRecord,
         AltermagnetReferenceEntry: AltermagnetReferenceRecord,
         RunEntry: Run,
-        # The AMDB records family (internal type still ``records``) serves per-record
-        # content; the collector's DataRecord outputs are converted to it at save.
-        AltermagnetDataRecordEntry: AltermagnetDataRecord,
+        # The AMDB records family (internal type still ``records``), served from the
+        # two normalized backings; the collected one-value DataRecords are not stored.
+        AltermagnetDataRecordEntry: (CalculationOutputRecord, ScreeningResultRecord),
         FileEntry: FileRecord,
     }
 
@@ -2576,15 +2624,71 @@ def _save_alternative_cells(
 
 
 def _coupled_total_energy(observation: _RunObservation) -> float | None:
-    """The coupled run's ``total_energy`` DataRecord value, served as a scalar."""
+    """The coupled run's ``total_energy`` DataRecord value, as a plain float."""
     outputs = getattr(observation.item, "outputs", {})
     energy = outputs.get("total_energy") if isinstance(outputs, Mapping) else None
     value = getattr(energy, "value", None)
     return float(value) if isinstance(value, (int, float)) else None
 
 
+def _record_mains(
+    materials: Iterable[AltermagnetScreeningResult],
+    coupled: Mapping[str, _RunObservation],
+    ledger: IdLedger,
+) -> tuple[dict[str, ScreeningResultRecord], dict[str, CalculationOutputRecord]]:
+    """Build the two ``_httk_records`` backings' mains, keyed by amdb id.
+
+    Every screened material gets a :class:`ScreeningResultRecord` (fresh
+    ``amdb:<id>:screening_record`` ledger keys); every coupled, non-degraded run whose
+    outputs carry a numeric total energy also gets a :class:`CalculationOutputRecord`
+    under the PRE-EXISTING ``amdb:<id>:total_energy`` key, so the typed record inherits
+    the id the retired one-value ``DataRecord`` held and the run edges and ProductLinks
+    targeting it keep resolving.
+
+    :param materials: The screened materials, each carrying its amdb id.
+    :param coupled: The coupled run observations keyed by amdb id.
+    :param ledger: The open ledger to allocate from.
+    :return: The ``(screening records, calculation outputs)`` maps keyed by amdb id.
+    """
+    screening: dict[str, ScreeningResultRecord] = {}
+    for material in materials:
+        assert material.id is not None  # always set to the amdb id at construction
+        # ponytail: two materials whose five screening values coincide would dedup by
+        # content onto one row under two ledger ids and the bulk merger would RAISE
+        # EntryMetadataConflictError -- a loud build failure, not silent data loss.
+        # Upgrade to smallest-key ownership + alias (as for structures) if that ever
+        # happens; the published table has no such pair today.
+        screening[material.id] = ScreeningResultRecord(
+            max_ss=material.max_ss,
+            avg_ss=material.avg_ss,
+            fdelta_pct=material.fdelta_pct,
+            bandgap=material.bandgap,
+            electronic_type=material.electronic_type,
+            id=ledger.assign(_screening_record_key(material.id), "records"),
+        )
+    calculations: dict[str, CalculationOutputRecord] = {}
+    for amdb_id, observation in coupled.items():
+        if getattr(observation.item, "missing_collector", None) is not None:
+            continue
+        energy = _coupled_total_energy(observation)
+        if energy is None:
+            continue
+        calculations[amdb_id] = CalculationOutputRecord(
+            total_energy=energy,
+            id=ledger.assign(_record_key(amdb_id, "total_energy"), "records"),
+        )
+    return screening, calculations
+
+
 def _resolve_edge_id(
-    store: SqlStore, label: str, entry_type: str, entry_id: str, *, structure_id: str, memo: dict[tuple[str, str], str]
+    store: SqlStore,
+    label: str,
+    entry_type: str,
+    entry_id: str,
+    *,
+    structure_id: str,
+    record_ids: Mapping[str, str],
+    memo: dict[tuple[str, str], str],
 ) -> str:
     """Map a collected edge's ``(entry_type, content-id)`` to the store-served id.
 
@@ -2593,35 +2697,41 @@ def _resolve_edge_id(
     the screening result). It is taken from the build's material->structure-id MAP --
     never a content-id fetch: the details-CONTCAR fallback materials have a structure
     content id that differs from the collected run's relaxed structure id, so a fetch
-    would silently miss for every fallback material. Any other structures edge is
-    rejected (a foreign structures edge, e.g. a future ``input_structure``, must not
-    silently self-attribute). Record and file outputs saved in the bulk pass are
-    looked up by their content id -- the id their collected edges carry -- to recover
-    the id the store minted for them, memoized so a shared output is fetched once.
+    would silently miss for every fallback material. A ``records`` edge resolves the
+    same way, through ``record_ids`` keyed by the output role: the collected one-value
+    ``DataRecord`` is no longer stored at all (the typed
+    :class:`CalculationOutputRecord` replaces it and inherits its ledger id), so its
+    content id matches nothing and a fetch would always miss. Any other structures or
+    records edge is rejected -- a foreign edge (e.g. a future ``input_structure``)
+    must not silently self-attribute. File outputs saved in the bulk pass are still
+    looked up by their content id -- the id their collected edges carry -- memoized so
+    a shared output is fetched once.
 
     :param store: The finalized store the outputs were bulk-saved into.
     :param label: The collected edge's relationship label (the output role).
     :param entry_type: The collected edge's internal (unprefixed) target type.
     :param entry_id: The collected edge's target id (an output's content id).
     :param structure_id: The coupled material's stamped structure id, targeted by the structure edge.
+    :param record_ids: The material's ``output role -> records-family id`` map.
     :param memo: The per-run ``(entry_type, entry_id) -> minted id`` cache.
     :return: The store-served id the rewritten edge must carry.
-    :raises ValueError: If the type is unmappable, a structures edge is not the
-        relaxed structure, or the output has no resolvable store id.
+    :raises ValueError: If the type is unmappable, a structures/records edge has no
+        mapped target, or the file output has no resolvable store id.
     """
     if entry_type == AltermagnetStructureEntry.type:
         if label != "relaxed_structure":
             raise ValueError(f"structures edge {label!r} is not the relaxed structure; only it maps to the structure")
         return structure_id
-    # The collected record edge still carries the internal ``records`` type; the AMDB
-    # records family serves it, so its content id resolves against the converted rows.
-    families = {AltermagnetDataRecordEntry.type: AltermagnetDataRecordEntry, FileEntry.type: FileEntry}
+    if entry_type == AltermagnetDataRecordEntry.type:
+        resolved = record_ids.get(label)
+        if resolved is None:
+            raise ValueError(f"records edge {label!r} has no typed AMDB record backing it")
+        return resolved
+    if entry_type != FileEntry.type:
+        raise ValueError(f"run edge to unmappable entry type {entry_type!r}")
     key = (entry_type, entry_id)
     if key not in memo:
-        family = families.get(entry_type)
-        if family is None:
-            raise ValueError(f"run edge to unmappable entry type {entry_type!r}")
-        fetched = store.fetch_entry(family, entry_id, eager=True)
+        fetched = store.fetch_entry(FileEntry, entry_id, eager=True)
         minted = getattr(fetched, "id", None)
         if not isinstance(minted, str):
             raise ValueError(
@@ -2637,6 +2747,7 @@ def _rewrite_edges(
     edges: Iterable[RunEdge],
     *,
     structure_id: str,
+    record_ids: Mapping[str, str],
     memo: dict[tuple[str, str], str],
 ) -> tuple[RunEdge, ...]:
     """Rewrite each collected edge's content-id target to the store-served id."""
@@ -2644,16 +2755,18 @@ def _rewrite_edges(
         RunEdge(
             edge.label,
             edge.entry_type,
-            _resolve_edge_id(store, edge.label, edge.entry_type, edge.entry_id, structure_id=structure_id, memo=memo),
+            _resolve_edge_id(
+                store,
+                edge.label,
+                edge.entry_type,
+                edge.entry_id,
+                structure_id=structure_id,
+                record_ids=record_ids,
+                memo=memo,
+            ),
         )
         for edge in edges
     )
-
-
-#: The appended run->result artifact edge's label (no collected counterpart), so the
-#: screening result serves the reverse ``_httk_is_artifact`` block and the run's forward
-#: ``_httk_has_artifact`` lists it (the material-page provenance lookup).
-_RESULT_ARTIFACT_LABEL = "screening_result"
 
 
 def _save_reconstructed_runs(
@@ -2661,27 +2774,36 @@ def _save_reconstructed_runs(
     materials: Iterable[AltermagnetScreeningResult],
     coupled: Mapping[str, _RunObservation],
     structure_id_by_material: Mapping[str, str],
+    calculation_outputs: Mapping[str, CalculationOutputRecord],
     ledger: IdLedger,
 ) -> tuple[int, int]:
     """Save one store-resolvable replacement :class:`~httk.core.Run` per coupled material.
 
     A collected ``item.run``'s edges carry collection-time content ids the store
     never minted, so they cannot resolve. This constructs a replacement run at save
-    time -- never mutating ``item.run`` or its :class:`_RunObservation` -- whose
-    ``artifacts``/``outputs`` edges carry the store-served ids: the
-    ``relaxed_structure`` edge is retargeted at the screened structure main's stamped
-    id (through the material->structure-id map) and the record/file edges at the ids
-    minted for the outputs the bulk pass just saved. A FRESH ``has_artifact`` edge to
-    the screening RESULT is appended (no collected counterpart) so the result serves
-    the reverse ``_httk_is_artifact`` relationship and the run's forward
-    ``_httk_has_artifact`` lists it. ``item.products`` ProductLinks are rewritten
-    through the same map. ``inputs`` are omitted (the collected runs' inputs are not
-    stored). Reconstructing edges is record construction, not post-save mutation, so
-    it is done with an ordinary :meth:`SqlStore.save` after the bulk context finalizes
-    (both are refused inside bulk ingest, and the runs need the outputs' minted ids the
-    bulk pass assigned). One run backs one material (enforced in
-    :func:`_build_coupling`), so exactly one replacement run is saved per coupled,
-    non-degraded material.
+    time -- never mutating ``item.run`` or its :class:`_RunObservation` -- whose edges
+    carry the store-served ids: the ``relaxed_structure`` edge is retargeted at the
+    screened structure main's stamped id (through the material->structure-id map), the
+    ``total_energy`` records edge at the material's :class:`CalculationOutputRecord`,
+    and the file edges at the ids minted for the outputs the bulk pass just saved.
+
+    ``outputs`` and ``artifacts`` are the SAME rewritten tuple. **The AMDB rule: no
+    sub-workflows, so every artifact edge is also an output edge** -- which is exactly
+    what the collector already produces (it overlays one edge tuple onto both sides).
+    No edge targets the screening RESULT: the result is a curated collection entry
+    assembled at build time, not a product of any run, so provenance runs through the
+    records instead (result -> ``_httk_records`` reference -> record -> reverse
+    ``_httk_is_output``/``_httk_is_artifact`` -> run).
+
+    ``item.products`` ProductLinks are rewritten through the same map; the
+    ``ScreeningResultRecord`` gets neither an edge nor a ProductLink (its values come
+    from the published CSV, not from any run we collected). ``inputs`` are omitted (the
+    collected runs' inputs are not stored). Reconstructing edges is record construction,
+    not post-save mutation, so it is done with an ordinary :meth:`SqlStore.save` after
+    the bulk context finalizes (both are refused inside bulk ingest, and the runs need
+    the outputs' minted ids the bulk pass assigned). One run backs one material
+    (enforced in :func:`_build_coupling`), so exactly one replacement run is saved per
+    coupled, non-degraded material.
 
     :return: The ``(runs, product links)`` saved counts.
     """
@@ -2702,14 +2824,14 @@ def _save_reconstructed_runs(
             logger.warning("Skipping run reconstruction for %s: no stamped structure id", result_id)
             continue
         memo: dict[tuple[str, str], str] = {}
-        # The run's relaxed_structure edges retarget to the structure; the result gets
-        # a fresh has_artifact edge (internal result type, no collected counterpart).
-        result_edge = RunEdge(_RESULT_ARTIFACT_LABEL, AltermagnetScreeningResultEntry.type, result_id)
+        calculation = calculation_outputs.get(result_id)
+        record_ids = {} if calculation is None else {"total_energy": cast(str, calculation.id)}
+        edges = _rewrite_edges(store, run.outputs, structure_id=structure_id, record_ids=record_ids, memo=memo)
         store.save(
             Run(
                 workflow_declaration_uri=run.workflow_declaration_uri,
-                artifacts=(*_rewrite_edges(store, run.artifacts, structure_id=structure_id, memo=memo), result_edge),
-                outputs=_rewrite_edges(store, run.outputs, structure_id=structure_id, memo=memo),
+                artifacts=edges,
+                outputs=edges,
                 source_id=run.source_id,
                 last_modified=run.last_modified,
                 id=ledger.assign(_run_key(result_id), "runs"),
@@ -2730,6 +2852,7 @@ def _save_reconstructed_runs(
                         product.source_type,
                         product.source_id,
                         structure_id=structure_id,
+                        record_ids=record_ids,
                         memo=memo,
                     ),
                     product.target_type,
@@ -2739,6 +2862,7 @@ def _save_reconstructed_runs(
                         product.target_type,
                         product.target_id,
                         structure_id=structure_id,
+                        record_ids=record_ids,
                         memo=memo,
                     ),
                     product.label,
@@ -2856,14 +2980,7 @@ def build_store(
         )
         if coupled:
             materials = tuple(
-                replace(
-                    material,
-                    structure=_material_structure_record(coupled[material.id].structure.unwrap()),
-                    # Symmetric scalar beside the producing run's reverse StrongLink
-                    # relationships, whose store-resolvable edges are reconstructed after
-                    # the bulk context finalizes (_save_reconstructed_runs).
-                    total_energy=_coupled_total_energy(coupled[material.id]),
-                )
+                replace(material, structure=_material_structure_record(coupled[material.id].structure.unwrap()))
                 if material.id in coupled
                 else material
                 for material in materials
@@ -2945,15 +3062,26 @@ def build_store(
         # nested-structure-only layout and stamp no structure ids/mains.
         structure_id_by_material: dict[str, str] = {}
         structure_mains: dict[str, UnitcellStructureRecord] = {}
+        screening_records: dict[str, ScreeningResultRecord] = {}
+        calculation_outputs: dict[str, CalculationOutputRecord] = {}
         if not legacy:
+            assert ledger is not None  # non-legacy always opens the ledger
             structure_id_by_material, structure_mains = _structure_mains(materials, ledger)
+            screening_records, calculation_outputs = _record_mains(materials, coupled, ledger)
         # Stamp the densely enumerated reference ids AND structure id on the list ONCE, and
-        # repoint each result's ``structure`` reference at its canonical stamped main, so
-        # both the bulk save and the alternative-cell derivation / provenance retarget
-        # (which replace()/read off these materials) carry them; otherwise alternatives
-        # would serve empty references and results an empty structure relationship.
+        # repoint each result's ``structure``/record references at their canonical stamped
+        # mains, so both the bulk save and the alternative-cell derivation / provenance
+        # retarget (which replace()/read off these materials) carry them; otherwise
+        # alternatives would serve empty references and results empty relationships.
         materials = tuple(
-            _stamp_material(material, reference_id_by_doi, structure_id_by_material, structure_mains)
+            _stamp_material(
+                material,
+                reference_id_by_doi,
+                structure_id_by_material,
+                structure_mains,
+                screening_records,
+                calculation_outputs,
+            )
             for material in materials
         )
         # Bulk ingestion creates the tables index-less and builds the indexes
@@ -2975,28 +3103,32 @@ def build_store(
                     item = observation.item
                     if getattr(item, "missing_collector", None) is not None:
                         continue
-                    for role, value in item.outputs.items():
-                        # The relaxed-structure output is served as the stamped
-                        # structure main (from the material's final, possibly
-                        # details-fallback structure), not as a separate id=None
-                        # structures row that would collide with it. Its run edge
-                        # retargets through the structure-id map, not this output.
-                        if getattr(value, "type", None) == AltermagnetStructureEntry.type:
+                    for value in item.outputs.values():
+                        # Only FILE outputs are stored verbatim. The relaxed-structure
+                        # output is served as the stamped structure main (from the
+                        # material's final, possibly details-fallback structure), and the
+                        # one-value total-energy DataRecord as the typed
+                        # CalculationOutputRecord saved below; both retarget their run
+                        # edges through the build's maps, not through this output.
+                        if not isinstance(value, File):
                             continue
-                        converted = _as_records_family(value)
-                        entry_id = _assign_output_id(ledger, amdb_id, role, converted)
+                        entry_id = ledger.assign(_file_key(amdb_id, value.url), "files")
                         # ponytail: content-identical outputs across amdb ids get distinct
                         # ledger ids, and the bulk merger compares the id metadata of a
                         # content-dedup hit and RAISES EntryMetadataConflictError, so such a
                         # collision fails the build loudly rather than silently picking a
                         # winner. Upgrade to smallest-key ownership + alias (as for
                         # structures) if two materials ever legitimately share an output.
-                        bulk.save(replace(cast(Any, converted), id=entry_id))
-                # Structure mains (stamped ids, deduped by content) saved BEFORE the result
-                # rows, so each result's nested reference dedups by content id onto its
-                # canonical stamped structure main (identical identity-excluded metadata).
+                        bulk.save(replace(cast(Any, value), id=entry_id))
+                # Structure and records mains (stamped ids, deduped by content) saved BEFORE
+                # the result rows, so each result's nested references dedup by content id
+                # onto their canonical stamped mains (identical identity-excluded metadata).
                 for main in structure_mains.values():
                     bulk.save(main)
+                for screening_main in screening_records.values():
+                    bulk.save(screening_main)
+                for calculation_main in calculation_outputs.values():
+                    bulk.save(calculation_main)
             for material in materials:
                 bulk.save(material)
             # One row per reference id: two DOIs that differ only in case collapse onto
@@ -3012,7 +3144,7 @@ def build_store(
             # ids the bulk pass just saved.
             _save_alternative_cells(store, materials, structure_id_by_material)
             assert ledger is not None  # non-legacy always opens the ledger
-            _save_reconstructed_runs(store, materials, coupled, structure_id_by_material, ledger)
+            _save_reconstructed_runs(store, materials, coupled, structure_id_by_material, calculation_outputs, ledger)
         write_elapsed = time.perf_counter() - write_started
         finalize_started = time.perf_counter()
         # Reseal the ledger (no-op when nothing was assigned) BEFORE committing the
@@ -3146,8 +3278,11 @@ def open_in_memory_store(
         )
         reference_id_by_doi = _reference_ids_by_doi(materials)
         structure_id_by_material, structure_mains = _structure_mains(materials)
+        # No ledger and no coupled runs here, so no records family is seeded: the
+        # in-memory results carry no ``_httk_records`` references (documented degradation,
+        # same as the relationships the in-memory/--validate path already omits).
         materials = tuple(
-            _stamp_material(material, reference_id_by_doi, structure_id_by_material, structure_mains)
+            _stamp_material(material, reference_id_by_doi, structure_id_by_material, structure_mains, {}, {})
             for material in materials
         )
         # Bulk ingestion creates the tables and their indexes itself. Structure mains

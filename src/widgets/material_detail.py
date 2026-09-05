@@ -29,7 +29,6 @@ RESPONSE_FIELDS = (
     "_anyterial_min_crustal_abundance",
     "_anyterial_magndata_variants",
     "_httk_custom_figures",
-    "_httk_custom_total_energy",
 )
 
 #: The related resources inlined on the single-entry request: ``structures`` carries the

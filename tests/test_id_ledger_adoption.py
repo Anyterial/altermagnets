@@ -29,13 +29,14 @@ from material_store import (
     build_store,
 )
 
-#: The store table backing each ledger-managed served family, for id readback.
+#: The store table(s) backing each ledger-managed served family, for id readback. The
+#: ``records`` family has two backings, so its served id space spans both their tables.
 _FAMILY_TABLES = {
-    "structures": "atomistic_unitcell_structure",
-    "references": "altermagnets_references",
-    "runs": "core_run",
-    "records": "altermagnets_data_records",
-    "files": "core_file",
+    "structures": ("atomistic_unitcell_structure",),
+    "references": ("altermagnets_references",),
+    "runs": ("core_run",),
+    "records": ("altermagnets_calculation_outputs", "altermagnets_screening_records"),
+    "files": ("core_file",),
 }
 
 
@@ -44,8 +45,13 @@ def _served_ids(store_path: Path) -> dict[str, set[str]]:
     connection = duckdb.connect(str(store_path), read_only=True)
     try:
         return {
-            family: {row[0] for row in connection.execute(f"select distinct id from {table}").fetchall() if row[0]}
-            for family, table in _FAMILY_TABLES.items()
+            family: {
+                row[0]
+                for table in tables
+                for row in connection.execute(f"select distinct id from {table}").fetchall()
+                if row[0]
+            }
+            for family, tables in _FAMILY_TABLES.items()
         }
     finally:
         connection.close()
@@ -168,28 +174,67 @@ def test_double_build_keeps_every_served_id_identical(tmp_path: Path) -> None:
     assert (tables / material_store.LEDGER_FILENAME).read_bytes() == ledger_after_first
 
 
+def _calculation_outputs(store_path: Path) -> list[tuple[str, float]]:
+    """Return the ``(id, total_energy)`` rows of the calculation-output records backing."""
+    connection = duckdb.connect(str(store_path), read_only=True)
+    try:
+        return connection.execute("select id, total_energy from altermagnets_calculation_outputs").fetchall()
+    finally:
+        connection.close()
+
+
 def test_record_value_change_keeps_the_same_id(tmp_path: Path) -> None:
     """Changing a record's VALUE between builds keeps its id: content becomes a revision."""
     tables, details, runs = _fixture_tree(tmp_path)
     first = build_store(tmp_path / "s1.duckdb", data_dir=tables, tables_dir=tables, details_dir=details, runs_dir=runs)
-    connection = duckdb.connect(str(first), read_only=True)
-    try:
-        before = connection.execute("select id, value_number from altermagnets_data_records").fetchall()
-    finally:
-        connection.close()
+    before = _calculation_outputs(first)
     assert before and before[0][1] == -1.0
 
     _write_scf_run(runs, "CrSb", energy=-2.5)  # same structure (CONTCAR), different total energy
     second = build_store(
-        tmp_path / "s2.duckdb", data_dir=tables, tables_dir=tables, details_dir=details, runs_dir=runs, refresh_coupling=True
+        tmp_path / "s2.duckdb",
+        data_dir=tables,
+        tables_dir=tables,
+        details_dir=details,
+        runs_dir=runs,
+        refresh_coupling=True,
     )
-    connection = duckdb.connect(str(second), read_only=True)
-    try:
-        after = connection.execute("select id, value_number from altermagnets_data_records").fetchall()
-    finally:
-        connection.close()
+    after = _calculation_outputs(second)
     assert after and after[0][1] == -2.5
     assert {row[0] for row in before} == {row[0] for row in after}  # same record id, revised value
+
+
+def test_typed_records_keep_their_ledger_keys_across_a_rebuild(tmp_path: Path) -> None:
+    """The two records backings key off the ledger: the calculation record INHERITS the
+    ``amdb:<id>:total_energy`` id the retired one-value DataRecord held, and every material's
+    screening record keeps its own ``amdb:<id>:screening_record`` id across a rebuild.
+    """
+    tables, details, runs = _fixture_tree(tmp_path)
+    first = build_store(tmp_path / "s1.duckdb", data_dir=tables, tables_dir=tables, details_dir=details, runs_dir=runs)
+
+    with _open_ledger(tables) as ledger:
+        calculation_id = ledger.lookup("amdb:anyt.am-1-1:total_energy")
+        screening_ids = {
+            material_id: ledger.lookup(f"amdb:{material_id}:screening_record")
+            for material_id in ("anyt.am-1-1", "anyt.am-1-2", "anyt.am-1-3")
+        }
+    assert calculation_id is not None and all(screening_ids.values())
+    assert [row[0] for row in _calculation_outputs(first)] == [calculation_id]
+
+    connection = duckdb.connect(str(first), read_only=True)
+    try:
+        rows = connection.execute("select id from altermagnets_screening_records order by id").fetchall()
+    finally:
+        connection.close()
+    # One screening record per screened material, coupled or not; distinct from the
+    # calculation record's inherited id but in the same ``anyt.am.records-1-N`` space.
+    assert {row[0] for row in rows} == set(screening_ids.values())
+    assert calculation_id not in screening_ids.values()
+    for entry_id in (calculation_id, *screening_ids.values()):
+        assert entry_id.startswith("anyt.am.records-1-")
+
+    second = build_store(tmp_path / "s2.duckdb", data_dir=tables, tables_dir=tables, details_dir=details, runs_dir=runs)
+    assert _served_ids(first)["records"] == _served_ids(second)["records"]
 
 
 def test_shared_structure_records_one_id_and_an_alias(tmp_path: Path) -> None:
@@ -330,7 +375,11 @@ def test_row_without_amdb_id_is_an_error(tmp_path: Path) -> None:
     screening.write_text("\n".join(text) + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="AMDBId"):
         build_store(
-            tmp_path / "store.duckdb", data_dir=tables, tables_dir=tables, details_dir=tmp_path / "details", runs_dir=tmp_path / "no-runs"
+            tmp_path / "store.duckdb",
+            data_dir=tables,
+            tables_dir=tables,
+            details_dir=tmp_path / "details",
+            runs_dir=tmp_path / "no-runs",
         )
 
 

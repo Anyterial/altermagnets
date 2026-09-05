@@ -497,6 +497,7 @@ def test_structure_downloads_serve_generated_cif_and_poscar(tmp_path: Path) -> N
 
             cases = [
                 ("structure.cif", "chemical/x-cif", f'attachment; filename="{structure_id}.cif"', "roundtrip.cif"),
+                ("structure.mcif", "chemical/x-cif", f'attachment; filename="{structure_id}.mcif"', "roundtrip.mcif"),
                 ("POSCAR", "text/plain", 'attachment; filename="POSCAR"', "POSCAR"),
             ]
             for filename, content_type, disposition, local_name in cases:
@@ -525,7 +526,7 @@ def test_structure_downloads_serve_generated_cif_and_poscar(tmp_path: Path) -> N
 
 
 # Downloadable files that resolve end-to-end through the real combined mount.
-_COMBINED_DOWNLOAD_FILES = ["structure.cif", "POSCAR"]
+_COMBINED_DOWNLOAD_FILES = ["structure.cif", "structure.mcif", "POSCAR"]
 
 
 def test_combined_mount_serves_files_route_downloads_and_figures(tmp_path: Path) -> None:

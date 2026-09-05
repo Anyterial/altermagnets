@@ -188,6 +188,7 @@ class _StructureDownload:
 #: writers (never the detail tree). Keyed by the request filename.
 STRUCTURE_DOWNLOADS: dict[str, _StructureDownload] = {
     "structure.cif": _StructureDownload("cif", "chemical/x-cif", ".cif"),
+    "structure.mcif": _StructureDownload("mcif", "chemical/x-cif", ".mcif"),
     "POSCAR": _StructureDownload("vasp-poscar", "text/plain", ""),
 }
 
@@ -202,19 +203,31 @@ def structure_download_body(record: Any, download: _StructureDownload) -> bytes 
 
     ``record`` is a ``UnitcellStructureRecord`` (the screened crystal, now a separate
     standard entry). ``None`` means the format cannot represent it (e.g. POSCAR partial
-    occupancy) or the generated file exceeds the size cap. httk-core ``save`` selects
-    the writer by ``format`` and writes to a path, so a throwaway temp file is the
-    cleanly supported buffer.
+    occupancy, or a magnetic CIF for a structure whose collinear magnetic symmetry cannot
+    be found) or the generated file exceeds the size cap. httk-core ``save`` selects the
+    writer by ``format`` and writes to a path, so a throwaway temp file is the cleanly
+    supported buffer.
+
+    The magnetic CIF is derived on the fly: the served record stores a plain unit cell with
+    moments, so ``mcif`` first detects the magnetic space group with
+    :func:`~httk.atomistic.symmetry.find_magnetic_symmetry` (which may collapse to P1 for a
+    structure whose relaxed coordinates are too noisy at the default tolerance -- still a
+    valid magnetic CIF). A finder failure (no moments, non-collinear, or spglib absent) is
+    caught and yields ``None`` (a 404), leaving the standard CIF and POSCAR unaffected.
     """
     from httk.atomistic import UnitcellStructureView
 
-    structure = UnitcellStructureView(record, kind="record")
+    structure: Any = UnitcellStructureView(record, kind="record")
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "structure"
         try:
+            if download.format == "mcif":
+                from httk.atomistic.symmetry import find_magnetic_symmetry
+
+                structure = find_magnetic_symmetry(structure)
             save(structure, path, format=download.format)
             text = path.read_text(encoding="utf-8")
-        except (ValueError, OSError):
+        except (ValueError, OSError, ImportError, TypeError):
             return None
     data = text.encode("utf-8")
     return data if len(data) <= MAX_FIGURE_BYTES else None

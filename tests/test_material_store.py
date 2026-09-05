@@ -136,7 +136,12 @@ def test_build_stores_conventional_and_primitive_alternatives(tmp_path: Path) ->
     source = write_source_tables(tmp_path / "tables")
     details = write_detail_assets(tmp_path / "details")
     store_path = build_store(
-        tmp_path / "store.duckdb", data_dir=source, tables_dir=source, details_dir=details, runs_dir=tmp_path / "runs"
+        tmp_path / "store.duckdb",
+        data_dir=source,
+        ledger_path=source / material_store.LEDGER_FILENAME,
+        details_dir=details,
+        runs_dir=tmp_path / "runs",
+        initialize_ledger=True,
     )
     opened = open_prebuilt_store(store_path)
     assert opened is not None
@@ -177,8 +182,13 @@ def test_two_successive_builds_replace_the_same_target(tmp_path: Path) -> None:
     details = write_detail_assets(tmp_path / "details")
     target = tmp_path / "store.duckdb"
     runs = tmp_path / "runs"
-    build_store(target, data_dir=source, tables_dir=source, details_dir=details, runs_dir=runs)
-    build_store(target, data_dir=source, tables_dir=source, details_dir=details, runs_dir=runs)
+    ledger_path = source / material_store.LEDGER_FILENAME
+    build_store(
+        target, data_dir=source, ledger_path=ledger_path, details_dir=details, runs_dir=runs, initialize_ledger=True
+    )
+    build_store(
+        target, data_dir=source, ledger_path=ledger_path, details_dir=details, runs_dir=runs, initialize_ledger=True
+    )
     assert target.is_file() and target.stat().st_size > 0
 
 
@@ -235,7 +245,12 @@ def test_build_saves_only_coupled_runs_and_recovers_moments(tmp_path: Path) -> N
     _scf_run(runs, "CrSb")  # couples anyt.am-1-1 by name; OUTCAR has no moments
     _scf_run(runs, "Zzz")  # collected but no CSV material: never coupled or saved
     target = build_store(
-        tmp_path / "store.duckdb", data_dir=source, tables_dir=source, details_dir=details, runs_dir=runs
+        tmp_path / "store.duckdb",
+        data_dir=source,
+        ledger_path=source / material_store.LEDGER_FILENAME,
+        details_dir=details,
+        runs_dir=runs,
+        initialize_ledger=True,
     )
 
     # Only the one coupled run is saved, not every collected task.
@@ -286,7 +301,12 @@ def test_coupled_material_reconstructs_run_with_resolvable_edges(tmp_path: Path)
     runs = tmp_path / "runs"
     _scf_run(runs, "CrSb")  # couples anyt.am-1-1; OUTCAR TOTEN is -1.0 eV; also writes a vasprun output
     target = build_store(
-        tmp_path / "store.duckdb", data_dir=source, tables_dir=source, details_dir=details, runs_dir=runs
+        tmp_path / "store.duckdb",
+        data_dir=source,
+        ledger_path=source / material_store.LEDGER_FILENAME,
+        details_dir=details,
+        runs_dir=runs,
+        initialize_ledger=True,
     )
 
     opened = open_prebuilt_store(target)

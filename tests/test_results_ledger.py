@@ -74,9 +74,10 @@ def _build(tmp_path: Path, tables: Path) -> Path:
     return build_store(
         tmp_path / "store.duckdb",
         data_dir=tables,
-        tables_dir=tables,
+        ledger_path=tables / material_store.LEDGER_FILENAME,
         details_dir=details,
         runs_dir=tmp_path / "no-runs",
+        initialize_ledger=True,
     )
 
 
@@ -204,9 +205,7 @@ def test_seed_aborts_on_duplicate_magndata_keys(tmp_path: Path) -> None:
 
 def test_seed_aborts_on_empty_magndata(tmp_path: Path) -> None:
     tables = write_source_tables(tmp_path / "tables", material_count=3)
-    before = _bad_screening(
-        tables, [_row("anyt.am-1-1", "0.5"), _row("anyt.am-1-2", ""), _row("anyt.am-1-3", "0.6")]
-    )
+    before = _bad_screening(tables, [_row("anyt.am-1-1", "0.5"), _row("anyt.am-1-2", ""), _row("anyt.am-1-3", "0.6")])
     with pytest.raises(ValueError, match="empty MAGNDATA"):
         _build(tmp_path, tables)
     assert (tables / material_store.LEDGER_FILENAME).read_bytes() == before
@@ -215,10 +214,11 @@ def test_seed_aborts_on_empty_magndata(tmp_path: Path) -> None:
 def test_seed_refuses_a_non_empty_results_family(tmp_path: Path) -> None:
     """The seeding gate refuses to seed when a results key is already bound."""
     tables = write_source_tables(tmp_path / "tables", material_count=3)
-    with _open_ledger(tables) as ledger:  # creates a fresh 6-family ledger
+    ledger_path = tables / material_store.LEDGER_FILENAME
+    with _open_ledger(ledger_path, create_if_missing=True) as ledger:  # creates a fresh 6-family ledger
         ledger.assign(_result_key("0.528,0.800"), "results")
     rows = list(csv.DictReader(_screening_path(tables).open(encoding="utf-8"), delimiter=";"))
-    with _open_ledger(tables) as ledger, pytest.raises(ValueError, match="already binds"):
+    with _open_ledger(ledger_path) as ledger, pytest.raises(ValueError, match="already binds"):
         _seed_result_ids(ledger, rows)
 
 

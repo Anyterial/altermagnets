@@ -1,12 +1,36 @@
+"""Tests for run<->material matching and its ledger-binding resolution.
+
+The old CSV-backed coupling document is gone (run-coupling-ledger-bindings design):
+matching (details ``raw_path`` authority, name matching, the one-run-one-material
+invariant, the diagnostics) is unchanged and tested here exactly as before, but a
+match's disposition is now resolved against an open :class:`~httk.store.IdLedger`
+(:func:`material_store._resolve_run_binding`) instead of written to a CSV row.
+"""
+
 import csv
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from material_store import _build_coupling, details_raw_path
+from httk.core.project.sealing import resolve_seal_keys
+from httk.store import IdLedger
+from material_store import (
+    LEDGER_BASES,
+    LEDGER_SERIES,
+    LEDGER_SIGNER_REFS,
+    _couple_runs,
+    _run_key,
+    _run_source_key,
+    details_raw_path,
+)
 
-_HEADER = "AMDBId;run_material;raw_path;structure_content_id;run_content_id;status\n"
+
+def _ledger(tmp_path: Path) -> IdLedger:
+    """Create and return a fresh, open, write-mode ledger under *tmp_path*."""
+    path = tmp_path / "ids.sqlite"
+    keys = resolve_seal_keys(LEDGER_SIGNER_REFS, project_root=tmp_path).keys
+    return IdLedger.create(path, bases=LEDGER_BASES, series=LEDGER_SERIES, keys=keys)
 
 
 def _tables(
@@ -51,19 +75,13 @@ def _tables(
     return root
 
 
-def _run(
-    material: str,
-    run_id: str = "run-1",
-    structure_id: str = "structure-1",
-    raw_path: str = "",
-) -> SimpleNamespace:
+def _run(material: str, source_id: str = "httk-v1:run-1", raw_path: str = "") -> SimpleNamespace:
+    """Return a fake ``_RunObservation``-shaped item (material, structure, raw_path, item)."""
     return SimpleNamespace(
         material=material,
-        run_id=run_id,
-        structure_id=structure_id,
         structure=object(),
         raw_path=raw_path,
-        item=object(),
+        item=SimpleNamespace(run=SimpleNamespace(source_id=source_id), missing_collector=None),
     )
 
 
@@ -81,200 +99,64 @@ def _absent_details(tmp_path: Path) -> Path:
 
 
 def test_auto_coupling(tmp_path: Path) -> None:
-    coupled, counts = _build_coupling(
-        _tables(tmp_path / "tables", "CrSb"), (_run("CrSb"),), details_dir=_absent_details(tmp_path)
-    )
-    assert counts == {"auto": 1}
-    assert coupled["anyt.am-1-1"].run_id == "run-1"
+    with _ledger(tmp_path) as ledger:
+        coupled, counts = _couple_runs(
+            _tables(tmp_path / "tables", "CrSb"),
+            (_run("CrSb", "httk-v1:run-1"),),
+            details_dir=_absent_details(tmp_path),
+            ledger=ledger,
+        )
+        assert counts == {"auto": 1}
+        assert ledger.lookup(_run_key("anyt.am-1-1")) == ledger.lookup(_run_source_key("httk-v1:run-1"))
+    assert coupled["anyt.am-1-1"].item.run.source_id == "httk-v1:run-1"
 
 
-def test_suffixed_variant_is_ambiguous(tmp_path: Path) -> None:
-    coupled, counts = _build_coupling(
-        _tables(tmp_path / "tables"),
-        (_run("Ba3CoSb2O9"), _run("Ba3CoSb2O9-2", "run-2", "structure-2")),
-        details_dir=_absent_details(tmp_path),
-    )
-    assert not coupled
-    assert counts == {"ambiguous": 1}
-
-
-def test_present_content_id_mismatch_is_hard_error(tmp_path: Path) -> None:
-    tables = _tables(tmp_path / "tables", "CrSb")
-    (tables / "amdb_run_content_ids.csv").write_text(
-        "AMDBId;run_material;raw_path;structure_content_id;run_content_id;status\n"
-        "anyt.am-1-1;CrSb;;wrong;run-1;curated\n",
-        encoding="utf-8",
-    )
-    with pytest.raises(ValueError, match="anyt.am-1-1/CrSb"):
-        _build_coupling(tables, (_run("CrSb"),), details_dir=_absent_details(tmp_path))
-
-
-def test_changed_run_is_hard_error(tmp_path: Path) -> None:
-    tables = _tables(tmp_path / "tables", "CrSb")
-    (tables / "amdb_run_content_ids.csv").write_text(
-        "AMDBId;run_material;raw_path;structure_content_id;run_content_id;status\n"
-        "anyt.am-1-1;CrSb;;structure-old;run-old;curated\n",
-        encoding="utf-8",
-    )
-    with pytest.raises(ValueError, match="anyt.am-1-1/CrSb"):
-        _build_coupling(tables, (_run("CrSb", "run-new", "structure-new"),), details_dir=_absent_details(tmp_path))
-
-
-def test_absent_run_row_is_preserved(tmp_path: Path) -> None:
-    tables = _tables(tmp_path / "tables", "CrSb")
-    row = "anyt.am-1-1;CrSb;;structure-old;run-old;curated"
-    (tables / "amdb_run_content_ids.csv").write_text(
-        "AMDBId;run_material;raw_path;structure_content_id;run_content_id;status\n" + row + "\n",
-        encoding="utf-8",
-    )
-    _build_coupling(tables, (), details_dir=_absent_details(tmp_path))
-    assert row in (tables / "amdb_run_content_ids.csv").read_text(encoding="utf-8")
+def test_suffixed_variant_is_ambiguous(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    with _ledger(tmp_path) as ledger:
+        with caplog.at_level("WARNING"):
+            coupled, counts = _couple_runs(
+                _tables(tmp_path / "tables"),
+                (_run("Ba3CoSb2O9", "s:1"), _run("Ba3CoSb2O9-2", "s:2")),
+                details_dir=_absent_details(tmp_path),
+                ledger=ledger,
+            )
+        assert not coupled
+        assert counts == {"ambiguous": 1}
+        assert ledger.lookup(_run_key("anyt.am-1-1")) is None
+    assert "Ambiguous run match" in caplog.text
 
 
 def test_duplicate_csv_formula_is_ambiguous_for_each_amdb_id(tmp_path: Path) -> None:
     tables = _tables(tmp_path / "tables", "TmVO3", ("anyt.am-1-1", "anyt.am-1-2"))
-    coupled, counts = _build_coupling(tables, (_run("TmVO3"),), details_dir=_absent_details(tmp_path))
-    assert not coupled
-    assert counts == {"ambiguous": 2}
-    assert all(
-        not row["structure_content_id"]
-        for row in csv.DictReader((tables / "amdb_run_content_ids.csv").open(encoding="utf-8"), delimiter=";")
-    )
+    with _ledger(tmp_path) as ledger:
+        coupled, counts = _couple_runs(
+            tables, (_run("TmVO3", "s:1"),), details_dir=_absent_details(tmp_path), ledger=ledger
+        )
+        assert not coupled
+        assert counts == {"ambiguous": 2}
 
 
-def test_cross_material_row_is_rejected(tmp_path: Path) -> None:
-    tables = _tables(tmp_path / "tables", "CrSb")
-    (tables / "amdb_run_content_ids.csv").write_text(
-        "AMDBId;run_material;raw_path;structure_content_id;run_content_id;status\n"
-        "anyt.am-1-1;MnTe;;structure;run;curated\n",
-        encoding="utf-8",
-    )
-    with pytest.raises(ValueError, match="anyt.am-1-1/MnTe"):
-        _build_coupling(tables, (), details_dir=_absent_details(tmp_path))
-
-
-def test_csv_row_without_run_warns_and_is_omitted(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    coupled, counts = _build_coupling(
-        _tables(tmp_path / "tables", "Missing"), (), details_dir=_absent_details(tmp_path)
-    )
-    assert not coupled and not counts
-    assert "No ingested run" in caplog.text
-    assert (tmp_path / "tables" / "amdb_run_content_ids.csv").read_text(encoding="utf-8").splitlines() == [
-        "AMDBId;run_material;raw_path;structure_content_id;run_content_id;status"
-    ]
-
-
-def test_details_raw_path_creates_auto_row(tmp_path: Path) -> None:
+def test_details_raw_path_creates_binding(tmp_path: Path) -> None:
     # The details raw_path couples a run whose derived name never matches the CSV.
     tables = _tables(tmp_path / "tables", "Cu2H3ClO3")
     details = _details(tmp_path / "details", "am-1-0001", "9/Runs/ht.task.foo.Cu2O3Cl_SCF.finished")
-    coupled, counts = _build_coupling(
-        tables,
-        (_run("Cu2O3Cl", "run-x", "structure-x", raw_path="9/Runs/ht.task.foo.Cu2O3Cl_SCF.finished"),),
-        details_dir=details,
-    )
-    assert counts == {"auto": 1}
-    assert coupled["anyt.am-1-1"].run_id == "run-x"
-    written = list(csv.DictReader((tables / "amdb_run_content_ids.csv").open(encoding="utf-8"), delimiter=";"))
-    assert written[0]["raw_path"] == "9/Runs/ht.task.foo.Cu2O3Cl_SCF.finished"
-    assert written[0]["run_material"] == "Cu2O3Cl"
-
-
-def test_raw_path_row_matches_despite_name_disagreement(tmp_path: Path) -> None:
-    tables = _tables(tmp_path / "tables", "Cu2H3ClO3")
-    (tables / "amdb_run_content_ids.csv").write_text(
-        "AMDBId;run_material;raw_path;structure_content_id;run_content_id;status\n"
-        "anyt.am-1-1;Cu2O3Cl;9/Runs/task;sid;rid;auto\n",
-        encoding="utf-8",
-    )
-    coupled, counts = _build_coupling(
-        tables,
-        (_run("Cu2O3Cl", "rid", "sid", raw_path="9/Runs/task"),),
-        details_dir=_absent_details(tmp_path),
-    )
-    assert counts == {"auto": 1}
-    assert coupled["anyt.am-1-1"].structure_id == "sid"
-
-
-def test_raw_path_row_absent_from_build_is_preserved(tmp_path: Path) -> None:
-    tables = _tables(tmp_path / "tables", "CrSb")
-    row = "anyt.am-1-1;CrSb;9/Runs/gone;structure-old;run-old;curated"
-    (tables / "amdb_run_content_ids.csv").write_text(
-        "AMDBId;run_material;raw_path;structure_content_id;run_content_id;status\n" + row + "\n",
-        encoding="utf-8",
-    )
-    coupled, _ = _build_coupling(tables, (), details_dir=_absent_details(tmp_path))
-    assert not coupled
-    assert row in (tables / "amdb_run_content_ids.csv").read_text(encoding="utf-8")
-
-
-def test_refresh_rewrites_stale_pin(tmp_path: Path) -> None:
-    tables = _tables(tmp_path / "tables", "CrSb")
-    (tables / "amdb_run_content_ids.csv").write_text(
-        "AMDBId;run_material;raw_path;structure_content_id;run_content_id;status\n"
-        "anyt.am-1-1;CrSb;9/Runs/task;structure-old;run-old;auto\n",
-        encoding="utf-8",
-    )
-    coupled, counts = _build_coupling(
-        tables,
-        (_run("CrSb", "run-new", "structure-new", raw_path="9/Runs/task"),),
-        details_dir=_absent_details(tmp_path),
-        refresh_coupling=True,
-    )
-    assert counts == {"auto": 1}
-    assert coupled["anyt.am-1-1"].run_id == "run-new"
-    written = list(csv.DictReader((tables / "amdb_run_content_ids.csv").open(encoding="utf-8"), delimiter=";"))
-    assert written[0]["raw_path"] == "9/Runs/task"
-    assert written[0]["status"] == "auto"
-    assert written[0]["structure_content_id"] == "structure-new"
-    assert written[0]["run_content_id"] == "run-new"
-
-
-def test_stale_pin_without_refresh_raises(tmp_path: Path) -> None:
-    tables = _tables(tmp_path / "tables", "CrSb")
-    (tables / "amdb_run_content_ids.csv").write_text(
-        "AMDBId;run_material;raw_path;structure_content_id;run_content_id;status\n"
-        "anyt.am-1-1;CrSb;9/Runs/task;structure-old;run-old;auto\n",
-        encoding="utf-8",
-    )
-    with pytest.raises(ValueError, match="anyt.am-1-1/CrSb"):
-        _build_coupling(
+    with _ledger(tmp_path) as ledger:
+        coupled, counts = _couple_runs(
             tables,
-            (_run("CrSb", "run-new", "structure-new", raw_path="9/Runs/task"),),
-            details_dir=_absent_details(tmp_path),
+            (_run("Cu2O3Cl", "s:x", raw_path="9/Runs/ht.task.foo.Cu2O3Cl_SCF.finished"),),
+            details_dir=details,
+            ledger=ledger,
         )
-
-
-def test_refresh_is_idempotent_with_non_screening_run_material(tmp_path: Path) -> None:
-    # 1a: the shipped ambiguous row carries a run_material absent from the screening
-    # CSV (the Cu2O3Cl-2 shape); a second refresh must not raise and must be stable.
-    tables = _tables(tmp_path / "tables", "Cu2O3Cl", ("anyt.am-1-7",))
-    (tables / "amdb_run_content_ids.csv").write_text(_HEADER + "anyt.am-1-7;Cu2O3Cl-2;;;;ambiguous\n", "utf-8")
-    observations = (_run("Cu2O3Cl-2", raw_path="1/Runs/x"),)
-    _build_coupling(tables, observations, details_dir=_absent_details(tmp_path), refresh_coupling=True)
-    first = (tables / "amdb_run_content_ids.csv").read_text(encoding="utf-8")
-    _build_coupling(tables, observations, details_dir=_absent_details(tmp_path), refresh_coupling=True)
-    second = (tables / "amdb_run_content_ids.csv").read_text(encoding="utf-8")
-    assert first == second
-    assert "anyt.am-1-7;Cu2O3Cl-2;;;;ambiguous" in first
-
-
-def test_two_rows_sharing_one_raw_path_raise(tmp_path: Path) -> None:
-    # 1b: one run must not back two materials.
-    tables = _tables(tmp_path / "tables", "CrSb", ("anyt.am-1-1", "anyt.am-1-2"))
-    (tables / "amdb_run_content_ids.csv").write_text(
-        _HEADER + "anyt.am-1-1;CrSb;1/Runs/x;sid;rid;curated\n" + "anyt.am-1-2;CrSb;1/Runs/x;sid;rid;curated\n",
-        "utf-8",
-    )
-    with pytest.raises(ValueError, match="one run to multiple materials"):
-        _build_coupling(
-            tables, (_run("CrSb", "rid", "sid", raw_path="1/Runs/x"),), details_dir=_absent_details(tmp_path)
-        )
+        assert counts == {"auto": 1}
+        run_id = ledger.lookup(_run_source_key("s:x"))
+        assert run_id is not None
+        assert ledger.lookup(_run_key("anyt.am-1-1")) == run_id
+    assert coupled["anyt.am-1-1"].item.run.source_id == "s:x"
 
 
 @pytest.mark.parametrize("order", [("anyt.am-1-1", "anyt.am-1-2"), ("anyt.am-1-2", "anyt.am-1-1")])
-def test_rule_e_authoritative_beats_name_match_both_orders(tmp_path: Path, order: tuple[str, str]) -> None:
-    # 1c: details owns run P for A; B (no details) name-matches P. A must win, B must not,
+def test_raw_path_beats_name_match_both_orders(tmp_path: Path, order: tuple[str, str]) -> None:
+    # details owns run P for A; B (no details) name-matches P. A must win, B must not,
     # regardless of the row/screening order.
     tables = _tables(
         tmp_path / "tables",
@@ -282,127 +164,77 @@ def test_rule_e_authoritative_beats_name_match_both_orders(tmp_path: Path, order
         materials={"anyt.am-1-1": "Amat", "anyt.am-1-2": "Bmat"},
     )
     details = _details(tmp_path / "details", "am-1-0001", "1/Runs/P")
-    (tables / "amdb_run_content_ids.csv").write_text(_HEADER + "anyt.am-1-2;Bmat;;old-s;old-r;auto\n", "utf-8")
-    observations = (_run("Bmat", "rid", "sid", raw_path="1/Runs/P"),)
-    coupled, _ = _build_coupling(tables, observations, details_dir=details, refresh_coupling=True)
-    assert coupled["anyt.am-1-1"].raw_path == "1/Runs/P"
-    assert "anyt.am-1-2" not in coupled
+    observations = (_run("Bmat", "s:p", raw_path="1/Runs/P"),)
+    with _ledger(tmp_path) as ledger:
+        coupled, _ = _couple_runs(tables, observations, details_dir=details, ledger=ledger)
+        assert "anyt.am-1-1" in coupled
+        assert "anyt.am-1-2" not in coupled
+        assert ledger.lookup(_run_key("anyt.am-1-1")) is not None
+        assert ledger.lookup(_run_key("anyt.am-1-2")) is None
+
+
+def test_one_run_one_material_invariant(tmp_path: Path) -> None:
+    # Two materials whose details shard both (erroneously) point at the same raw_path:
+    # only the first (sorted) claims it; the second is warned off, never coupled.
+    tables = _tables(
+        tmp_path / "tables",
+        amdb_ids=("anyt.am-1-1", "anyt.am-1-2"),
+        materials={"anyt.am-1-1": "Amat", "anyt.am-1-2": "Bmat"},
+    )
+    details = tmp_path / "details"
+    _details(details, "am-1-0001", "1/Runs/shared")
+    _details(details, "am-1-0002", "1/Runs/shared")
+    observations = (_run("Amat", "s:shared", raw_path="1/Runs/shared"),)
+    with _ledger(tmp_path) as ledger:
+        coupled, counts = _couple_runs(tables, observations, details_dir=details, ledger=ledger)
+        assert set(coupled) == {"anyt.am-1-1"}
+        assert counts == {"auto": 1}
 
 
 def test_wrong_runs_root_raises_even_when_all_tasks_are_filtered(tmp_path: Path) -> None:
-    # 1d/fix-1: a wrong root (e.g. <root>/1/Runs) collects tasks whose one-part
-    # payloads are all rejected by collect()'s 3a check, so observations is empty but
-    # collected > 0. The guard must discriminate on collected, not observations.
+    # A wrong root (e.g. <root>/1/Runs) collects tasks whose one-part payloads are all
+    # rejected by collect()'s 3a check, so observations is empty but collected > 0. The
+    # guard must discriminate on collected vs. observations, not on any raw_path source.
     tables = _tables(tmp_path / "tables", "CrSb")
-    (tables / "amdb_run_content_ids.csv").write_text(
-        _HEADER + "anyt.am-1-1;CrSb;1/Runs/x;sid;rid;curated\n", "utf-8"
-    )
-    with pytest.raises(ValueError, match="no coupling raw_path resolved"):
-        _build_coupling(
+    with _ledger(tmp_path) as ledger, pytest.raises(ValueError, match="no runs observed"):
+        _couple_runs(
             tables,
             (),  # every collected task was filtered out by 3a
             details_dir=_absent_details(tmp_path),
+            ledger=ledger,
             runs_root=tmp_path / "1" / "Runs",
             collected=30,
         )
 
 
 def test_empty_tree_stays_silent(tmp_path: Path) -> None:
-    # 1d/fix-1: an absent or genuinely empty tree collects nothing and must not raise.
+    # An absent or genuinely empty tree collects nothing and must not raise, even when
+    # a material already has a bound run from an earlier build.
     tables = _tables(tmp_path / "tables", "CrSb")
-    (tables / "amdb_run_content_ids.csv").write_text(
-        _HEADER + "anyt.am-1-1;CrSb;1/Runs/x;sid;rid;curated\n", "utf-8"
-    )
-    coupled, _ = _build_coupling(tables, (), details_dir=_absent_details(tmp_path), collected=0)
-    assert not coupled  # row preserved, no exception
+    with _ledger(tmp_path) as ledger:
+        ledger.assign(_run_key("anyt.am-1-1"), "runs")  # pre-existing binding, run absent this build
+        coupled, counts = _couple_runs(tables, (), details_dir=_absent_details(tmp_path), ledger=ledger, collected=0)
+        assert not coupled and not counts
 
 
 def test_partial_raw_path_miss_only_warns(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    # 1d: a partial transfer (some runs present) preserves the absent rows without raising.
+    # A partial transfer (some runs present) preserves the absent ones without raising.
     tables = _tables(tmp_path / "tables", "CrSb", ("anyt.am-1-1", "anyt.am-1-2"))
-    (tables / "amdb_run_content_ids.csv").write_text(
-        _HEADER
-        + "anyt.am-1-1;CrSb;1/Runs/a;sid;rid;curated\n"
-        + "anyt.am-1-2;CrSb;1/Runs/b;other-s;other-r;curated\n",
-        "utf-8",
-    )
-    with caplog.at_level("WARNING"):
-        _build_coupling(
-            tables, (_run("CrSb", "rid", "sid", raw_path="1/Runs/a"),), details_dir=_absent_details(tmp_path)
-        )
+    details = tmp_path / "details"
+    _details(details, "am-1-0001", "1/Runs/a")
+    _details(details, "am-1-0002", "1/Runs/b")
+    with _ledger(tmp_path) as ledger:
+        with caplog.at_level("WARNING"):
+            coupled, _ = _couple_runs(
+                tables, (_run("CrSb", "s:a", raw_path="1/Runs/a"),), details_dir=details, ledger=ledger
+            )
+        assert "anyt.am-1-1" in coupled
+        assert "anyt.am-1-2" not in coupled
     assert "not collected in this build: 1/Runs/b" in caplog.text
 
 
-def test_unexpected_column_raises(tmp_path: Path) -> None:
-    # 1f: a curator's hand-added column must not be silently dropped.
-    tables = _tables(tmp_path / "tables", "CrSb")
-    (tables / "amdb_run_content_ids.csv").write_text(
-        _HEADER.rstrip("\n") + ";note\n" + "anyt.am-1-1;CrSb;;;;ambiguous;keep-me\n", "utf-8"
-    )
-    with pytest.raises(ValueError, match="unexpected columns"):
-        _build_coupling(tables, (), details_dir=_absent_details(tmp_path))
-
-
-def _curated_row(tables: Path, amdb_id: str = "anyt.am-1-1") -> dict[str, str]:
-    reader = csv.DictReader((tables / "amdb_run_content_ids.csv").open(encoding="utf-8"), delimiter=";")
-    return {row["AMDBId"]: row for row in reader}[amdb_id]
-
-
-def test_pending_curated_row_survives_and_is_never_demoted(tmp_path: Path) -> None:
-    # 1g (corrected): a curated row with a raw_path and no content-ids is the natural
-    # hand-curation shape (the curator cannot know the ids). It must survive both a
-    # refresh and a plain build with its status intact while the run is absent, and
-    # get its ids filled by a later refresh once the run is present -- never demoted.
-    # A sibling material with a present run keeps resolved>0 so the 1d guard stays quiet.
-    tables = _tables(
-        tmp_path / "tables",
-        materials={"anyt.am-1-1": "CrSb", "anyt.am-1-2": "MnTe"},
-        amdb_ids=("anyt.am-1-1", "anyt.am-1-2"),
-    )
-    (tables / "amdb_run_content_ids.csv").write_text(
-        _HEADER + "anyt.am-1-1;CrSb;1/Runs/x;;;curated\n" + "anyt.am-1-2;MnTe;1/Runs/mnte;s2;r2;auto\n",
-        "utf-8",
-    )
-    present = (_run("MnTe", "r2", "s2", raw_path="1/Runs/mnte"),)  # CrSb run stays absent
-
-    # Run absent: refresh keeps the pending row exactly, no exception, no coupling of it.
-    coupled, _ = _build_coupling(
-        tables, present, details_dir=_absent_details(tmp_path), collected=5, refresh_coupling=True
-    )
-    assert "anyt.am-1-1" not in coupled
-    kept = _curated_row(tables)
-    assert kept["status"] == "curated" and kept["raw_path"] == "1/Runs/x" and not kept["structure_content_id"]
-
-    # Run absent: a plain build also keeps it (a legal pending curation, not a booby trap).
-    _build_coupling(tables, present, details_dir=_absent_details(tmp_path), collected=5)
-    assert _curated_row(tables)["status"] == "curated"
-
-    # Run present: refresh fills the ids and the status stays curated.
-    coupled, _ = _build_coupling(
-        tables,
-        present + (_run("CrSb", "r9", "s9", raw_path="1/Runs/x"),),
-        details_dir=_absent_details(tmp_path),
-        refresh_coupling=True,
-    )
-    filled = _curated_row(tables)
-    assert filled["status"] == "curated"
-    assert (filled["structure_content_id"], filled["run_content_id"]) == ("s9", "r9")
-    assert coupled["anyt.am-1-1"].run_id == "r9"
-
-
-def test_name_only_active_row_without_content_ids_still_raises(tmp_path: Path) -> None:
-    # A row with no raw_path has nothing to resolve against; empty ids must raise
-    # (in both modes) rather than become a silent pending row.
-    tables = _tables(tmp_path / "tables", "CrSb")
-    (tables / "amdb_run_content_ids.csv").write_text(_HEADER + "anyt.am-1-1;CrSb;;;;curated\n", "utf-8")
-    with pytest.raises(ValueError, match="active rows require content-ids"):
-        _build_coupling(tables, (), details_dir=_absent_details(tmp_path), refresh_coupling=True)
-    with pytest.raises(ValueError, match="active rows require content-ids"):
-        _build_coupling(tables, (), details_dir=_absent_details(tmp_path))
-
-
 def test_details_raw_path_absent_malformed_and_wrong_type(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    # 1e: never raises; absent shard is debug, present-but-unusable shard warns.
+    # Never raises: an absent shard is debug, a present-but-unusable shard warns.
     root = tmp_path / "details"
     assert details_raw_path(root, "anyt.am-1-1") == ""  # no shard at all
 
@@ -419,3 +251,106 @@ def test_details_raw_path_absent_malformed_and_wrong_type(tmp_path: Path, caplog
         assert details_raw_path(root, "anyt.am-1-3") == ""
     assert "unreadable" in caplog.text
     assert "malformed or missing" in caplog.text
+
+
+# -- binding resolution matrix (design §2/§6) --------------------------------
+
+
+def test_new_coupling_assigns_intrinsic_and_aliases_binding(tmp_path: Path) -> None:
+    """Both keys unset: a fresh run gets its intrinsic id, the entity key aliases onto it."""
+    tables = _tables(tmp_path / "tables", "CrSb")
+    with _ledger(tmp_path) as ledger:
+        coupled, _ = _couple_runs(
+            tables, (_run("CrSb", "s:new"),), details_dir=_absent_details(tmp_path), ledger=ledger
+        )
+        assert "anyt.am-1-1" in coupled
+        run_id = ledger.lookup(_run_source_key("s:new"))
+        assert run_id is not None
+        bindings = ledger.bindings()
+        assert bindings[_run_source_key("s:new")] == (run_id, "runs", False)  # the assignment
+        assert bindings[_run_key("anyt.am-1-1")] == (run_id, "runs", True)  # the alias
+
+
+def test_self_migration_aliases_intrinsic_onto_the_pre_existing_id(tmp_path: Path) -> None:
+    """existing set, intrinsic None: the pre-redesign material's own run id is kept untouched."""
+    tables = _tables(tmp_path / "tables", "CrSb")
+    with _ledger(tmp_path) as ledger:
+        pre_existing_id = ledger.assign(_run_key("anyt.am-1-1"), "runs")  # pre-redesign shape: a plain assignment
+        coupled, counts = _couple_runs(
+            tables, (_run("CrSb", "s:legacy"),), details_dir=_absent_details(tmp_path), ledger=ledger
+        )
+        assert counts == {"auto": 1}
+        assert coupled["anyt.am-1-1"].item.run.source_id == "s:legacy"
+        # The run id is UNCHANGED -- purely additive migration.
+        assert ledger.lookup(_run_key("anyt.am-1-1")) == pre_existing_id
+        bindings = ledger.bindings()
+        assert bindings[_run_source_key("s:legacy")] == (pre_existing_id, "runs", True)  # the new intrinsic alias
+        assert bindings[_run_key("anyt.am-1-1")] == (pre_existing_id, "runs", False)  # unchanged assignment
+
+
+def test_run_already_known_binds_entity_to_its_intrinsic_id(tmp_path: Path) -> None:
+    """existing None, intrinsic set: a run already registered, entity newly bound to it."""
+    tables = _tables(tmp_path / "tables", "CrSb")
+    with _ledger(tmp_path) as ledger:
+        run_id = ledger.assign(_run_source_key("s:known"), "runs")
+        coupled, _ = _couple_runs(
+            tables, (_run("CrSb", "s:known"),), details_dir=_absent_details(tmp_path), ledger=ledger
+        )
+        assert "anyt.am-1-1" in coupled
+        assert ledger.lookup(_run_key("anyt.am-1-1")) == run_id
+
+
+def test_already_bound_and_matching_is_a_no_op(tmp_path: Path) -> None:
+    """both set and equal: nothing new is written, the material is still coupled."""
+    tables = _tables(tmp_path / "tables", "CrSb")
+    with _ledger(tmp_path) as ledger:
+        run_id = ledger.assign(_run_source_key("s:same"), "runs")
+        ledger.alias(_run_key("anyt.am-1-1"), run_id)
+        before = dict(ledger.bindings())
+        coupled, _ = _couple_runs(
+            tables, (_run("CrSb", "s:same"),), details_dir=_absent_details(tmp_path), ledger=ledger
+        )
+        assert "anyt.am-1-1" in coupled
+        assert dict(ledger.bindings()) == before  # no new record appended
+
+
+def test_conflicting_binding_raises(tmp_path: Path) -> None:
+    """both set and different: a genuine conflict must never silently re-bind."""
+    tables = _tables(tmp_path / "tables", "CrSb")
+    with _ledger(tmp_path) as ledger:
+        ledger.assign(_run_key("anyt.am-1-1"), "runs")  # material already bound to SOME run
+        ledger.assign(_run_source_key("s:other"), "runs")  # a DIFFERENT run's own intrinsic id
+        with pytest.raises(ValueError, match="anyt.am-1-1.*conflicts with run"):
+            _couple_runs(tables, (_run("CrSb", "s:other"),), details_dir=_absent_details(tmp_path), ledger=ledger)
+
+
+def test_claimed_run_refuses_rather_than_steals(tmp_path: Path) -> None:
+    """A run already bound (via _run_key) to material A must never bind to material B too."""
+    tables = _tables(
+        tmp_path / "tables",
+        amdb_ids=("anyt.am-1-1", "anyt.am-1-2"),
+        materials={"anyt.am-1-1": "Amat", "anyt.am-1-2": "Bmat"},
+    )
+    with _ledger(tmp_path) as ledger:
+        # Material A already owns this run's intrinsic id via its binding key.
+        run_id = ledger.assign(_run_source_key("s:shared"), "runs")
+        ledger.alias(_run_key("anyt.am-1-1"), run_id)
+        coupled, counts = _couple_runs(
+            tables, (_run("Bmat", "s:shared"),), details_dir=_absent_details(tmp_path), ledger=ledger
+        )
+        assert "anyt.am-1-2" not in coupled
+        assert not counts  # refused, not ambiguous: no candidate was even offered a count
+        assert ledger.lookup(_run_key("anyt.am-1-2")) is None  # never bound
+
+
+def test_absent_bound_run_warns_without_ledger_mutation(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """A material's bound run missing from this build's tree: warn, no ledger write."""
+    tables = _tables(tmp_path / "tables", "CrSb")
+    with _ledger(tmp_path) as ledger:
+        ledger.assign(_run_key("anyt.am-1-1"), "runs")
+        before = dict(ledger.bindings())
+        with caplog.at_level("WARNING"):
+            coupled, counts = _couple_runs(tables, (), details_dir=_absent_details(tmp_path), ledger=ledger)
+        assert not coupled and not counts
+        assert dict(ledger.bindings()) == before
+    assert "not collected in this build" in caplog.text

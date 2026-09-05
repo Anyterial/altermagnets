@@ -67,37 +67,33 @@ stale. `GET /health` on the AMDB service reports `persistent`, `memory`,
 explicit `store` or `providers` supplied by their caller and do not close them.
 
 The mounted source tables under `data/tables/` are intentionally untracked; the
-two curation files — the sealed id ledger `tables/amdb_ids.sqlite` and the coupling
-document `tables/amdb_run_content_ids.csv` — are git-tracked under the repo's
-`tables/` directory instead. `ALTERMAGNETS_TABLES_DIR` (or the builder's
-`--tables-dir`) selects a different curation directory. The ledger is
-authoritative for every served id: the material ids `anyt.am-1-N` come from its
-`results` family, keyed by each screening row's normalized MAGNDATA cell (a
-comma-separated cell is split, stripped, sorted, and rejoined), and the
-structure/reference/run/record/file ids from their respective families. The build
-opens the ledger first, seeds the `results` family once (in screening-row order,
-each id asserted against that row's `AMDBId` column), and thereafter reads
-`AMDBId` only as that transition check — never for identity.
+sealed id ledger `data/amdb_ids.sqlite` lives beside them, also untracked. Set
+`ALTERMAGNETS_LEDGER_PATH` (or the builder's `--ledger-path`) to use a different
+ledger file. The ledger is authoritative for every served id: the material ids
+`anyt.am-1-N` come from its `results` family, keyed by each screening row's
+normalized MAGNDATA cell (a comma-separated cell is split, stripped, sorted, and
+rejoined), and the structure/reference/run/record/file ids from their respective
+families. The build opens the ledger first, seeds the `results` family once (in
+screening-row order, each id asserted against that row's `AMDBId` column), and
+thereafter reads `AMDBId` only as that transition check — never for identity.
+A missing ledger is never auto-created (that would silently re-mint every served
+id from scratch); `tools/build_store.py` refuses unless `--initialize-ledger` is
+passed, a first-time-deployment ceremony only. Because that one-time seeding is
+not re-derivable, unlike the mounted data, the ledger's backup class must be
+stricter than the data's — see `plans/RUN_COUPLING_LEDGER_BINDINGS.md` §7.
 
 The default (non-legacy) build ingests the finished httk v1 run tree under
 `data/raw_httk_v1/` (all ten project directories) and attaches each material's
-relaxed structure from its own run. The mapping is authoritative, not guessed:
-`tables/amdb_run_content_ids.csv` (semicolon-delimited) records one row per
-coupling with columns
-`AMDBId;run_material;raw_path;structure_content_id;run_content_id;status`.
-`raw_path` is the run task directory as a POSIX path relative to the runs root
-(the same value recorded in each material's detail JSON); a row carrying a
-`raw_path` is matched to that exact run even when the run's derived name differs
-from the screening formula. `structure_content_id`/`run_content_id` are derived
-content-address pins verified against the freshly collected runs, `status` is
-`auto` (builder-derived), `curated` (hand-pinned), or `ambiguous` (a plausible
-run that needs manual curation). The builder rewrites this file every build.
-Because the content-id pins are derived data, pass `--refresh-coupling` (to
-`tools/build_store.py`) to rewrite them from the current build — for example
-after an ingest change alters every structure's content id — preserving each
-row's `AMDBId`, `raw_path`, and `status`. Any material left without a coupled
-structure falls back to its `data/details/` CONTCAR, so the default build is
-always at least as complete as `make build_store_legacy`.
+relaxed structure from its own run. Which run backs which material is ledger
+state, not a document: a run's intrinsic identity is the key `run:<source_id>`,
+and a material's coupling is the key `amdb:<id>:run` aliased onto it (see
+`plans/RUN_COUPLING_LEDGER_BINDINGS.md`). Details-tree `raw_path` is
+authoritative when present; unambiguous name matching fills the rest, and an
+ambiguous or unmatched run is never persisted, only reported. `tools/curate.py`
+inspects and hand-confirms these bindings (`status`, `couple --list`,
+`couple --assign`, `--attach`, `--supersede`). Any material left without a
+coupled structure falls back to its `data/details/` CONTCAR, so the default
+build is always at least as complete as `make build_store_legacy`.
 
 Plot metadata is part of the material object graph and is exposed through the
 custom `_httk_custom_figures` structures property. The database stores the

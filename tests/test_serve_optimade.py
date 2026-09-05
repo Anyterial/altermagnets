@@ -240,7 +240,14 @@ def test_serves_paired_run_edges_and_records_relationship(tmp_path: Path) -> Non
     details = write_detail_assets(tmp_path / "details")
     runs = tmp_path / "runs"
     _write_scf_run(runs, "CrSb")  # couples anyt.am-1-1; OUTCAR TOTEN is -1.0 eV; also writes a vasprun output
-    target = material_store.build_store(tmp_path / "store.duckdb", data_dir=source, tables_dir=source, details_dir=details, runs_dir=runs)
+    target = material_store.build_store(
+        tmp_path / "store.duckdb",
+        data_dir=source,
+        details_dir=details,
+        runs_dir=runs,
+        ledger_path=tmp_path / "amdb_ids.sqlite",
+        initialize_ledger=True,
+    )
     opened = material_store.open_prebuilt_store(target)
     assert opened is not None
     app = build_service_app(
@@ -340,7 +347,14 @@ def _build_run_backed_store(tmp_path: Path) -> tuple[Any, Any, Path, Path]:
     details = write_detail_assets(tmp_path / "details")
     runs = tmp_path / "runs"
     _write_scf_run(runs, "CrSb")  # couples anyt.am-1-1; writes an OUTCAR (energy) + vasprun (file)
-    target = material_store.build_store(tmp_path / "store.duckdb", data_dir=source, tables_dir=source, details_dir=details, runs_dir=runs)
+    target = material_store.build_store(
+        tmp_path / "store.duckdb",
+        data_dir=source,
+        details_dir=details,
+        runs_dir=runs,
+        ledger_path=tmp_path / "amdb_ids.sqlite",
+        initialize_ledger=True,
+    )
     opened = material_store.open_prebuilt_store(target)
     assert opened is not None  # a stale/empty store would silently serve empty files/records
     app = build_service_app(
@@ -748,7 +762,12 @@ def test_httk_alts_routes_serve_composite_alternatives(tmp_path: Path) -> None:
     source = write_source_tables(tmp_path / "tables")
     details = write_detail_assets(tmp_path / "details")
     store_path = material_store.build_store(
-        tmp_path / "store.duckdb", data_dir=source, tables_dir=source, details_dir=details, runs_dir=tmp_path / "runs"
+        tmp_path / "store.duckdb",
+        data_dir=source,
+        details_dir=details,
+        runs_dir=tmp_path / "runs",
+        ledger_path=tmp_path / "amdb_ids.sqlite",
+        initialize_ledger=True,
     )
     opened = material_store.open_prebuilt_store(store_path)
     assert opened is not None
@@ -938,8 +957,9 @@ def test_structures_nsites_depth1_filter_e2e(tmp_path: Path) -> None:
         material_store.build_store(
             tmp_path / "store.duckdb",
             data_dir=write_source_tables(tmp_path / "tables2"),
-            tables_dir=tmp_path / "tables2",
             details_dir=write_detail_assets(tmp_path / "details2"),
+            ledger_path=tmp_path / "amdb_ids2.sqlite",
+            initialize_ledger=True,
         )
     )
     assert prebuilt is not None

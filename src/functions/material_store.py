@@ -104,9 +104,9 @@ __all__ = [
     "cleanup_material_store",
     "default_data_dir",
     "default_details_dir",
+    "default_ledger_path",
     "default_runs_dir",
     "default_store_path",
-    "default_tables_dir",
     "details_dir_for_material",
     "details_raw_path",
     "load_material_structure",
@@ -118,9 +118,9 @@ __all__ = [
     "parse_magnetization_moments",
     "resolve_data_dir",
     "resolve_details_dir",
+    "resolve_ledger_path",
     "resolve_runs_dir",
     "resolve_store_path",
-    "resolve_tables_dir",
 ]
 
 # Site diagnostics ride the unified httk reporting channel (httk.core.report):
@@ -169,15 +169,17 @@ AMDB_ID_COLUMN = "AMDBId"
 AMDB_DATASET = "1"
 STORE_PATH_ENVIRONMENT = "ALTERMAGNETS_STORE_PATH"
 RUNS_PATH_ENVIRONMENT = "ALTERMAGNETS_RUNS_DIR"
-COUPLING_FILENAME = "amdb_run_content_ids.csv"
 DETAILS_PATH_ENVIRONMENT = "ALTERMAGNETS_DETAILS_DIR"
-TABLES_PATH_ENVIRONMENT = "ALTERMAGNETS_TABLES_DIR"
+LEDGER_PATH_ENVIRONMENT = "ALTERMAGNETS_LEDGER_PATH"
 
-#: The committed, sealed id ledger and coupling document live under the repo's
-#: ``tables/`` directory (curation, git-tracked), split from the mounted, untracked
-#: screening CSVs under ``data/tables/``. The ledger maps stable amdb source keys
-#: to entry ids so a rebuilt store keeps its ids and content changes become
-#: revisions (see the sealed-id-ledger design).
+#: The sealed id ledger lives on the untracked data volume (``data/amdb_ids.sqlite``),
+#: independent of the git-tracked ``tables/`` curation directory (see the ledger
+#: relocation design): it maps stable amdb source keys to entry ids so a rebuilt
+#: store keeps its ids and content changes become revisions, and it is machine-grown
+#: registry state rather than curated content that belongs in git. The run<->material
+#: coupling that used to live in a git-tracked CSV alongside it is now expressed as
+#: ledger bindings (see the run-coupling-ledger-bindings design); no coupling document
+#: exists any more.
 LEDGER_FILENAME = "amdb_ids.sqlite"
 
 #: The per-family id bases the ledger mints under. These are the DEPLOYED id
@@ -724,8 +726,34 @@ def _structure_key(amdb_id: str) -> str:
 
 
 def _run_key(amdb_id: str) -> str:
-    """Return the stable ledger key for a material's reconstructed run."""
+    """Return the stable ledger key for a material's entity->run BINDING.
+
+    This is the *binding* half of run coupling (see the run-coupling-ledger-bindings
+    design, D3): it names which run a material is backed by, expressed as an
+    ``alias`` onto the run's own id. It predates the run's *intrinsic* identity
+    (:func:`_run_source_key`), so every already-deployed key of this shape is kept
+    verbatim -- the migration only adds the intrinsic key as an additional alias
+    of the same id, never renumbers or re-binds this one.
+    """
     return f"amdb:{amdb_id}:run"
+
+
+def _run_source_key(source_id: str) -> str:
+    """Return the stable ledger key (family ``runs``) for a run's intrinsic identity.
+
+    ``source_id`` is the run-native identity already carried by every collected
+    :class:`~httk.core.provenance.Run` (v2: ``<workspace_id>:<job_id>``; v1:
+    ``httk-v1:<manifest-hash>``). Unlike :func:`_run_key`, this key does not depend
+    on which (if any) material the run backs, so it is the handle that *establishes*
+    a run's ledger identity independent of coupling.
+    """
+    return f"run:{source_id}"
+
+
+#: Matches an entity->run binding key (see :func:`_run_key`), extracting the amdb id.
+#: Used to find which material (if any) a given run id is currently bound to, so a
+#: name/raw_path match can never silently steal a run another material already owns.
+_RUN_BINDING_KEY_PATTERN = re.compile(r"^amdb:(?P<amdb_id>.+):run$")
 
 
 def _record_key(amdb_id: str, role: str) -> str:
@@ -808,7 +836,8 @@ def _seed_result_ids(ledger: IdLedger, screening_rows: list[dict[str, str]]) -> 
         assigned = ledger.assign(key, "results")
         expected = f"anyt.am-1-{index}"
         # Pure minting after full validation, so this only trips on a code bug; the
-        # documented recovery is `git restore tables/amdb_ids.sqlite`.
+        # documented recovery is restoring the ledger from backup (it is untracked,
+        # so `git restore` cannot help -- see the ledger relocation design, §7).
         assert assigned == expected, f"results seeding row {index} minted {assigned!r}, expected {expected!r}"
 
 
@@ -831,35 +860,55 @@ def _result_ids(ledger: IdLedger, screening_rows: list[dict[str, str]]) -> dict[
     return {key: ledger.assign(key, "results") for key in keys}
 
 
-def _open_ledger(tables_dir: Path) -> IdLedger:
-    """Open the committed sealed id ledger, creating it on the first build.
+def _open_ledger(ledger_path: Path, *, create_if_missing: bool = False) -> IdLedger:
+    """Open the sealed id ledger at *ledger_path*.
 
     The build always signs the ledger with :data:`LEDGER_SIGNER_REFS`; a missing
     signing seed fails here rather than silently skipping the seal. The signature
     is an audit record, not a build gate: an existing ledger opens without a
     pinned signer (the integrity self-check still refuses a tampered file), and
-    ``IdLedger.open`` logs who signed it. Git history is the tamper witness.
+    ``IdLedger.open`` logs who signed it.
 
-    :param tables_dir: The committed curation directory holding :data:`LEDGER_FILENAME`.
+    A missing ledger file is refused by default rather than silently created fresh:
+    now that the ledger lives on the untracked data volume (not git-tracked), a
+    missing file is far more likely a data-loss symptom (wrong path, an un-restored
+    backup after a fresh checkout/clone) than a genuine first deployment, and
+    building against a fresh empty ledger would silently re-mint every public id --
+    a catastrophic, silent divergence from production. Every caller (the build, the
+    curation tool's write path) routes through here, so this is the one place that
+    refusal is enforced.
+
+    :param ledger_path: The resolved id ledger file path (see :func:`resolve_ledger_path`).
+    :param create_if_missing: Whether a missing ledger is created fresh. Only
+        :func:`build_store`'s ``initialize_ledger`` flag (the once-per-deployment
+        initialization ceremony, like the results-family seeding) opts into this;
+        every other caller (e.g. the curation tool) keeps the safe default.
     :return: The open, locked ledger.
     :raises SealError: If no signing seed is available.
+    :raises RuntimeError: If the ledger is missing and *create_if_missing* is false.
     """
-    path = tables_dir / LEDGER_FILENAME
     try:
-        keys: tuple[SealKey, ...] = resolve_seal_keys(LEDGER_SIGNER_REFS, project_root=tables_dir).keys
+        keys: tuple[SealKey, ...] = resolve_seal_keys(LEDGER_SIGNER_REFS, project_root=ledger_path.parent).keys
     except SealError as error:
         raise SealError(
-            f"cannot seal the id ledger {path}: {error}. Configure an operator identity "
+            f"cannot seal the id ledger {ledger_path}: {error}. Configure an operator identity "
             "(`httk identity`) so the build can sign the ledger; the build refuses to skip sealing."
         ) from error
-    if path.exists():
+    if ledger_path.exists():
         # Pass the code-side scheme so a drift between LEDGER_BASES/LEDGER_SERIES and the
         # committed file is a loud error. bases= is reconciled as a SUPERSET: a family
         # in LEDGER_BASES absent from the stored map (the "results" family on the first
         # build after the split) is added and stamped at reseal; a changed/removed
         # stored family still errors.
-        return IdLedger.open(path, keys=keys, bases=LEDGER_BASES, series=LEDGER_SERIES)
-    return IdLedger.create(path, bases=LEDGER_BASES, series=LEDGER_SERIES, keys=keys)
+        return IdLedger.open(ledger_path, keys=keys, bases=LEDGER_BASES, series=LEDGER_SERIES)
+    if not create_if_missing:
+        raise RuntimeError(
+            f"id ledger {ledger_path} does not exist. A missing ledger is never auto-created: building (or "
+            "assigning) against a fresh empty one would silently re-mint every public id, diverging from "
+            "production. Restore the ledger from backup, or -- for a genuine first-time deployment only -- "
+            "pass build_store's initialize_ledger=True (tools/build_store.py's --initialize-ledger)."
+        )
+    return IdLedger.create(ledger_path, bases=LEDGER_BASES, series=LEDGER_SERIES, keys=keys)
 
 
 def _reference_ids_by_doi(
@@ -1303,14 +1352,23 @@ def default_data_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "data" / "tables"
 
 
-def default_tables_dir() -> Path:
-    """The committed curation directory (sealed id ledger + coupling document).
+#: Where the committed, git-tracked ``tables/`` curation directory used to hold the
+#: ledger before its relocation (see :func:`default_ledger_path`). ``tables/`` itself
+#: is not otherwise a concept this module has any reason to resolve any more (the
+#: coupling document that used to live beside the ledger there is deleted too), so
+#: this is kept only as the transitional-check literal in :func:`resolve_ledger_path`,
+#: not as a public resolver.
+_LEGACY_TABLES_DIR = Path(__file__).resolve().parents[2] / "tables"
 
-    Split from :func:`default_data_dir`: the two curation files are git-tracked
-    under the repo's ``tables/``, while the screening CSVs are mounted, untracked,
-    under ``data/tables/``.
+
+def default_ledger_path() -> Path:
+    """The untracked data volume's default id ledger location.
+
+    See the ledger relocation design, §7: the ledger is machine-grown registry
+    state that outgrows git at real volumes, so it lives beside the mounted data
+    rather than in a committed, git-tracked directory (its pre-relocation location).
     """
-    return Path(__file__).resolve().parents[2] / "tables"
+    return Path(__file__).resolve().parents[2] / "data" / LEDGER_FILENAME
 
 
 def default_details_dir() -> Path:
@@ -1343,25 +1401,47 @@ def resolve_data_dir(value: str | os.PathLike[str] | None = None) -> Path:
     return default_data_dir()
 
 
-#: Test guard: :mod:`conftest` sets this ``True`` so a store-building test can
-#: never fall through to the production ``tables/`` ledger. Production code and the
-#: build tool leave it ``False`` and use :func:`default_tables_dir` normally.
-_GUARD_DEFAULT_TABLES_DIR = False
+#: Test guard: :mod:`conftest` sets this ``True`` so a store-building test can never
+#: fall through to the production ``data/amdb_ids.sqlite`` ledger.
+_GUARD_DEFAULT_LEDGER_PATH = False
 
 
-def resolve_tables_dir(value: str | os.PathLike[str] | None = None) -> Path:
-    """Resolve the committed curation directory (ledger + coupling document)."""
+def resolve_ledger_path(value: str | os.PathLike[str] | None = None) -> Path:
+    """Resolve the sealed id ledger's file path.
+
+    Resolution order: an explicit *value*, then :data:`LEDGER_PATH_ENVIRONMENT`, then
+    (outside pytest) :func:`default_ledger_path`.
+
+    A narrow, deliberate transitional check guards the one real migration hazard: if
+    resolution falls all the way through to the default path and no file is there yet,
+    but the pre-relocation ``tables/amdb_ids.sqlite`` still exists, this raises rather
+    than silently opening the old location or auto-moving the file -- the orchestrator
+    performs that move once, at integration.
+
+    :param value: An explicit ledger path, taking precedence over everything else.
+    :return: The resolved ledger file path.
+    :raises RuntimeError: If a pytest-only guard catches an unset default, or the
+        transitional check above catches an unmigrated production ledger.
+    """
     if value is not None:
         return Path(value).expanduser().resolve()
-    override = os.environ.get(TABLES_PATH_ENVIRONMENT, "").strip()
+    override = os.environ.get(LEDGER_PATH_ENVIRONMENT, "").strip()
     if override:
         return Path(override).expanduser().resolve()
-    if _GUARD_DEFAULT_TABLES_DIR:
+    if _GUARD_DEFAULT_LEDGER_PATH:
         raise RuntimeError(
-            "resolve_tables_dir fell through to the production tables/ ledger under pytest; "
-            "a store-building test must pass an explicit tables_dir (a tmp fixture)"
+            "resolve_ledger_path fell through to the production data/amdb_ids.sqlite ledger under pytest; "
+            "a store-building test must pass an explicit ledger_path (a tmp fixture)"
         )
-    return default_tables_dir()
+    resolved = default_ledger_path()
+    legacy = _LEGACY_TABLES_DIR / LEDGER_FILENAME
+    if not resolved.is_file() and legacy.is_file():
+        raise RuntimeError(
+            f"the id ledger has moved from {legacy} to {resolved}, but it has not been moved there yet. "
+            "Move the file (the orchestrator performs this once, at integration) rather than relying on "
+            "an automatic fallback or auto-move."
+        )
+    return resolved
 
 
 def resolve_details_dir(value: str | os.PathLike[str] | None = None) -> Path:
@@ -2026,9 +2106,18 @@ def build_material_records(
 
 @dataclass(frozen=True)
 class _RunObservation:
+    """One collected v1 run whose relaxed-structure output is available.
+
+    ``material`` is the run's own name-derived candidate material (a suffix variant
+    like ``CrSb-2`` is carried verbatim); ``item`` is the whole collected item, from
+    which the run's intrinsic identity (``item.run.source_id``), its outputs and its
+    products are all read. This carries no content-id fields: a run's ledger identity
+    is its intrinsic ``source_id`` (see :func:`_run_source_key`), never a content
+    fingerprint (the pre-ledger design pinned ``content_id(run)``/the relaxed
+    structure's content id here; both are gone now that coupling is ledger state).
+    """
+
     material: str
-    run_id: str
-    structure_id: str
     structure: Any
     raw_path: str
     item: Any
@@ -2051,100 +2140,136 @@ def _run_observations(items: Iterable[Any]) -> tuple[_RunObservation, ...]:
         observations.append(
             _RunObservation(
                 task_id.removesuffix("_SCF"),
-                # Collected runs have never passed a store, so Run.id is the
-                # store-minted field (None here); pin the content identity.
-                content_id(run),
-                relaxed.id,
                 relaxed,
                 str(item.record.payload_path),
                 item,
             )
         )
-    return tuple(sorted(observations, key=lambda item: (item.material, item.run_id)))
-
-
-def _coupling_row(
-    amdb_id: str,
-    run_material: str,
-    *,
-    raw_path: str = "",
-    structure_id: str = "",
-    run_id: str = "",
-    status: str,
-) -> dict[str, str]:
-    return {
-        "AMDBId": amdb_id,
-        "run_material": run_material,
-        "raw_path": raw_path,
-        "structure_content_id": structure_id,
-        "run_content_id": run_id,
-        "status": status,
-    }
-
-
-def _write_coupling(path: Path, rows: Iterable[Mapping[str, str]]) -> None:
-    fields = ("AMDBId", "run_material", "raw_path", "structure_content_id", "run_content_id", "status")
-    rows = list(rows)
-    keys: set[tuple[str, str]] = set()
-    for row in rows:
-        if set(row) != set(fields):
-            raise ValueError(f"{path}: invalid coupling row columns")
-        key = (row["AMDBId"], row["run_material"])
-        if key in keys:
-            raise ValueError(f"{path}: duplicate coupling row {key[0]}/{key[1]}")
-        keys.add(key)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    temporary_path = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "w", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=fields, delimiter=";", lineterminator="\n")
-            writer.writeheader()
-            writer.writerows(cast(Any, rows))
-        os.replace(temporary_path, path)
-    except BaseException:
-        temporary_path.unlink(missing_ok=True)
-        raise
+    return tuple(sorted(observations, key=lambda item: (item.material, item.item.run.source_id)))
 
 
 def _is_run_material(material: str, csv_material: str) -> bool:
     return material == csv_material or re.fullmatch(rf"{re.escape(csv_material)}-\d+", material) is not None
 
 
-def _build_coupling(
+def _run_owners(ledger: IdLedger) -> dict[str, str]:
+    """Map every run id currently bound by some material's entity->run key, to that owner.
+
+    Used by :func:`_resolve_run_binding` to enforce the claimed-run rule: a run id
+    already bound to one material's :func:`_run_key` must never be silently rebound
+    (stolen) onto a different material.
+    """
+    owners: dict[str, str] = {}
+    for key, binding in ledger.bindings().items():
+        match = _RUN_BINDING_KEY_PATTERN.fullmatch(key)
+        if match is not None:
+            owners[binding.id] = match.group("amdb_id")
+    return owners
+
+
+def _resolve_run_binding(
+    ledger: IdLedger,
+    amdb_id: str,
+    source_id: str,
+    run_owners: dict[str, str],
+) -> str | None:
+    """Resolve one matched (material, run) pair against the open ledger.
+
+    Implements the five-branch binding resolution matrix (see the
+    run-coupling-ledger-bindings design, §2/§6): a run has intrinsic identity under
+    :func:`_run_source_key`; a material's coupling is the :func:`_run_key` binding,
+    always resolving to the SAME id once bound -- only the direction of the alias
+    differs between a run bound before this design (whose :func:`_run_key` is the
+    original *assignment*, the ``anyt.am.runs-1-N`` id itself) and a run bound after
+    it (whose :func:`_run_source_key` is the assignment and whose :func:`_run_key`
+    is the alias onto it).
+
+    :param ledger: The open (write-mode) ledger.
+    :param amdb_id: The matched material's canonical id.
+    :param source_id: The matched run's intrinsic ``item.run.source_id``.
+    :param run_owners: The current run-id -> owning-material map (see
+        :func:`_run_owners`), mutated in place as each material's binding resolves so
+        a later material processed in the same build sees it too.
+    :return: The resolved run id, or ``None`` when the match is refused (the run is
+        already claimed by a different material's binding) -- the material stays
+        unbound this build rather than stealing it.
+    :raises ValueError: On a genuine conflict: the material is already bound to a
+        DIFFERENT run than the one this build's observation resolves to intrinsically.
+        This needs a curator's explicit supersession (the curation CLI, a later
+        packet), never an automatic rebind.
+    """
+    binding_key = _run_key(amdb_id)
+    existing = ledger.lookup(binding_key)
+    source_key = _run_source_key(source_id)
+    intrinsic = ledger.lookup(source_key)
+    if intrinsic is not None:
+        owner = run_owners.get(intrinsic)
+        if owner is not None and owner != amdb_id:
+            logger.warning(
+                "Run %s (id %s) is already bound to material %s; refusing to also bind it to %s",
+                source_id,
+                intrinsic,
+                owner,
+                amdb_id,
+            )
+            return None
+    if existing is None and intrinsic is None:
+        run_id = ledger.assign(source_key, "runs")
+        ledger.alias(binding_key, run_id)
+    elif existing is not None and intrinsic is None:
+        # Self-migration: a pre-redesign material whose _run_key binding already owns
+        # the run's id (see the design's migration, §6). Purely additive.
+        ledger.alias(source_key, existing)
+        run_id = existing
+    elif existing is None and intrinsic is not None:
+        ledger.alias(binding_key, intrinsic)
+        run_id = intrinsic
+    elif existing == intrinsic:
+        assert existing is not None  # both branches above already ruled out either being None
+        run_id = existing
+    else:
+        raise ValueError(
+            f"material {amdb_id}: bound run {existing!r} ({binding_key!r}) conflicts with run {source_id!r}'s "
+            f"intrinsic id {intrinsic!r} ({source_key!r}); re-coupling requires an explicit supersession "
+            "(the curation CLI, not an automatic rebind)"
+        )
+    run_owners[run_id] = amdb_id
+    return run_id
+
+
+def _couple_runs(
     data_dir: Path,
     observations: tuple[_RunObservation, ...],
     *,
     details_dir: Path,
-    tables_dir: Path | None = None,
+    ledger: IdLedger,
     runs_root: Path | None = None,
     collected: int = 0,
-    refresh_coupling: bool = False,
     result_ids: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, _RunObservation], dict[str, int]]:
-    """Build and verify the deterministic AMDB-to-v1 coupling document.
+    """Match collected runs to screened materials and bind the matches in the id ledger.
+
+    Successor of the old CSV-backed coupling document (run-coupling-ledger-bindings
+    design): the matching itself -- details-tree ``raw_path`` authority, name
+    matching, the one-run-one-material invariant, and the diagnostics -- is unchanged,
+    but a match's disposition is now a ledger operation
+    (:func:`_resolve_run_binding`) instead of a CSV row, and an ambiguous or
+    unmatched material is simply left unbound this build (an ephemeral, regenerable
+    work list, design D5) rather than written anywhere.
 
     :param data_dir: directory holding the mounted screening CSV.
     :param observations: relaxed-structure observations collected from the v1 tree.
-    :param details_dir: root of the detail-asset tree, whose per-material JSONs
-        carry the authoritative ``raw_path`` mapping. The document's
-        ``run_content_id`` column pins the collected run's content identity (the
-        collection-identity pin: ``content_id(item.run)``), so re-collecting the
-        same job stays coupled to the same material; it is deliberately NOT the
-        store-minted run id (the reconstructed run saved by
-        :func:`_save_reconstructed_runs` carries different, resolvable edges).
-    :param tables_dir: committed curation directory holding the coupling document;
-        defaults to *data_dir* (the isolated-unit-test layout where both co-locate).
+    :param details_dir: root of the detail-asset tree, whose per-material JSONs carry
+        the authoritative ``raw_path`` mapping.
+    :param ledger: the open (write-mode) id ledger to resolve/record bindings against.
     :param runs_root: the runs root the observations were collected from, named in
-        the diagnostic raised when a document's ``raw_path`` values all miss.
+        the diagnostic raised when collection produced tasks but no usable observations.
     :param collected: total tasks collected from the tree (before 3a filtering), so a
         wrong runs root (many collected, none usable) is told apart from an empty tree.
-    :param refresh_coupling: rewrite derived content-ids (and fill/promote from the
-        details ``raw_path``) instead of raising on a stale pin.
-    :param result_ids: the ledger's ``magndata key`` -> ``anyt.am-1-N`` map. When
-        given (the production build) each screening row's amdb id is the ledger id
-        for its magndata key, never the ``AMDBId`` column; without it (the isolated
-        unit tests) the ``AMDBId`` column supplies the id.
+    :param result_ids: the ledger's ``magndata key`` -> ``anyt.am-1-N`` map. When given
+        (the production build) each screening row's amdb id is the ledger id for its
+        magndata key, never the ``AMDBId`` column; without it (the isolated unit
+        tests) the ``AMDBId`` column supplies the id.
     :returns: the ``AMDBId``-keyed coupled observations and the status counts.
     """
     screening = _load_csv_rows(data_dir / SCREENING_RESULTS_FILENAME, delimiter=";")
@@ -2162,25 +2287,12 @@ def _build_coupling(
             raise ValueError(f"duplicate canonical material ID '{amdb_id}'")
         source_materials[amdb_id] = material
         materials_to_amdb.setdefault(material, []).append(amdb_id)
-    coupling_path = (tables_dir if tables_dir is not None else data_dir) / COUPLING_FILENAME
-    previous = _load_csv_rows(coupling_path, delimiter=";") if coupling_path.is_file() else []
-    # raw_path is optional in older documents; every other column is fixed. Tolerate
-    # a missing raw_path column, but reject unexpected extra columns so a curator's
-    # hand-added column is not silently discarded on the next rewrite.
-    required = {"AMDBId", "run_material", "structure_content_id", "run_content_id", "status"}
-    allowed = required | {"raw_path"}
-    for row in previous:
-        missing = required - set(row)
-        if missing:
-            raise ValueError(f"{coupling_path}: missing columns {sorted(missing)!r}")
-        extra = set(row) - allowed - {None}
-        if extra:
-            raise ValueError(f"{coupling_path}: unexpected columns {sorted(extra)!r}")
 
     # The authoritative AMDB-id -> run path mapping from the details tree, read once.
     details_paths = {amdb_id: details_raw_path(details_dir, amdb_id) for amdb_id in source_materials}
     # Runs authoritatively owned by some material's details JSON. A name match must
-    # never steal one of these, including on the refresh path before pass 1 runs.
+    # never steal one of these, even for a material whose own run is not collected
+    # in this build (so it never gets the chance to claim it via pass 1 first).
     claimed = {path for path in details_paths.values() if path}
 
     by_material: dict[str, list[_RunObservation]] = {}
@@ -2188,159 +2300,27 @@ def _build_coupling(
     for obs in observations:
         by_material.setdefault(obs.material, []).append(obs)
         by_raw_path[obs.raw_path] = obs
-    rows: dict[tuple[str, str], dict[str, str]] = {}
-    coupled: dict[str, _RunObservation] = {}
 
-    statuses = {"auto", "ambiguous", "curated"}
-    row_keys: set[tuple[str, str]] = set()
-    raw_path_rows = 0
-    resolved_raw_path_rows = 0
-    for row in previous:
-        amdb_id = row[AMDB_ID_COLUMN].strip()
-        material = row["run_material"].strip()
-        status = row["status"].strip()
-        raw_path_field = (row.get("raw_path") or "").strip()
-        structure_id = row["structure_content_id"].strip()
-        run_id = row["run_content_id"].strip()
-        key = (amdb_id, material)
-        if amdb_id not in source_materials:
-            raise ValueError(f"coupling row {amdb_id}/{material}: AMDBId is absent from the CSV")
-        if not _is_run_material(material, source_materials[amdb_id]):
-            # A raw_path row is authoritative and one legitimately disagrees with
-            # the CSV formula (e.g. Cu2H3ClO3 vs the Cu2O3Cl run); only name-only
-            # rows treat a mismatch as a hard error.
-            message = f"coupling row {amdb_id}/{material}: material does not match the CSV row"
-            if raw_path_field:
-                logger.warning("%s (authoritative raw_path)", message)
-            else:
-                raise ValueError(message)
-        if status not in statuses:
-            raise ValueError(f"coupling row {amdb_id}/{material}: invalid status {status!r}")
-        if key in row_keys:
-            raise ValueError(f"duplicate coupling row {amdb_id}/{material}")
-        row_keys.add(key)
-        if not refresh_coupling and status == "ambiguous" and (structure_id or run_id):
-            raise ValueError(f"coupling row {amdb_id}/{material}: ambiguous rows must have empty content-ids")
-        # A name-only active row has nothing to resolve against, so it must carry ids
-        # in both modes. A row with a raw_path may omit them: when the run is present
-        # the resolve logic fills (refresh) or verifies (plain) the ids, and when it
-        # is absent the row is a legal pending curation whose status is kept intact.
-        if status in {"auto", "curated"} and not (structure_id and run_id) and not raw_path_field:
-            raise ValueError(f"coupling row {amdb_id}/{material}: active rows require content-ids")
-
-        if raw_path_field:
-            raw_path_rows += 1
-            # Rule 1/3: a raw_path row is matched only to that exact run path.
-            observation = by_raw_path.get(raw_path_field)
-            if observation is None:
-                # A transferred partial tree may not contain this run yet.
-                logger.warning("Coupled run for %s not collected in this build: %s", amdb_id, raw_path_field)
-                rows[key] = _coupling_row(
-                    amdb_id, material, raw_path=raw_path_field, structure_id=structure_id, run_id=run_id, status=status
-                )
-            else:
-                resolved_raw_path_rows += 1
-                if refresh_coupling:
-                    new_status = "auto" if status == "ambiguous" else status
-                    rows[key] = _coupling_row(
-                        amdb_id,
-                        material,
-                        raw_path=raw_path_field,
-                        structure_id=observation.structure_id,
-                        run_id=observation.run_id,
-                        status=new_status,
-                    )
-                    if new_status in {"auto", "curated"}:
-                        coupled[amdb_id] = observation
-                elif status == "ambiguous":
-                    rows[key] = _coupling_row(amdb_id, material, raw_path=raw_path_field, status="ambiguous")
-                else:
-                    if (structure_id, run_id) != (observation.structure_id, observation.run_id):
-                        raise ValueError(f"Coupling row {amdb_id}/{material} does not match ingested content-ids")
-                    rows[key] = _coupling_row(
-                        amdb_id,
-                        material,
-                        raw_path=raw_path_field,
-                        structure_id=observation.structure_id,
-                        run_id=observation.run_id,
-                        status=status,
-                    )
-                    coupled[amdb_id] = observation
-        elif refresh_coupling:
-            # Rule E: fill an empty raw_path from the details tree, else name match
-            # over runs no other material's details JSON authoritatively owns.
-            eff = details_paths.get(amdb_id, "")
-            observation = by_raw_path.get(eff) if eff else None
-            if observation is None:
-                actuals = by_material.get(material, ())
-                candidate = actuals[0] if len(actuals) == 1 else None
-                if (
-                    candidate is not None
-                    and len(materials_to_amdb.get(material, ())) == 1
-                    and (candidate.raw_path not in claimed or candidate.raw_path == eff)
-                ):
-                    observation = candidate
-                    eff = candidate.raw_path
-            if observation is None:
-                rows[key] = _coupling_row(amdb_id, material, structure_id=structure_id, run_id=run_id, status=status)
-            else:
-                new_status = "auto" if status == "ambiguous" else status
-                rows[key] = _coupling_row(
-                    amdb_id,
-                    material,
-                    raw_path=eff,
-                    structure_id=observation.structure_id,
-                    run_id=observation.run_id,
-                    status=new_status,
-                )
-                if new_status in {"auto", "curated"}:
-                    coupled[amdb_id] = observation
-        else:
-            # Rule 2: name-only rows keep the historic matching behavior exactly.
-            rows[key] = _coupling_row(amdb_id, material, structure_id=structure_id, run_id=run_id, status=status)
-            actuals = by_material.get(material, ())
-            if not actuals or status == "ambiguous":
-                continue
-            if len(actuals) != 1:
-                raise ValueError(f"coupling row {amdb_id}/{material}: run material is not unique in this build")
-            actual = actuals[0]
-            if (structure_id, run_id) != (actual.structure_id, actual.run_id):
-                raise ValueError(f"Coupling row {amdb_id}/{material} does not match ingested content-ids")
-            if status in {"auto", "curated"}:
-                coupled[amdb_id] = actual
-
-    # A run backs exactly one material. Two previous rows resolving to one run would
-    # each publish that run's content ids as their own provenance; catch it here,
-    # since _write_coupling dedups on (AMDBId, run_material) and active_ids per id.
-    path_to_ids: dict[str, list[str]] = {}
-    for aid, obs in coupled.items():
-        path_to_ids.setdefault(obs.raw_path, []).append(aid)
-    shared = {path: ids for path, ids in path_to_ids.items() if len(ids) > 1}
-    if shared:
-        path, ids = min(shared.items())
+    # A misconfigured runs root collects tasks whose payloads are all rejected before
+    # yielding a relaxed-structure observation (e.g. <root>/1/Runs one level too deep,
+    # so every task's one-part payload fails 3a filtering): collected > 0 but
+    # observations is empty. An absent or empty tree collects nothing (collected == 0)
+    # and stays silent; a root that is merely missing SOME materials' runs still
+    # yields other observations and must not trip this (that is an ordinary partial
+    # miss, handled per-material below), so the discriminator is deliberately
+    # collected-vs-observations, never details_paths/by_raw_path.
+    if collected and not observations:
         raise ValueError(
-            f"coupling document couples one run to multiple materials: raw_path {path} shared by {', '.join(sorted(ids))}"
-        )
-
-    # A misconfigured runs root makes every raw_path miss. Discriminate on tasks
-    # COLLECTED (before 3a filtering), not usable observations: a wrong root such as
-    # <root>/1/Runs collects tasks whose one-part payloads are all rejected by 3a,
-    # leaving observations empty but collected > 0. An absent or empty tree collects
-    # nothing and stays silent; a wrong root collects yet resolves none, and raises.
-    if collected and raw_path_rows and resolved_raw_path_rows == 0:
-        raise ValueError(
-            f"no coupling raw_path resolved against the runs collected from {runs_root}; "
+            f"no runs observed from {collected} tasks collected from {runs_root}; "
             "check --runs-dir / ALTERMAGNETS_RUNS_DIR points at the raw_httk_v1 root"
         )
 
-    # Authoritative claims (previous rows) are already in coupled; passes 1 and 2
-    # extend this set so name matching never reuses an already-coupled run.
-    coupled_paths = set(path_to_ids)
+    matched: dict[str, _RunObservation] = {}
+    ambiguous: set[str] = set()
+    coupled_paths: set[str] = set()
 
-    # Rule 4, pass 1: authoritative details raw_paths for AMDB ids with no prior row.
-    for amdb_id, material in sorted(source_materials.items()):
-        if any(existing[0] == amdb_id for existing in rows):
-            continue
+    # Pass 1: authoritative details raw_paths.
+    for amdb_id in sorted(source_materials):
         details_path = details_paths.get(amdb_id, "")
         if not details_path:
             continue
@@ -2351,61 +2331,50 @@ def _build_coupling(
         if observation.raw_path in coupled_paths:
             logger.warning("Details run for %s already coupled elsewhere: %s", amdb_id, details_path)
             continue
-        rows[(amdb_id, observation.material)] = _coupling_row(
-            amdb_id,
-            observation.material,
-            raw_path=details_path,
-            structure_id=observation.structure_id,
-            run_id=observation.run_id,
-            status="auto",
-        )
-        coupled[amdb_id] = observation
+        matched[amdb_id] = observation
         coupled_paths.add(observation.raw_path)
 
-    # Rule 4, pass 2: name matching for materials without a details raw_path, over
-    # only the runs not already claimed by an authoritative coupling.
+    # Pass 2: name matching for materials without a details raw_path, over only the
+    # runs not already claimed (this build's matches, or another material's details).
     for amdb_id, material in sorted(source_materials.items()):
-        if any(existing[0] == amdb_id for existing in rows):
+        if amdb_id in matched:
             continue
-        exact = [item for item in by_material.get(material, []) if item.raw_path not in coupled_paths]
+        exact = [
+            item
+            for item in by_material.get(material, [])
+            if item.raw_path not in coupled_paths and item.raw_path not in claimed
+        ]
         variants = [
             item
             for item in observations
             if _is_run_material(item.material, material)
             and item.material != material
             and item.raw_path not in coupled_paths
+            and item.raw_path not in claimed
         ]
         candidates = exact + variants
         if len(exact) == 1 and not variants and len(materials_to_amdb[material]) == 1:
             observation = exact[0]
-            rows[(amdb_id, material)] = _coupling_row(
-                amdb_id,
-                material,
-                structure_id=observation.structure_id,
-                run_id=observation.run_id,
-                status="auto",
-            )
-            coupled[amdb_id] = observation
+            matched[amdb_id] = observation
             coupled_paths.add(observation.raw_path)
         elif candidates:
-            logger.warning("Ambiguous run match for %s (%s)", amdb_id, material)
-            run_material = material if exact else min(item.material for item in variants)
-            rows[(amdb_id, run_material)] = _coupling_row(amdb_id, run_material, status="ambiguous")
+            ambiguous.add(amdb_id)
+            source_ids = sorted({item.item.run.source_id for item in candidates})
+            logger.warning("Ambiguous run match for %s (%s): candidate source ids %s", amdb_id, material, source_ids)
         else:
             logger.warning("No ingested run for CSV material %s (%s)", amdb_id, material)
 
-    # Enforce one active row per AMDB id. A pending curated row (raw_path, empty ids,
-    # run not yet present) is left exactly as the curator wrote it: its status is
-    # never rewritten, so a human's decision cannot be silently erased by a refresh.
-    active_ids: set[str] = set()
-    for row in rows.values():
-        if row["status"] not in {"auto", "curated"}:
-            continue
-        if row[AMDB_ID_COLUMN] in active_ids:
-            raise ValueError(
-                f"coupling row {row[AMDB_ID_COLUMN]}/{row['run_material']}: multiple active rows for AMDBId"
-            )
-        active_ids.add(row[AMDB_ID_COLUMN])
+    # One-run-one-material invariant. Passes 1/2 already prevent reuse via
+    # coupled_paths, so this only ever catches a regression in that bookkeeping.
+    path_to_ids: dict[str, list[str]] = {}
+    for amdb_id, obs in matched.items():
+        path_to_ids.setdefault(obs.raw_path, []).append(amdb_id)
+    shared = {path: ids for path, ids in path_to_ids.items() if len(ids) > 1}
+    if shared:
+        path, ids = min(shared.items())
+        raise ValueError(
+            f"coupling matches one run to multiple materials: raw_path {path} shared by {', '.join(sorted(ids))}"
+        )
 
     # Runs collected that belong to no CSV material (suffix variants included).
     csv_materials = set(materials_to_amdb)
@@ -2417,12 +2386,26 @@ def _build_coupling(
     if orphans:
         logger.info("%d ingested runs have no CSV material row", orphans)
 
-    ordered = sorted(rows.values(), key=lambda row: (row[AMDB_ID_COLUMN], row["run_material"]))
-    _write_coupling(coupling_path, ordered)
-    counts: dict[str, int] = {}
-    for row in ordered:
-        counts[row["status"]] = counts.get(row["status"], 0) + 1
-    logger.info("Wrote %s coupling rows: %s", coupling_path, counts)
+    # Resolve each match against the ledger's binding matrix (see _resolve_run_binding).
+    coupled: dict[str, _RunObservation] = {}
+    run_owners = _run_owners(ledger)
+    for amdb_id, observation in sorted(matched.items()):
+        run_id = _resolve_run_binding(ledger, amdb_id, observation.item.run.source_id, run_owners)
+        if run_id is not None:
+            coupled[amdb_id] = observation
+
+    # A material with an existing entity->run binding but no matching observation
+    # this build: the bound run is absent from the tree (identical in spirit to the
+    # old CSV world's "row without run" case). Warn and leave it uncoupled for this
+    # build; the ledger is never mutated for an absent run.
+    for amdb_id in sorted(source_materials):
+        if amdb_id in coupled or amdb_id in ambiguous:
+            continue
+        if ledger.lookup(_run_key(amdb_id)) is not None:
+            logger.warning("Coupled run for %s not collected in this build (bound run absent from the tree)", amdb_id)
+
+    counts = {status: count for status, count in (("auto", len(coupled)), ("ambiguous", len(ambiguous))) if count}
+    logger.info("Coupled %d materials to runs (%d ambiguous)", len(coupled), len(ambiguous))
     return coupled, counts
 
 
@@ -2805,7 +2788,7 @@ def _save_reconstructed_runs(
     not post-save mutation, so it is done with an ordinary :meth:`SqlStore.save` after
     the bulk context finalizes (both are refused inside bulk ingest, and the runs need
     the outputs' minted ids the bulk pass assigned). One run backs one material
-    (enforced in :func:`_build_coupling`), so exactly one replacement run is saved per
+    (enforced in :func:`_couple_runs`), so exactly one replacement run is saved per
     coupled, non-degraded material.
 
     :return: The ``(runs, product links)`` saved counts.
@@ -2830,6 +2813,10 @@ def _save_reconstructed_runs(
         calculation = calculation_outputs.get(result_id)
         record_ids = {} if calculation is None else {"total_energy": cast(str, calculation.id)}
         edges = _rewrite_edges(store, run.outputs, structure_id=structure_id, record_ids=record_ids, memo=memo)
+        # _couple_runs already bound every coupled material's run in the ledger
+        # (_resolve_run_binding); look it up rather than re-deriving it here.
+        run_ledger_id = ledger.lookup(_run_key(result_id))
+        assert run_ledger_id is not None  # guaranteed present for a coupled material
         store.save(
             Run(
                 workflow_declaration_uri=run.workflow_declaration_uri,
@@ -2837,7 +2824,7 @@ def _save_reconstructed_runs(
                 outputs=edges,
                 source_id=run.source_id,
                 last_modified=run.last_modified,
-                id=ledger.assign(_run_key(result_id), "runs"),
+                id=run_ledger_id,
             )
         )
         runs += 1
@@ -2881,11 +2868,11 @@ def build_store(
     target: str | os.PathLike[str] | None = None,
     *,
     data_dir: str | os.PathLike[str] | None = None,
-    tables_dir: str | os.PathLike[str] | None = None,
+    ledger_path: str | os.PathLike[str] | None = None,
     details_dir: str | os.PathLike[str] | None = None,
     runs_dir: str | os.PathLike[str] | None = None,
     legacy: bool = False,
-    refresh_coupling: bool = False,
+    initialize_ledger: bool = False,
     timings: MutableMapping[str, float] | None = None,
 ) -> Path:
     """Build a fresh store next to ``target`` and atomically replace it.
@@ -2894,15 +2881,24 @@ def build_store(
     disposed before :func:`os.replace` commits the completed temporary file.
 
     A non-legacy build allocates every result, structure, reference, run, record and
-    file id from the committed sealed id ledger (``tables/amdb_ids.sqlite``), so the
-    ids are stable across rebuilds; the ledger is opened FIRST (before source loading
-    and coupling) and the ``results`` family that mints the served material ids
+    file id from the sealed id ledger (see :func:`resolve_ledger_path`), so the ids
+    are stable across rebuilds; the ledger is opened FIRST (before source loading and
+    coupling) and the ``results`` family that mints the served material ids
     ``anyt.am-1-N`` is seeded once, in screening-row order, from the rows' magndata
-    keys. The screening CSVs read from *data_dir* (mounted, untracked); the ledger and
-    coupling document read/write under *tables_dir* (committed curation). The ledger is
-    signed with the operator identity as an audit record (``IdLedger.open`` logs who
-    signed each reopened ledger and refuses a tampered one; git history is the tamper
-    witness). The build refuses to run without a signing seed.
+    keys. The screening CSVs read from *data_dir* (mounted, untracked); the ledger
+    lives on the untracked data volume too (run<->material coupling is expressed as
+    ledger bindings, not a coupling document -- see the run-coupling-ledger-bindings
+    design). The ledger is signed with the operator identity as an audit record
+    (``IdLedger.open`` logs who signed each reopened ledger and refuses a tampered
+    one; git history is the tamper witness). The build refuses to run without a
+    signing seed.
+
+    A missing ledger file is refused (:func:`_open_ledger`), not silently created,
+    UNLESS *initialize_ledger* is set: that is the once-per-deployment ceremony (akin
+    to the results-family seeding) for a genuine first-time deployment. Every other
+    build -- in particular one that only *thinks* the ledger is missing because of a
+    wrong path, an un-restored backup, or a fresh checkout that never got the
+    untracked data volume -- must never silently re-mint every public id.
 
     When ``timings`` is supplied it is populated with the wall-clock seconds of
     the ``load`` (source parsing), ``write`` (the bulk-ingest context) and
@@ -2911,7 +2907,7 @@ def build_store(
     total_started = time.perf_counter()
     resolved_target = resolve_store_path(target)
     source_dir = resolve_data_dir(data_dir)
-    resolved_tables_dir = None if legacy else resolve_tables_dir(tables_dir)
+    resolved_ledger_path = None if legacy else resolve_ledger_path(ledger_path)
     resolved_details_dir = resolve_details_dir(details_dir)
     resolved_runs_dir = resolve_runs_dir(runs_dir)
     load_started = time.perf_counter()
@@ -2931,8 +2927,7 @@ def build_store(
         # raw-storage build has no id-managed families and never opens the ledger.
         result_ids: dict[str, str] | None = None
         if not legacy:
-            assert resolved_tables_dir is not None  # non-legacy always resolves the tables dir
-            ledger_path = resolved_tables_dir / LEDGER_FILENAME
+            assert resolved_ledger_path is not None  # non-legacy always resolves the ledger path
             # Snapshot the ledger as it stands BEFORE the build touches it. The one-time
             # results seeding pre-validates the whole screening table before its first
             # assign, but opening the ledger already extends its base map (the added
@@ -2941,17 +2936,17 @@ def build_store(
             # seeding is all-or-nothing and a failed seed leaves the committed file
             # byte-identical. A failure AFTER a successful seed follows the normal
             # append-only persistence (the complete seed is durable).
-            ledger_before = ledger_path.read_bytes() if ledger_path.exists() else None
-            ledger = _open_ledger(resolved_tables_dir)
+            ledger_before = resolved_ledger_path.read_bytes() if resolved_ledger_path.exists() else None
+            ledger = _open_ledger(resolved_ledger_path, create_if_missing=initialize_ledger)
             try:
                 result_ids = _result_ids(ledger, _load_csv_rows(source_dir / SCREENING_RESULTS_FILENAME, delimiter=";"))
             except BaseException:
                 ledger.close()  # releases the lock; may reseal the added base map
                 ledger = None
                 if ledger_before is None:
-                    ledger_path.unlink(missing_ok=True)
+                    resolved_ledger_path.unlink(missing_ok=True)
                 else:
-                    ledger_path.write_bytes(ledger_before)
+                    resolved_ledger_path.write_bytes(ledger_before)
                 raise
             from httk.workflow.compat.v1 import collect_finished_tree
 
@@ -2965,14 +2960,13 @@ def build_store(
             else:
                 logger.warning("No v1 runs directory at %s; building the partial tabular store", resolved_runs_dir)
             observations = _run_observations(items)
-            coupled, coupling_counts = _build_coupling(
+            coupled, coupling_counts = _couple_runs(
                 source_dir,
                 observations,
                 details_dir=resolved_details_dir,
-                tables_dir=resolved_tables_dir,
+                ledger=ledger,
                 runs_root=resolved_runs_dir,
                 collected=len(items),
-                refresh_coupling=refresh_coupling,
                 result_ids=result_ids,
             )
         materials = _load_source_materials(
@@ -3096,7 +3090,7 @@ def build_store(
             if not legacy:
                 # Only coupled runs back the 180 served materials; saving the whole
                 # 645-task tree would flood the OPTIMADE run/record/file families.
-                # One run backs one material (enforced in _build_coupling), so the
+                # One run backs one material (enforced in _couple_runs), so the
                 # coupled items are already distinct. Only the outputs are bulk-saved
                 # here (each stamped with its explicit ledger id, keyed by amdb id and
                 # output role/locator); the runs and product links are rebuilt with

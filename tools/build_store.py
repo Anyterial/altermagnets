@@ -11,9 +11,9 @@ if str(FUNCTIONS) not in sys.path:
 
 from material_store import (
     build_store,
+    default_ledger_path,
     default_runs_dir,
     default_store_path,
-    default_tables_dir,
     resolve_data_dir,
     resolve_details_dir,
 )
@@ -34,13 +34,10 @@ def _arguments() -> argparse.Namespace:
         help="directory containing the three mounted source CSVs (default: ALTERMAGNETS_DATA_DIR, then data/tables)",
     )
     parser.add_argument(
-        "--tables-dir",
+        "--ledger-path",
         type=Path,
         default=None,
-        help=(
-            "committed curation directory holding the sealed id ledger and coupling document "
-            f"(default: ALTERMAGNETS_TABLES_DIR, then {default_tables_dir()})"
-        ),
+        help=(f"the sealed id ledger file (default: ALTERMAGNETS_LEDGER_PATH, then {default_ledger_path()})"),
     )
     parser.add_argument(
         "--details-dir",
@@ -60,11 +57,12 @@ def _arguments() -> argparse.Namespace:
         help="preserve the old details-based structure build and skip v1 ingestion",
     )
     parser.add_argument(
-        "--refresh-coupling",
+        "--initialize-ledger",
         action="store_true",
         help=(
-            "rewrite the derived content-ids in the coupling document from this build "
-            "instead of raising on a stale pin, preserving AMDBId, raw_path and status"
+            "create a fresh ledger if --ledger-path is missing. A first-time-deployment ceremony ONLY: "
+            "a missing ledger otherwise means a wrong path or an un-restored backup, so the build refuses "
+            "rather than silently re-minting every public id"
         ),
     )
     parser.add_argument(
@@ -87,11 +85,11 @@ def main() -> int:
     target = build_store(
         arguments.target,
         data_dir=arguments.data_dir,
-        tables_dir=arguments.tables_dir,
+        ledger_path=arguments.ledger_path,
         details_dir=arguments.details_dir,
         runs_dir=arguments.runs_dir,
         legacy=arguments.legacy,
-        refresh_coupling=arguments.refresh_coupling,
+        initialize_ledger=arguments.initialize_ledger,
         timings=timings,
     )
     print(

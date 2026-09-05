@@ -10,10 +10,10 @@ serve_combined:
 	python3 ./serve_combined.py
 
 build_store:
-	$(PYTHON) ./tools/build_store.py
+	$(call MEMGUARD,24) $(PYTHON) ./tools/build_store.py
 
 build_store_legacy:
-	$(PYTHON) ./tools/build_store.py --legacy
+	$(call MEMGUARD,24) $(PYTHON) ./tools/build_store.py --legacy
 
 serve_optimade:
 	python3 ./serve_optimade.py --port 8081
@@ -65,16 +65,18 @@ typecheck_pyright:
 typecheck:
 	$(PYTHON) -m mypy
 
+MEMGUARD = $(PYTHON) -m httk.core.memguard --max-rss-gb $(or $(HTTK_TEST_MAX_RSS_GB),$(1)) --
+
 test:
-	$(PYTHON) -m pytest
+	$(call MEMGUARD,12) $(PYTHON) -m pytest
 
 test-browser:
-	$(PYTHON) -m pytest -q -m browser --override-ini addopts=
+	$(call MEMGUARD,12) $(PYTHON) -m pytest -q -m browser --override-ini addopts=
 
 test-js:
 	node --test tests-js/
 
 test_fastfail:
-	$(PYTHON) -m pytest -q -x
+	$(call MEMGUARD,12) $(PYTHON) -m pytest -q -x
 
 ci: format-check lint typecheck test-js test_fastfail

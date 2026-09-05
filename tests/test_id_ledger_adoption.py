@@ -160,9 +160,24 @@ def _result(material_id: str, structure: object | None, *, dois: tuple[str, ...]
 def test_double_build_keeps_every_served_id_identical(tmp_path: Path) -> None:
     """THE HEADLINE: a from-scratch rebuild consuming the ledger serves identical ids everywhere."""
     tables, details, runs = _fixture_tree(tmp_path)
-    first = build_store(tmp_path / "s1.duckdb", data_dir=tables, tables_dir=tables, details_dir=details, runs_dir=runs)
-    ledger_after_first = (tables / material_store.LEDGER_FILENAME).read_bytes()
-    second = build_store(tmp_path / "s2.duckdb", data_dir=tables, tables_dir=tables, details_dir=details, runs_dir=runs)
+    ledger_path = tables / material_store.LEDGER_FILENAME
+    first = build_store(
+        tmp_path / "s1.duckdb",
+        data_dir=tables,
+        ledger_path=ledger_path,
+        details_dir=details,
+        runs_dir=runs,
+        initialize_ledger=True,
+    )
+    ledger_after_first = ledger_path.read_bytes()
+    second = build_store(
+        tmp_path / "s2.duckdb",
+        data_dir=tables,
+        ledger_path=ledger_path,
+        details_dir=details,
+        runs_dir=runs,
+        initialize_ledger=True,
+    )
 
     ids_first = _served_ids(first)
     ids_second = _served_ids(second)
@@ -172,6 +187,17 @@ def test_double_build_keeps_every_served_id_identical(tmp_path: Path) -> None:
         assert ids_first[family], family
     # An idempotent rebuild reseals nothing: the committed ledger is byte-identical.
     assert (tables / material_store.LEDGER_FILENAME).read_bytes() == ledger_after_first
+
+
+def test_missing_ledger_without_initialize_flag_raises_and_creates_nothing(tmp_path: Path) -> None:
+    """A missing ledger is never auto-created: that would silently re-mint every public id."""
+    tables, details, runs = _fixture_tree(tmp_path)
+    ledger_path = tables / material_store.LEDGER_FILENAME
+    with pytest.raises(RuntimeError, match="never auto-created"):
+        build_store(
+            tmp_path / "store.duckdb", data_dir=tables, ledger_path=ledger_path, details_dir=details, runs_dir=runs
+        )
+    assert not ledger_path.exists()
 
 
 def _calculation_outputs(store_path: Path) -> list[tuple[str, float]]:
@@ -186,18 +212,29 @@ def _calculation_outputs(store_path: Path) -> list[tuple[str, float]]:
 def test_record_value_change_keeps_the_same_id(tmp_path: Path) -> None:
     """Changing a record's VALUE between builds keeps its id: content becomes a revision."""
     tables, details, runs = _fixture_tree(tmp_path)
-    first = build_store(tmp_path / "s1.duckdb", data_dir=tables, tables_dir=tables, details_dir=details, runs_dir=runs)
+    ledger_path = tables / material_store.LEDGER_FILENAME
+    first = build_store(
+        tmp_path / "s1.duckdb",
+        data_dir=tables,
+        ledger_path=ledger_path,
+        details_dir=details,
+        runs_dir=runs,
+        initialize_ledger=True,
+    )
     before = _calculation_outputs(first)
     assert before and before[0][1] == -1.0
 
+    # Changing the run's energy no longer needs a refresh mode: under ledger bindings
+    # the run keeps its id (source_id is unchanged), so a changed OUTCAR is an ordinary
+    # revision of the CalculationOutputRecord it feeds, not a stale-pin hard error.
     _write_scf_run(runs, "CrSb", energy=-2.5)  # same structure (CONTCAR), different total energy
     second = build_store(
         tmp_path / "s2.duckdb",
         data_dir=tables,
-        tables_dir=tables,
+        ledger_path=ledger_path,
         details_dir=details,
         runs_dir=runs,
-        refresh_coupling=True,
+        initialize_ledger=True,
     )
     after = _calculation_outputs(second)
     assert after and after[0][1] == -2.5
@@ -210,9 +247,17 @@ def test_typed_records_keep_their_ledger_keys_across_a_rebuild(tmp_path: Path) -
     screening record keeps its own ``amdb:<id>:screening_record`` id across a rebuild.
     """
     tables, details, runs = _fixture_tree(tmp_path)
-    first = build_store(tmp_path / "s1.duckdb", data_dir=tables, tables_dir=tables, details_dir=details, runs_dir=runs)
+    ledger_path = tables / material_store.LEDGER_FILENAME
+    first = build_store(
+        tmp_path / "s1.duckdb",
+        data_dir=tables,
+        ledger_path=ledger_path,
+        details_dir=details,
+        runs_dir=runs,
+        initialize_ledger=True,
+    )
 
-    with _open_ledger(tables) as ledger:
+    with _open_ledger(ledger_path) as ledger:
         calculation_id = ledger.lookup("amdb:anyt.am-1-1:total_energy")
         screening_ids = {
             material_id: ledger.lookup(f"amdb:{material_id}:screening_record")
@@ -233,13 +278,20 @@ def test_typed_records_keep_their_ledger_keys_across_a_rebuild(tmp_path: Path) -
     for entry_id in (calculation_id, *screening_ids.values()):
         assert entry_id.startswith("anyt.am.records-1-")
 
-    second = build_store(tmp_path / "s2.duckdb", data_dir=tables, tables_dir=tables, details_dir=details, runs_dir=runs)
+    second = build_store(
+        tmp_path / "s2.duckdb",
+        data_dir=tables,
+        ledger_path=ledger_path,
+        details_dir=details,
+        runs_dir=runs,
+        initialize_ledger=True,
+    )
     assert _served_ids(first)["records"] == _served_ids(second)["records"]
 
 
 def test_shared_structure_records_one_id_and_an_alias(tmp_path: Path) -> None:
     """Two materials sharing one structure yield one assigned id and an alias of the smaller key."""
-    with _open_ledger(tmp_path) as ledger:
+    with _open_ledger(tmp_path / material_store.LEDGER_FILENAME, create_if_missing=True) as ledger:
         shared = _structure(1.0)
         id_map, mains = _structure_mains([_result("anyt.am-1-2", shared), _result("anyt.am-1-5", shared)], ledger)
         assert id_map["anyt.am-1-2"] == id_map["anyt.am-1-5"]  # one shared structure id
@@ -282,12 +334,12 @@ def test_shared_structure_split_supersedes_the_departed_member(tmp_path: Path) -
     unless the reconcile escalates to ``supersede=True``.
     """
     shared = _structure(1.0)
-    with _open_ledger(tmp_path) as ledger:
+    with _open_ledger(tmp_path / material_store.LEDGER_FILENAME, create_if_missing=True) as ledger:
         first, _mains = _structure_mains([_result("anyt.am-1-2", shared), _result("anyt.am-1-5", shared)], ledger)
     owner_id = first["anyt.am-1-2"]
     assert first["anyt.am-1-2"] == first["anyt.am-1-5"] == owner_id  # one shared id, 1-2 the smaller key owns
 
-    with _open_ledger(tmp_path) as ledger:
+    with _open_ledger(tmp_path / material_store.LEDGER_FILENAME, create_if_missing=True) as ledger:
         second, _mains = _structure_mains(
             [_result("anyt.am-1-2", shared), _result("anyt.am-1-5", _structure(2.0))], ledger
         )
@@ -312,7 +364,7 @@ def test_shared_structure_merge_supersedes_the_absorbed_assignment(tmp_path: Pat
     Fails without the wiring: aliasing the absorbed member's assigned key raises
     unless the reconcile escalates to ``supersede=True``.
     """
-    with _open_ledger(tmp_path) as ledger:
+    with _open_ledger(tmp_path / material_store.LEDGER_FILENAME, create_if_missing=True) as ledger:
         first, _mains = _structure_mains(
             [_result("anyt.am-1-2", _structure(1.0)), _result("anyt.am-1-7", _structure(3.0))], ledger
         )
@@ -320,7 +372,7 @@ def test_shared_structure_merge_supersedes_the_absorbed_assignment(tmp_path: Pat
     absorbed_id = first["anyt.am-1-7"]
     assert owner_id != absorbed_id  # two distinct structures, each its own assignment
 
-    with _open_ledger(tmp_path) as ledger:
+    with _open_ledger(tmp_path / material_store.LEDGER_FILENAME, create_if_missing=True) as ledger:
         merged, mains = _structure_mains(
             [_result("anyt.am-1-2", _structure(1.0)), _result("anyt.am-1-7", _structure(1.0))], ledger
         )
@@ -336,7 +388,7 @@ def test_shared_structure_merge_supersedes_the_absorbed_assignment(tmp_path: Pat
 
 def test_doi_case_variants_collapse_to_one_reference_id(tmp_path: Path) -> None:
     """Two DOIs differing only in case map to one reference id (keys are lower-cased)."""
-    with _open_ledger(tmp_path) as ledger:
+    with _open_ledger(tmp_path / material_store.LEDGER_FILENAME, create_if_missing=True) as ledger:
         mapping = _reference_ids_by_doi(
             [_result("anyt.am-1-1", None, dois=("10.1000/AbC",)), _result("anyt.am-1-2", None, dois=("10.1000/abc",))],
             ledger,
@@ -352,7 +404,7 @@ def test_open_rejects_a_bases_map_that_drifts_from_the_committed_file(tmp_path: 
 
     Defends the code-side LEDGER_BASES pin against divergence from the stored subject.
     """
-    with _open_ledger(tmp_path):
+    with _open_ledger(tmp_path / material_store.LEDGER_FILENAME, create_if_missing=True):
         pass  # create the committed-format ledger
     keys = resolve_seal_keys(material_store.LEDGER_SIGNER_REFS, project_root=tmp_path).keys
     drifted = {**material_store.LEDGER_BASES, "structures": "anyt.am.drifted"}
@@ -377,9 +429,10 @@ def test_row_without_amdb_id_is_an_error(tmp_path: Path) -> None:
         build_store(
             tmp_path / "store.duckdb",
             data_dir=tables,
-            tables_dir=tables,
+            ledger_path=tables / material_store.LEDGER_FILENAME,
             details_dir=tmp_path / "details",
             runs_dir=tmp_path / "no-runs",
+            initialize_ledger=True,
         )
 
 
@@ -404,16 +457,30 @@ def test_reopen_logs_the_signer_as_an_audit_record_and_refuses_a_tampered_ledger
     """
 
     tables, details, runs = _fixture_tree(tmp_path)
-    build_store(tmp_path / "s1.duckdb", data_dir=tables, tables_dir=tables, details_dir=details, runs_dir=runs)
+    ledger_path = tables / material_store.LEDGER_FILENAME
+    build_store(
+        tmp_path / "s1.duckdb",
+        data_dir=tables,
+        ledger_path=ledger_path,
+        details_dir=details,
+        runs_dir=runs,
+        initialize_ledger=True,
+    )
     # Reopening logs the actual signer's fingerprint as the manual-audit surface.
     with caplog.at_level(logging.INFO, logger="httk.store.id_ledger"):
-        build_store(tmp_path / "s2.duckdb", data_dir=tables, tables_dir=tables, details_dir=details, runs_dir=runs)
+        build_store(
+            tmp_path / "s2.duckdb",
+            data_dir=tables,
+            ledger_path=ledger_path,
+            details_dir=details,
+            runs_dir=runs,
+            initialize_ledger=True,
+        )
     message = next(record.getMessage() for record in caplog.records if "audit record" in record.getMessage())
     assert _local_signer_fingerprint(tables) in message
 
     # Tamper: rewrite one stored record id. The reconstructed segment body no longer
     # matches its signed digest, so the reopen refuses (integrity self-check, always on).
-    ledger_path = tables / material_store.LEDGER_FILENAME
     connection = sqlite3.connect(ledger_path)
     try:
         connection.execute(
@@ -424,4 +491,11 @@ def test_reopen_logs_the_signer_as_an_audit_record_and_refuses_a_tampered_ledger
     finally:
         connection.close()
     with pytest.raises(IdLedgerError, match="signature does not verify|restore"):
-        build_store(tmp_path / "s3.duckdb", data_dir=tables, tables_dir=tables, details_dir=details, runs_dir=runs)
+        build_store(
+            tmp_path / "s3.duckdb",
+            data_dir=tables,
+            ledger_path=ledger_path,
+            details_dir=details,
+            runs_dir=runs,
+            initialize_ledger=True,
+        )

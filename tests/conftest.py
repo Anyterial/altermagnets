@@ -29,13 +29,13 @@ def _isolated_httk_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     initialize_identity("Altermagnets tests", "altermagnets-tests@example.test")
 
 # Structural guard: no store-building test may fall through to the production
-# tables/ ledger. resolve_tables_dir raises if a non-legacy build reaches it without
-# an explicit tables_dir (or ALTERMAGNETS_TABLES_DIR), so every such test must pass a
-# tmp fixture dir. Set here because conftest is imported only under pytest. Also drop
-# any exported ALTERMAGNETS_TABLES_DIR so it cannot silently bypass the guard (that env
-# var is consulted before the guard in resolve_tables_dir).
-os.environ.pop(material_store.TABLES_PATH_ENVIRONMENT, None)
-material_store._GUARD_DEFAULT_TABLES_DIR = True
+# data/amdb_ids.sqlite ledger. resolve_ledger_path raises if a non-legacy build
+# reaches it without an explicit ledger_path (or ALTERMAGNETS_LEDGER_PATH), so every
+# such test must pass a tmp fixture path. Set here because conftest is imported only
+# under pytest. Also drop any exported ALTERMAGNETS_LEDGER_PATH so it cannot silently
+# bypass the guard (that env var is consulted before the guard in resolve_ledger_path).
+os.environ.pop(material_store.LEDGER_PATH_ENVIRONMENT, None)
+material_store._GUARD_DEFAULT_LEDGER_PATH = True
 
 _SYMMETRY_FIELDS = (
     "Filename",

@@ -20,6 +20,11 @@ from serve import DEFAULT_PUBLIC_BASE_URL, build_providers, build_service_app, r
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Serve the altermagnets dataset over OPTIMADE.")
     parser.add_argument("--validate", action="store_true", help="validate every record and exit")
+    parser.add_argument(
+        "--require-prebuilt",
+        action="store_true",
+        help="refuse source-table memory fallback when the prebuilt store is unavailable",
+    )
     parser.add_argument("--host", default="127.0.0.1", help="host to bind when serving")
     parser.add_argument("--port", type=int, default=8081, help="port to bind when serving")
     parser.add_argument(
@@ -45,10 +50,13 @@ def main(argv: list[str] | None = None) -> int:
         report.configure_reporting(level="debug" if args.verbose > 1 else "info")
 
     if args.validate:
+        if args.require_prebuilt:
+            parser.error("--require-prebuilt cannot be used with --validate's provider assembly")
         return run_validation(build_providers(public_base_url=args.public_base_url))
     app = build_service_app(
         public_base_url=args.public_base_url,
         cors_origins=args.cors_origin,
+        require_prebuilt=args.require_prebuilt,
     )
     run_dev_server(app=app, host=args.host, port=args.port)
     return 0

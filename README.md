@@ -58,6 +58,14 @@ use a different runtime store path; the same variable (or
 directory. `ALTERMAGNETS_DETAILS_DIR` (or the builder's `--details-dir`)
 selects the generated detail-asset tree.
 
+For a deployment that must never serve the source-table fallback, pass
+`--require-prebuilt` to `serve_combined.py` or `serve_optimade.py`. Startup then
+fails with a rebuild instruction when the DuckDB store is missing, corrupt, or
+stale. `GET /health` on the AMDB service reports `persistent`, `memory`,
+`providers`, or `caller-provided store`; memory mode lists the unavailable
+`_httk_runs`, `_httk_records`, and `files` families. API factories borrow any
+explicit `store` or `providers` supplied by their caller and do not close them.
+
 The mounted source tables under `data/tables/` are intentionally untracked; the
 two curation files — the sealed id ledger `tables/amdb_ids.sqlite` and the coupling
 document `tables/amdb_run_content_ids.csv` — are git-tracked under the repo's

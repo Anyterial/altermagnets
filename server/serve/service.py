@@ -13,7 +13,7 @@ from httk.serve.optimade import OptimadeConfig, adapter_from_providers
 from httk.serve.optimade import create_asgi_app as create_optimade_asgi_app
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import FileResponse, Response
+from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 
 from .adapter import SORTABLE_PROPERTIES, AltermagnetStoreAdapter
@@ -84,6 +84,19 @@ def _service_config(
     )
 
 
+def _dispose_owned_database(database: Any, operation_error: BaseException | None = None) -> None:
+    """Dispose an app-owned database without masking a construction failure."""
+
+    if database is None:
+        return
+    try:
+        database.dispose()
+    except BaseException as cleanup_error:
+        if operation_error is None:
+            raise
+        operation_error.add_note(f"Additional material-store cleanup failure: {cleanup_error!r}")
+
+
 def build_service_app(
     *,
     public_base_url: str,
@@ -98,20 +111,28 @@ def build_service_app(
     root_link_name: str = AMDB_NAME,
     root_link_description: str = AMDB_DESCRIPTION,
     root_link_homepage: str = AMDB_HOMEPAGE,
+    require_prebuilt: bool = False,
 ) -> Starlette:
     """Build the shared OPTIMADE-plus-figures ASGI application.
 
     The service advertises one configured root link. In standalone use it points
     to itself as ``amdb``; a composed deployment can point it to its parent
-    index by supplying the ``root_link_*`` parent metadata.
+    index by supplying the ``root_link_*`` parent metadata. Caller-supplied
+    providers and stores are borrowed and never closed; ``require_prebuilt`` is
+    only valid when this factory opens the store itself.
     """
     if providers is not None and store is not None:
         raise ValueError("supply providers or store, not both")
+    if require_prebuilt and (providers is not None or store is not None):
+        raise ValueError("require_prebuilt needs the service to open its own prebuilt store")
     owned_database = None
+    store_mode = "providers" if providers is not None else "caller-provided store" if store is not None else None
+    material_count = None
     if providers is None and store is None:
         opened = material_store.open_material_store(
             data_dir=material_store.resolve_data_dir(),
             details_dir=material_store.resolve_details_dir(),
+            require_prebuilt=require_prebuilt,
         )
         if opened is None:
             raise RuntimeError("no altermagnets material store is available")
@@ -122,9 +143,15 @@ def build_service_app(
             )
         store = opened.store
         owned_database = opened.database
-    index = _figure_index(dataset) if dataset is not None else None
-    resolved_details_root = (details_root or material_store.resolve_details_dir()).resolve()
-    resolved_runs_root = (runs_root or material_store.resolve_runs_dir()).resolve()
+        store_mode = opened.mode
+        material_count = opened.material_count
+    try:
+        index = _figure_index(dataset) if dataset is not None else None
+        resolved_details_root = (details_root or material_store.resolve_details_dir()).resolve()
+        resolved_runs_root = (runs_root or material_store.resolve_runs_dir()).resolve()
+    except BaseException as error:
+        _dispose_owned_database(owned_database, error)
+        raise
     dark_cache: OrderedDict[tuple[str, str], bytes] = OrderedDict()
     dark_cache_bytes = 0
 
@@ -224,24 +251,37 @@ def build_service_app(
             },
         )
 
-    adapter = (
-        adapter_from_providers(providers, sortable=SORTABLE_PROPERTIES)
-        if providers is not None
-        else AltermagnetStoreAdapter(store, public_base_url)
-    )
-    optimade_app = create_optimade_asgi_app(
-        adapter,
-        _service_config(
-            public_base_url=public_base_url,
-            root_link_target=root_link_target,
-            root_link_id=root_link_id,
-            root_link_name=root_link_name,
-            root_link_description=root_link_description,
-            root_link_homepage=root_link_homepage,
-            cors_origins=cors_origins,
-        ),
-        baseurl=None,
-    )
+    try:
+        adapter = (
+            adapter_from_providers(providers, sortable=SORTABLE_PROPERTIES)
+            if providers is not None
+            else AltermagnetStoreAdapter(store, public_base_url)
+        )
+        optimade_app = create_optimade_asgi_app(
+            adapter,
+            _service_config(
+                public_base_url=public_base_url,
+                root_link_target=root_link_target,
+                root_link_id=root_link_id,
+                root_link_name=root_link_name,
+                root_link_description=root_link_description,
+                root_link_homepage=root_link_homepage,
+                cors_origins=cors_origins,
+            ),
+            baseurl=None,
+        )
+    except BaseException as error:
+        _dispose_owned_database(owned_database, error)
+        raise
+
+    health: dict[str, Any] = {"mode": store_mode}
+    if material_count is not None:
+        health["material_count"] = material_count
+    if store_mode == "memory":
+        health["degraded_families"] = ["_httk_runs", "_httk_records", "files"]
+
+    async def health_response(_: Request) -> JSONResponse:
+        return JSONResponse(health)
 
     @asynccontextmanager
     async def lifespan(_app: Starlette):
@@ -249,16 +289,23 @@ def build_service_app(
             yield
         finally:
             if owned_database is not None:
-                owned_database.dispose()
+                _dispose_owned_database(owned_database)
 
-    app = Starlette(
-        routes=[
-            Route("/extensions/files/entry/{id}", file_entry_response, methods=["GET", "HEAD"]),
-            Route("/extensions/files/{material_id}/{filename}", figure_response, methods=["GET", "HEAD"]),
-            Mount("", optimade_app),
-        ],
-        lifespan=lifespan,
-    )
+    try:
+        app = Starlette(
+            routes=[
+                Route("/health", health_response, methods=["GET"]),
+                Route("/extensions/files/entry/{id}", file_entry_response, methods=["GET", "HEAD"]),
+                Route("/extensions/files/{material_id}/{filename}", figure_response, methods=["GET", "HEAD"]),
+                Mount("", optimade_app),
+            ],
+            lifespan=lifespan,
+        )
+    except BaseException as error:
+        _dispose_owned_database(owned_database, error)
+        raise
     app.state.entry_store = store
+    app.state.entry_database = owned_database
     app.state.owns_entry_store = owned_database is not None
+    app.state.material_store_mode = store_mode
     return app

@@ -17,6 +17,17 @@ for _path in (FUNCTIONS, SERVER):
 import material_store
 from material_store import build_store
 
+
+@pytest.fixture(autouse=True)
+def _isolated_httk_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep builds and signing tests out of an operator's real httk home."""
+
+    monkeypatch.setenv("HTTK_CONFIG_HOME", str(tmp_path / "httk-config"))
+    monkeypatch.setenv("HTTK_DATA_HOME", str(tmp_path / "httk-data"))
+    from httk.core.identity import initialize_identity
+
+    initialize_identity("Altermagnets tests", "altermagnets-tests@example.test")
+
 # Structural guard: no store-building test may fall through to the production
 # tables/ ledger. resolve_tables_dir raises if a non-legacy build reaches it without
 # an explicit tables_dir (or ALTERMAGNETS_TABLES_DIR), so every such test must pass a

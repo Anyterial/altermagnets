@@ -21,6 +21,11 @@ def main(argv: list[str] | None = None) -> int:
         "--public-base-url",
         help="public HTTP(S) origin; OPTIMADE services are appended at /optimade/index and /optimade/amdb",
     )
+    parser.add_argument(
+        "--require-prebuilt",
+        action="store_true",
+        help="refuse source-table memory fallback when the AMDB prebuilt store is unavailable",
+    )
     args = parser.parse_args(argv)
     if args.public_base_url is None:
         if args.host in {"0.0.0.0", "::"}:
@@ -28,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
         public_host = f"[{args.host}]" if ":" in args.host else args.host
         args.public_base_url = f"http://{public_host}:{args.port}"
     run_dev_server(
-        app=create_combined_app(public_base_url=args.public_base_url),
+        app=create_combined_app(public_base_url=args.public_base_url, require_prebuilt=args.require_prebuilt),
         host=args.host,
         port=args.port,
     )

@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import material_store
+import serve_optimade
 from conftest import write_detail_assets, write_source_tables
 from serve import adapter, build_providers, build_service_app, run_validation, service
 from serve import dataset as dataset_module
@@ -502,6 +503,7 @@ def test_store_native_service_is_live_and_does_not_own_caller_store(tmp_path: Pa
     assert app.state.owns_entry_store is False
 
     with TestClient(app, base_url="http://testserver") as live:
+        assert live.get("/health").json() == {"mode": "caller-provided store"}
         info = live.get(f"/v1/info/{RESULT}")
         assert info.status_code == 200
         assert "_httk_custom_public_id" not in info.json()["data"]["properties"]
@@ -533,6 +535,86 @@ def test_store_native_service_is_live_and_does_not_own_caller_store(tmp_path: Pa
     # The service did not close a store supplied by its caller.
     assert opened.store.searcher().variable(material_store.AltermagnetScreeningResult) is not None
     opened.database.dispose()
+
+
+def test_owned_memory_health_and_lifespan_dispose(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = write_source_tables(tmp_path / "tables")
+    opened = material_store.open_in_memory_store(source, details_dir=tmp_path / "details")
+    assert opened is not None
+    disposed: list[str] = []
+    original_dispose = opened.database.dispose
+
+    def dispose() -> None:
+        disposed.append("disposed")
+        original_dispose()
+
+    monkeypatch.setattr(opened.database, "dispose", dispose)
+    monkeypatch.setattr(service.material_store, "open_material_store", lambda **_: opened)
+    app = build_service_app(
+        public_base_url="https://api.example.test/optimade/amdb",
+        details_root=tmp_path / "details",
+        runs_root=tmp_path / "runs",
+    )
+    with TestClient(app) as client:
+        assert client.get("/health").json() == {
+            "mode": "memory",
+            "material_count": 3,
+            "degraded_families": ["_httk_runs", "_httk_records", "files"],
+        }
+    assert disposed == ["disposed"]
+
+
+def test_owned_store_is_disposed_when_service_construction_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = write_source_tables(tmp_path / "tables")
+    opened = material_store.open_in_memory_store(source, details_dir=tmp_path / "details")
+    assert opened is not None
+    disposed: list[str] = []
+    original_dispose = opened.database.dispose
+
+    def dispose() -> None:
+        disposed.append("disposed")
+        original_dispose()
+
+    monkeypatch.setattr(opened.database, "dispose", dispose)
+    monkeypatch.setattr(service.material_store, "open_material_store", lambda **_: opened)
+    monkeypatch.setattr(
+        service,
+        "create_optimade_asgi_app",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    with pytest.raises(RuntimeError, match="boom"):
+        build_service_app(
+            public_base_url="https://api.example.test/optimade/amdb",
+            details_root=tmp_path / "details",
+            runs_root=tmp_path / "runs",
+        )
+    assert disposed == ["disposed"]
+
+
+def test_require_prebuilt_rejects_borrowed_provider_or_store() -> None:
+    with pytest.raises(ValueError, match="require_prebuilt"):
+        build_service_app(public_base_url="https://api.example.test/optimade/amdb", providers=[], require_prebuilt=True)
+
+    app = build_service_app(public_base_url="https://api.example.test/optimade/amdb", providers=[])
+    with TestClient(app) as client:
+        assert client.get("/health").json() == {"mode": "providers"}
+
+
+def test_optimade_cli_passes_require_prebuilt(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(serve_optimade, "build_service_app", lambda **kwargs: kwargs)
+    monkeypatch.setattr(serve_optimade, "run_dev_server", lambda **kwargs: captured.update(kwargs))
+
+    assert serve_optimade.main(["--require-prebuilt"]) == 0
+    assert captured["app"] == {
+        "public_base_url": serve_optimade.DEFAULT_PUBLIC_BASE_URL,
+        "cors_origins": [],
+        "require_prebuilt": True,
+    }
+    with pytest.raises(SystemExit):
+        serve_optimade.main(["--validate", "--require-prebuilt"])
 
 
 def test_structure_downloads_serve_generated_cif_and_poscar(tmp_path: Path) -> None:

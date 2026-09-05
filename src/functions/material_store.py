@@ -72,6 +72,9 @@ from httk.core.storage import (
     stored_property,
 )
 from httk.store import Backend, EntryIdScheme, IdLedger, IdLedgerError, SqlStore
+from httk.store.backend.schema import SchemaError
+from httk.store.backend.sql import StorageLayoutUpgradeRequiredError
+from sqlalchemy.exc import SQLAlchemyError
 
 __all__ = [
     "AMDB_DATASET",
@@ -3243,11 +3246,18 @@ def open_prebuilt_store(path: str | os.PathLike[str] | None = None) -> OpenedMat
             revision=_persistent_revision(store_path),
             source_path=store_path,
         )
-    except Exception as error:
+    except (OSError, ValueError, SchemaError, SQLAlchemyError, StorageLayoutUpgradeRequiredError) as error:
         logger.warning("Prebuilt store %s is unusable: %s", store_path, error)
         if database is not None:
             database.dispose()
         return None
+    except BaseException as error:
+        if database is not None:
+            try:
+                database.dispose()
+            except BaseException as cleanup_error:
+                error.add_note(f"Additional material-store cleanup failure: {cleanup_error!r}")
+        raise
 
 
 def open_in_memory_store(
@@ -3304,10 +3314,18 @@ def open_in_memory_store(
             revision=_source_revision(source_dir, details_dir=resolved_details_dir),
             source_path=source_dir,
         )
-    except Exception:
+    except (OSError, ValueError, SchemaError, SQLAlchemyError, StorageLayoutUpgradeRequiredError) as error:
+        logger.warning("In-memory material store is unavailable: %s", error)
         if database is not None:
             database.dispose()
         return None
+    except BaseException as error:
+        if database is not None:
+            try:
+                database.dispose()
+            except BaseException as cleanup_error:
+                error.add_note(f"Additional material-store cleanup failure: {cleanup_error!r}")
+        raise
 
 
 def open_material_store(
@@ -3315,12 +3333,15 @@ def open_material_store(
     *,
     data_dir: str | os.PathLike[str] | None = None,
     details_dir: str | os.PathLike[str] | None = None,
+    require_prebuilt: bool = False,
 ) -> OpenedMaterialStore | None:
-    """Prefer the scalable persistent store, falling back to in-memory seeding."""
+    """Open the prebuilt store, or seed memory unless ``require_prebuilt`` is set."""
 
     persistent = open_prebuilt_store(path)
     if persistent is not None:
         return persistent
+    if require_prebuilt:
+        raise RuntimeError("a usable prebuilt material store is required; run `make build_store` and deploy it")
     return open_in_memory_store(data_dir, details_dir=details_dir)
 
 

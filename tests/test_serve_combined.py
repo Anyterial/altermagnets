@@ -235,15 +235,21 @@ def test_combined_public_origin_cli(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(serve_combined, "run_dev_server", lambda **kwargs: captured.update(kwargs))
 
     assert serve_combined.main(["--host", "127.0.0.1", "--port", "9000"]) == 0
-    assert captured["app"] == {"public_base_url": "http://127.0.0.1:9000"}
+    assert captured["app"] == {"public_base_url": "http://127.0.0.1:9000", "require_prebuilt": False}
 
     assert serve_combined.main(["--host", "::1", "--port", "9000"]) == 0
-    assert captured["app"] == {"public_base_url": "http://[::1]:9000"}
+    assert captured["app"] == {"public_base_url": "http://[::1]:9000", "require_prebuilt": False}
 
     with pytest.raises(SystemExit):
         serve_combined.main(["--host", "0.0.0.0"])
     assert serve_combined.main(["--host", "0.0.0.0", "--public-base-url", "https://site.example"]) == 0
-    assert captured["app"] == {"public_base_url": "https://site.example"}
+    assert captured["app"] == {"public_base_url": "https://site.example", "require_prebuilt": False}
+
+    assert serve_combined.main(["--require-prebuilt"]) == 0
+    assert captured["app"] == {
+        "public_base_url": "http://127.0.0.1:8080",
+        "require_prebuilt": True,
+    }
 
 
 def test_standalone_static_site_does_not_advertise_the_combined_pilot() -> None:
@@ -332,3 +338,19 @@ def test_composition_failure_closes_only_factory_created_web_app(monkeypatch: py
         )
 
     assert closed == ["factory"]
+
+
+def test_composition_failure_closes_factory_created_amdb_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    closed: list[str] = []
+    amdb = Starlette()
+    amdb.state.owns_entry_store = True
+    amdb.state.entry_database = type("Database", (), {"dispose": lambda self: closed.append("amdb")})()
+
+    monkeypatch.setattr(combined, "compose_asgi_apps", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+    with pytest.raises(RuntimeError, match="boom"):
+        serve_combined.create_combined_app(
+            web_factory=Starlette,
+            index_factory=Starlette,
+            amdb_factory=lambda: amdb,
+        )
+    assert closed == ["amdb"]

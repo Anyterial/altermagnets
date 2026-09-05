@@ -103,7 +103,9 @@ def _default_index_app(public_origin: str = DEFAULT_COMBINED_PUBLIC_BASE_URL) ->
     return create_index_asgi_app(config, baseurl=index_url)
 
 
-def _default_amdb_app(public_origin: str = DEFAULT_COMBINED_PUBLIC_BASE_URL) -> Starlette:
+def _default_amdb_app(
+    public_origin: str = DEFAULT_COMBINED_PUBLIC_BASE_URL, *, require_prebuilt: bool = False
+) -> Starlette:
     amdb_url = _public_url(public_origin, AMDB_PATH)
     index_url = _public_url(public_origin, INDEX_PATH)
     return build_service_app(
@@ -113,20 +115,28 @@ def _default_amdb_app(public_origin: str = DEFAULT_COMBINED_PUBLIC_BASE_URL) -> 
         root_link_name=INDEX_NAME,
         root_link_description=INDEX_DESCRIPTION,
         root_link_homepage=public_origin,
+        require_prebuilt=require_prebuilt,
     )
 
 
-def _close_created_web_app(app: Starlette, operation_error: BaseException) -> None:
-    """Close a newly-created httk-serve web engine without hiding another failure."""
+def _close_created_app(app: Starlette, operation_error: BaseException) -> None:
+    """Close a factory-created child app without hiding another failure."""
 
     engine = getattr(app.state, "engine", None)
     close = getattr(engine, "close", None)
-    if not callable(close):
-        return
-    try:
-        close()
-    except BaseException as cleanup_error:
-        operation_error.add_note(f"Additional httk-serve web cleanup failure: {cleanup_error!r}")
+    if callable(close):
+        try:
+            close()
+        except BaseException as cleanup_error:
+            operation_error.add_note(f"Additional httk-serve web cleanup failure: {cleanup_error!r}")
+    if getattr(app.state, "owns_entry_store", False):
+        database = getattr(app.state, "entry_database", None)
+        dispose = getattr(database, "dispose", None)
+        if callable(dispose):
+            try:
+                dispose()
+            except BaseException as cleanup_error:
+                operation_error.add_note(f"Additional AMDB store cleanup failure: {cleanup_error!r}")
 
 
 def create_combined_app(
@@ -138,6 +148,7 @@ def create_combined_app(
     index_factory: Callable[[], Starlette] | None = None,
     amdb_factory: Callable[[], Starlette] | None = None,
     public_base_url: str = DEFAULT_COMBINED_PUBLIC_BASE_URL,
+    require_prebuilt: bool = False,
 ) -> Starlette:
     """Compose the website, OPTIMADE index, and AMDB at their public paths."""
 
@@ -148,15 +159,24 @@ def create_combined_app(
         raise ValueError("supply index_app or index_factory, not both")
     if amdb_app is not None and amdb_factory is not None:
         raise ValueError("supply amdb_app or amdb_factory, not both")
+    if require_prebuilt and (amdb_app is not None or amdb_factory is not None):
+        raise ValueError("require_prebuilt needs the combined app to create its AMDB service")
 
-    created_web_app = web_app is None
+    created_apps: list[Starlette] = []
     if web_app is None:
         web_app = (web_factory or _default_web_app)()
+        created_apps.append(web_app)
     try:
         if index_app is None:
             index_app = (index_factory or (lambda: _default_index_app(public_origin)))()
+            created_apps.append(index_app)
         if amdb_app is None:
-            amdb_app = (amdb_factory or (lambda: _default_amdb_app(public_origin)))()
+            amdb_app = (
+                amdb_factory()
+                if amdb_factory is not None
+                else _default_amdb_app(public_origin, require_prebuilt=require_prebuilt)
+            )
+            created_apps.append(amdb_app)
         mounts = [ASGIAppMount(INDEX_PATH, index_app), ASGIAppMount(AMDB_PATH, amdb_app)]
         if public_origin.startswith("https://"):
             mounts.append(ASGIAppMount(DSP_MOUNT, build_dsp_app(public_origin)))
@@ -164,6 +184,6 @@ def create_combined_app(
             logger.info("DSP catalogue not mounted: a non-HTTPS public origin (%s) cannot host DSP", public_origin)
         return compose_asgi_apps(mounts, root=ASGIAppMount("/", web_app))
     except BaseException as exc:
-        if created_web_app:
-            _close_created_web_app(web_app, exc)
+        for app in reversed(created_apps):
+            _close_created_app(app, exc)
         raise

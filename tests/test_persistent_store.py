@@ -1,7 +1,10 @@
 from pathlib import Path
 
+import pytest
+
 from conftest import write_detail_assets, write_source_tables
 from httk.core import File
+from httk.core.identity import identity_config_path
 from httk.store import Backend
 from material_store import (
     AltermagnetScreeningResult,
@@ -10,6 +13,10 @@ from material_store import (
     open_material_store,
     open_prebuilt_store,
 )
+
+
+def test_identity_is_isolated_per_test(tmp_path: Path) -> None:
+    assert identity_config_path().is_relative_to(tmp_path)
 
 
 def test_persistent_build_reconstructs_ordered_links_and_variants(material_store_path: Path) -> None:
@@ -96,6 +103,28 @@ def test_missing_corrupt_and_zero_stores_are_unavailable(tmp_path: Path) -> None
     database.dispose()
     assert open_prebuilt_store(zero) is None
     assert open_material_store(tmp_path / "missing.duckdb", data_dir=tmp_path / "missing-tables") is None
+
+
+@pytest.mark.parametrize("contents", [None, "not a duckdb database"])
+def test_require_prebuilt_refuses_missing_or_corrupt_store(tmp_path: Path, contents: str | None) -> None:
+    """Strict startup never reaches the source-table fallback."""
+
+    source = write_source_tables(tmp_path / "tables")
+    target = tmp_path / "altermagnets.duckdb"
+    if contents is not None:
+        target.write_text(contents, encoding="utf-8")
+    with pytest.raises(RuntimeError, match="usable prebuilt.*make build_store"):
+        open_material_store(target, data_dir=source, require_prebuilt=True)
+
+
+def test_default_missing_prebuilt_still_falls_back_to_memory(tmp_path: Path) -> None:
+    source = write_source_tables(tmp_path / "tables")
+    opened = open_material_store(tmp_path / "missing.duckdb", data_dir=source)
+    assert opened is not None
+    try:
+        assert opened.mode == "memory"
+    finally:
+        opened.database.dispose()
 
 
 def test_runtime_falls_back_when_persistent_store_has_the_old_schema(tmp_path: Path) -> None:

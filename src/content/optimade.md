@@ -107,26 +107,17 @@ _httk_records -> OptimadeResource
 files -> OptimadeFile
 ```
 
-A filtered, sorted search over the screening results, narrowed to the fields we want:
+A pandas-style, bracket-indexed search over the screening results:
 
 ```python
 from httk.serve.optimade import OptimadeStore
 
 with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
-    results = store.entry_type("_anyterial_altermagnet_screening_results")
-    search = store.searcher()
-    material = search.variable(results)
-    search.add(material._anyterial_max_spin_splitting > 0.5)
-    search.add_sort(material._anyterial_max_spin_splitting, descending=True)
-
-    print("matches:", search.count())
-    rows = search.results(
-        id=material.id,
-        formula=material._anyterial_formula,
-        max_ss=material._anyterial_max_spin_splitting,
-    )
-    for row in rows:
-        print(row.id, row.formula, row.max_ss)
+    materials = store.slicer("_anyterial_altermagnet_screening_results")
+    hits = materials[materials["_anyterial_max_spin_splitting"] > 0.5]
+    print("matches:", len(hits))
+    for row in hits[["id", "_anyterial_formula", "_anyterial_max_spin_splitting"]]:
+        print(row.id, row._anyterial_formula, row._anyterial_max_spin_splitting)
 ```
 
 ```text
@@ -139,6 +130,8 @@ anyt.am-1-5 UCr2Si2C 0.7192
 anyt.am-1-6 Ca(Al2Fe)4 0.6284
 anyt.am-1-7 Cu2O3Cl 0.553
 ```
+
+This bracket syntax deliberately offers no sorting, so rows come back in store order rather than by value — here that happens to be the same seven materials as above, in id order. Filtering, counting, and reading columns are all it does; a more expressive `searcher` interface (sorting, relationship-following, includes) is documented in the [httk-serve documentation](https://docs.httk.org/httk-serve/), and is exactly what the next two examples use, to also reach a material's included records and its related structure and run.
 
 Fetching one material together with its included records and, following the `structures` relationship, its crystal structure:
 

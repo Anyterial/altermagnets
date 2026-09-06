@@ -466,7 +466,12 @@ function buildFigures(attributes, structureAttributes, apiBase, altState = { lis
       const frame = node("iframe", "crysviz-frame");
       frame.setAttribute("src", crysvizSrc);
       frame.setAttribute("title", "Interactive crystal structure (CrysViz)");
-      frame.setAttribute("sandbox", "allow-scripts allow-popups allow-popups-to-escape-sandbox");
+      // allow-same-origin is REQUIRED for the viewer's Web Worker pool + WASM: an
+      // opaque (null-principal) origin may not start workers, forcing slow main-thread
+      // geometry. For a CROSS-origin embed (the only supported deployment shape for
+      // crysviz_base_url) it grants no access to this page; the sandbox stops isolating
+      // only if CrysViz were ever served from THIS site's own origin -- do not do that.
+      frame.setAttribute("sandbox", "allow-same-origin allow-scripts allow-popups allow-popups-to-escape-sandbox");
       frame.setAttribute("referrerpolicy", "no-referrer");
       frame.setAttribute("loading", "lazy");
       visual.append(frame);

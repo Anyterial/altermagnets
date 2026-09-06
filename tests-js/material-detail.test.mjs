@@ -351,7 +351,7 @@ test("structure card renders a sandboxed CrysViz iframe when the included struct
   assert.equal(frames.length, 1);
   assert.equal(result.querySelectorAll("img.theme-aware-figure").length, 0);
   const frame = frames[0];
-  assert.equal(frame.getAttribute("sandbox"), "allow-scripts allow-popups allow-popups-to-escape-sandbox");
+  assert.equal(frame.getAttribute("sandbox"), "allow-same-origin allow-scripts allow-popups allow-popups-to-escape-sandbox");
   assert.equal(frame.getAttribute("referrerpolicy"), "no-referrer");
   assert.equal(frame.getAttribute("loading"), "lazy");
   assert.equal(frame.getAttribute("title"), "Interactive crystal structure (CrysViz)");

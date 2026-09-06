@@ -1,16 +1,18 @@
 ---
-title: OPTIMADE API
+title: Programmatic access to *amdb* via the OPTIMADE API
 base_template: base_default
 hosting: static
 ---
 
 The [OPTIMADE API](https://www.optimade.org/) is a REST API for materials databases, developed by the [OPTIMADE consortium](https://github.com/Materials-Consortia/OPTIMADE) of materials-science data providers so that the same query language and response format work across dozens of independent databases. The Altermagnets Database (*amdb*) serves data through the OPTIMADE API at [https://altermagnets.anyterial.se/optimade/amdb](https://altermagnets.anyterial.se/optimade/amdb/).
 
-### Programmatic access to amdb
+### Overview
 
 While the most commonly used OPTIMADE API structure endpoint it available for structural information, the primary entry in *amdb* is our provider-specific `_anyterial_altermagnet_screening_results` entry type. These entries represent a screened candidate material, with the same quantities as are shown on the web pages: chemical formula and elements, space group, collinearity classification, magnetic phase and wave-class assignment, the average and maximum spin splitting and the spin-splitting fraction, electronic type, DFT band gap, minimum crustal elemental abundance, and the linked MAGNDATA symmetry variants.
 
 Fetching a single entry by id also includes the two underlying `_httk_records` data records (the coupled DFT run's declared outputs, and the published screening analysis's values) and any associated `references` enties. The screened crystal structure itself is a standard OPTIMADE `structures` entry, reached through a `structures` relationship. The workflow producing the screening result (structure, files, total energy) are reached through a `_httk_runs` relationship. Provider-specific properties, like standard ones, can be used in `filter` expressions, including through relationships (e.g. `_httk_records.<property>`).
+
+### Example queries
 
 It is possible to query OPTIMADE very directly via command line tools such as `curl`. For example, a filter query restricted to a couple of fields and a few rows:
 
@@ -101,7 +103,7 @@ curl "https://altermagnets.anyterial.se/optimade/amdb/v1/_anyterial_altermagnet_
 </div>
 </div>
 
-### Using *httk* to query *amdb* with OPTIMADE
+### Query *amdb* with OPTIMADE in Python using *httk*
 
 The [high-throughput toolkit (*httk*)](https://httk.org) is a Python toolkit supporting high-throughput computations. Its provides an OPTIMADE client that lets you query *amdb* with Python.
 To follow the examples below, make sure to have `httk2` installed (preferably in a virtual environment):

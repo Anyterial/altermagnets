@@ -10,7 +10,7 @@ The [OPTIMADE API](https://www.optimade.org/) is a REST API for materials databa
 
 While the most commonly used OPTIMADE API structure endpoint it available for structural information, the primary entry in *amdb* is our provider-specific `_anyterial_altermagnet_screening_results` entry type. These entries represent a screened candidate material, with the same quantities as are shown on the web pages: chemical formula and elements, space group, collinearity classification, magnetic phase and wave-class assignment, the average and maximum spin splitting and the spin-splitting fraction, electronic type, DFT band gap, minimum crustal elemental abundance, and the linked MAGNDATA symmetry variants.
 
-Fetching a single entry by id also includes the two underlying `_httk_records` data records (the coupled DFT run's declared outputs, and the published screening analysis's values) and any associated `references` enties. The screened crystal structure itself is a standard OPTIMADE `structures` entry, reached through a `structures` relationship. The workflow producing the screening result (structure, files, total energy) are reached through a `_httk_runs` relationship. Provider-specific properties, like standard ones, can be used in `filter` expressions, including through relationships (e.g. `_httk_records.<property>`).
+Fetching a single entry by id also includes the two underlying `_httk_records` data records (the coupled DFT run's declared outputs, and the published screening analysis's values) and any associated `references` enties. The screened crystal structure itself is a standard OPTIMADE `structures` entry, reached through a `structures` relationship. The workflow run behind the screening result (consuming the crystal structure as its input, producing the files and total energy) is reached through a `_httk_runs` relationship. Provider-specific properties, like standard ones, can be used in `filter` expressions, including through relationships (e.g. `_httk_records.<property>`).
 
 ### Example queries
 
@@ -247,7 +247,7 @@ structure anyt.am.structure-1-1 CrSb ('Cr', 'Sb')
 </div>
 </div>
 
-Following provenance one step further, to the workflow run and its other declared outputs:
+Following provenance one step further, to the workflow run and its declared input structure and outputs:
 
 <div class="code-pair">
 <div class="code-pair-part code-pair-part--python">
@@ -271,8 +271,11 @@ with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
     run_search.add(run_var.id == run_id)
     run_row = run_search.results(item=run_var, workflow=run_var._httk_workflow_declaration_uri).one()
     print(run_row.item.id, run_row.workflow)
-    for output in run_row.item.unwrap()["relationships"]["_httk_has_output"]["data"]:
-        print(" output:", output["meta"]["_httk_label"], "->", output["type"], output["id"])
+    relationships = run_row.item.unwrap()["relationships"]
+    for edge in relationships["_httk_has_input"]["data"]:
+        print(" input:", edge["meta"]["_httk_label"], "->", edge["type"], edge["id"])
+    for edge in relationships["_httk_has_output"]["data"]:
+        print(" output:", edge["meta"]["_httk_label"], "->", edge["type"], edge["id"])
 ```
 
 </div>
@@ -281,8 +284,8 @@ with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
 
 ```text
 anyt.am.runs-1-1 https://schemas.anyterial.se/defs/v0.1/workflows/altermagnets-scf-httk-v1
+ input: input_structure -> structures anyt.am.structure-1-1
  output: total_energy -> _httk_records anyt.am.records-1-1
- output: output_structure -> structures anyt.am.structure-1-1
  output: vasprun -> files anyt.am.files-1-1
  output: doscar -> files anyt.am.files-1-2
  output: splitting_figure -> files anyt.am.files-1-3

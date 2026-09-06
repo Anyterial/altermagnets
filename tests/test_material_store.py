@@ -290,11 +290,12 @@ def _single(store: object, cls: type):
 def test_coupled_material_reconstructs_run_with_resolvable_edges(tmp_path: Path) -> None:
     """The coupled build reconstructs the run with store-resolvable edges and no artifacts.
 
-    The run's ``output_structure`` edge targets the stamped structure main, the
-    ``total_energy`` edge the material's typed ``CalculationOutputRecord``, and the file
-    edge the id minted for the bulk-saved output; ``item.products`` are rewritten through
-    the same maps, so no collection-time content id survives anywhere. ``outputs`` carries
-    the edges and ``artifacts`` is empty (no sub-workflows), and nothing targets the result.
+    The run's ``input_structure`` edge (an input, not an output: this SCF does not relax)
+    targets the stamped structure main, the ``total_energy`` edge the material's typed
+    ``CalculationOutputRecord``, and the file edge the id minted for the bulk-saved output;
+    ``item.products`` are rewritten through the same maps, so no collection-time content id
+    survives anywhere. ``inputs`` carries the structure, ``outputs`` the products, and
+    ``artifacts`` is empty (no sub-workflows), and nothing targets the result.
     """
     source = write_source_tables(tmp_path / "tables")
     details = write_detail_assets(tmp_path / "details")
@@ -335,16 +336,17 @@ def test_coupled_material_reconstructs_run_with_resolvable_edges(tmp_path: Path)
         structure_id = coupled.structure_id
         assert structure_id is not None
 
+        # The structure is the run's INPUT (SCF, no relaxation); the products are outputs.
+        by_input = {edge.label: (edge.entry_type, edge.entry_id) for edge in run.inputs}
+        assert by_input == {"input_structure": ("structures", structure_id)}
         by_output = {edge.label: (edge.entry_type, edge.entry_id) for edge in run.outputs}
-        assert by_output["output_structure"] == ("structures", structure_id)
         assert by_output["total_energy"] == ("records", record_id)
         assert by_output["vasprun"] == ("files", file_id)
         # Item 2: artifacts are retired from this deployment's reconstructed runs --
         # they only ever duplicated outputs (no sub-workflows) -- so outputs alone
-        # carries the edges and artifacts is empty.
+        # carries the product edges and artifacts is empty.
         assert run.artifacts == ()
         assert set(by_output.items()) == {
-            ("output_structure", ("structures", structure_id)),
             ("total_energy", ("records", record_id)),
             ("vasprun", ("files", file_id)),
         }
@@ -369,12 +371,12 @@ def test_coupled_material_reconstructs_run_with_resolvable_edges(tmp_path: Path)
         opened.database.dispose()
 
 
-def test_resolve_edge_id_rejects_non_output_structure_edge() -> None:
-    """Only the output_structure output maps to the material; a foreign structures edge raises."""
-    with pytest.raises(ValueError, match="input_structure"):
+def test_resolve_edge_id_rejects_non_input_structure_edge() -> None:
+    """Only the input_structure input maps to the material; a foreign structures edge raises."""
+    with pytest.raises(ValueError, match="output_structure"):
         material_store._resolve_edge_id(
             None,  # type: ignore[arg-type]  # the structures guard fires before the store is touched
-            "input_structure",
+            "output_structure",
             "structures",
             "some-content-id",
             structure_id="anyt.am.structure-1-1",

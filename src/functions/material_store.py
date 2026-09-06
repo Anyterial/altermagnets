@@ -168,7 +168,14 @@ logger = report.context_logger(logging.getLogger("httk.altermagnets.material_sto
 # renamed ``scf-httk-v1``, no run/edge content changes); and the served entry type is
 # pluralized to ``_anyterial_altermagnet_screening_results``. None of this changes any
 # ledger key, so ids are unaffected; the schema/column changes force the rebuild.
-STORE_LAYOUT_VERSION = 14
+# Bump 15: the structure is re-wired as the run's INPUT (``input_structure``, a
+# ``has_input`` edge) instead of its output -- this SCF workflow does not relax, so the
+# served cell is the one fed to the run, not one it produced. Only the reconstructed
+# run's edge direction changes (structure moves from ``outputs`` to ``inputs``, products
+# now source from the input structure); ids, columns and the result's direct
+# ``structures`` relationship are unaffected, so this version row is the forcing gate
+# (the fingerprint does not see edge-direction changes).
+STORE_LAYOUT_VERSION = 15
 RELAXED_STRUCTURE_PRECISION = 5e-4  # Cartesian Å; relaxed-DFT coordinate precision, so symmetry tolerance is realistic (not ~machine epsilon from full-precision CONTCAR digits)
 
 ELEMENT_PATTERN = re.compile(r"[A-Z][a-z]?")
@@ -2724,18 +2731,19 @@ def _resolve_edge_id(
 ) -> str:
     """Map a collected edge's ``(entry_type, content-id)`` to the store-served id.
 
-    The ``output_structure`` edge resolves to the screened structure main's stamped
-    id (the structure IS the served output structure now that the science moved to
-    the screening result). It is taken from the build's material->structure-id MAP --
-    never a content-id fetch: the details-CONTCAR fallback materials have a structure
-    content id that differs from the collected run's output structure id, so a fetch
-    would silently miss for every fallback material. A ``records`` edge resolves the
-    same way, through ``record_ids`` keyed by the output role: the collected one-value
-    ``DataRecord`` is no longer stored at all (the typed
-    :class:`CalculationOutputRecord` replaces it and inherits its ledger id), so its
-    content id matches nothing and a fetch would always miss. Any other structures or
-    records edge is rejected -- a foreign edge (e.g. a future ``input_structure``)
-    must not silently self-attribute. File outputs saved in the bulk pass are still
+    The ``input_structure`` edge resolves to the screened structure main's stamped
+    id (the structure IS the run's input structure -- an SCF with no relaxation does
+    not change the cell -- now that the science moved to the screening result). It is
+    taken from the build's material->structure-id MAP -- never a content-id fetch: the
+    details-CONTCAR fallback materials have a structure content id that differs from the
+    collected run's structure id, so a fetch would silently miss for every fallback
+    material. A ``records`` edge resolves the same way, through ``record_ids`` keyed by
+    the output role: the collected one-value ``DataRecord`` is no longer stored at all
+    (the typed :class:`CalculationOutputRecord` replaces it and inherits its ledger id),
+    so its content id matches nothing and a fetch would always miss. Any other
+    structures or records edge is rejected -- a foreign edge (e.g. a stray
+    ``output_structure``) must not silently self-attribute. File outputs saved in the
+    bulk pass are still
     looked up by their content id -- the id their collected edges carry -- memoized so
     a shared output is fetched once.
 
@@ -2751,8 +2759,8 @@ def _resolve_edge_id(
         mapped target, or the file output has no resolvable store id.
     """
     if entry_type == AltermagnetStructureEntry.type:
-        if label != "output_structure":
-            raise ValueError(f"structures edge {label!r} is not the output structure; only it maps to the structure")
+        if label != "input_structure":
+            raise ValueError(f"structures edge {label!r} is not the input structure; only it maps to the structure")
         return structure_id
     if entry_type == AltermagnetDataRecordEntry.type:
         resolved = record_ids.get(label)
@@ -2814,15 +2822,18 @@ def _save_reconstructed_runs(
     A collected ``item.run``'s edges carry collection-time content ids the store
     never minted, so they cannot resolve. This constructs a replacement run at save
     time -- never mutating ``item.run`` or its :class:`_RunObservation` -- whose edges
-    carry the store-served ids: the ``output_structure`` edge is retargeted at the
-    screened structure main's stamped id (through the material->structure-id map), the
+    carry the store-served ids: the structure edge (the collector emits it under the
+    ``output_structure`` role, its only channel) is re-wired as the run's ``inputs``
+    ``input_structure`` edge, targeting the screened structure main's stamped id
+    (through the material->structure-id map) -- an SCF with no relaxation consumes the
+    cell, it does not produce a new one. The genuine products stay in ``outputs``: the
     ``total_energy`` records edge at the material's :class:`CalculationOutputRecord`,
     and the file edges at the ids minted for the outputs the bulk pass just saved.
 
     ``artifacts`` is always ``()``: this deployment has no sub-workflows, so an
     artifact edge would only ever duplicate the matching output edge (the collector
     overlays one edge tuple onto both sides) -- serving both bloats every run response
-    for no information gain. ``outputs`` alone carries the (retargeted) edges; the core
+    for no information gain. ``outputs`` alone carries the (retargeted) product edges; the core
     :attr:`Run.artifacts` mechanism is untouched (a deployment WITH sub-workflows still
     needs to tell a genuine intermediate artifact from a final output), so restoring it
     here is a one-line change: pass this same rewritten ``edges`` tuple to ``artifacts=``
@@ -2833,8 +2844,8 @@ def _save_reconstructed_runs(
 
     ``item.products`` ProductLinks are rewritten through the same map; the
     ``ScreeningResultRecord`` gets neither an edge nor a ProductLink (its values come
-    from the published CSV, not from any run we collected). ``inputs`` are omitted (the
-    collected runs' inputs are not stored). Reconstructing edges is record construction,
+    from the published CSV, not from any run we collected). ``inputs`` carries the lone
+    re-wired ``input_structure`` edge (see above). Reconstructing edges is record construction,
     not post-save mutation, so it is done with an ordinary :meth:`SqlStore.save` after
     the bulk context finalizes (both are refused inside bulk ingest, and the runs need
     the outputs' minted ids the bulk pass assigned). One run backs one material
@@ -2862,7 +2873,25 @@ def _save_reconstructed_runs(
         memo: dict[tuple[str, str], str] = {}
         calculation = calculation_outputs.get(result_id)
         record_ids = {} if calculation is None else {"total_energy": cast(str, calculation.id)}
-        edges = _rewrite_edges(store, run.outputs, structure_id=structure_id, record_ids=record_ids, memo=memo)
+        # The screened structure is the run's INPUT, not an output: this SCF workflow
+        # does not relax (NSW=0), so the served cell IS the one fed to the run. The v1
+        # collector can only emit it under the mechanical `output_structure` output role
+        # (its only channel), so re-wire it here -- where the run is reconstructed from
+        # scratch anyway -- as a `has_input` edge, and keep the genuine products (energy,
+        # files) as outputs. The result's direct `structures` relationship is unaffected
+        # (it serves off the typed `structure` reference, not this edge).
+        input_edges = tuple(
+            RunEdge("input_structure", edge.entry_type, structure_id)
+            for edge in run.outputs
+            if edge.entry_type == AltermagnetStructureEntry.type
+        )
+        edges = _rewrite_edges(
+            store,
+            (edge for edge in run.outputs if edge.entry_type != AltermagnetStructureEntry.type),
+            structure_id=structure_id,
+            record_ids=record_ids,
+            memo=memo,
+        )
         # _couple_runs already bound every coupled material's run in the ledger
         # (_resolve_run_binding); look it up rather than re-deriving it here.
         run_ledger_id = ledger.lookup(_run_key(result_id))
@@ -2870,6 +2899,7 @@ def _save_reconstructed_runs(
         store.save(
             Run(
                 workflow_declaration_uri=run.workflow_declaration_uri,
+                inputs=input_edges,
                 # No sub-workflows in this deployment, so an artifact edge would only
                 # ever duplicate the matching output edge; restore by passing this same
                 # rewritten `edges` tuple to `artifacts=` too (Run.artifacts itself is
@@ -2886,13 +2916,13 @@ def _save_reconstructed_runs(
             store.save(
                 ProductLink(
                     product.source_type,
-                    # Every product here sources from the output_structure output
-                    # (the toml ``product_of`` chain), so the structures-edge guard
-                    # in _resolve_edge_id sees that label; the target label is unused
-                    # for the record/file types products actually target.
+                    # Every product here sources from the structure (the toml
+                    # ``product_of`` chain), now the run's input, so the structures-edge
+                    # guard in _resolve_edge_id sees that label; the target label is
+                    # unused for the record/file types products actually target.
                     _resolve_edge_id(
                         store,
-                        "output_structure",
+                        "input_structure",
                         product.source_type,
                         product.source_id,
                         structure_id=structure_id,

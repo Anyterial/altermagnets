@@ -307,17 +307,19 @@ def test_serves_paired_run_edges_and_records_relationship(tmp_path: Path) -> Non
             assert _relationship_ids(screening, "_httk_is_output") == []
             assert _relationship_ids(screening, "_httk_is_artifact") == []
 
-            # (d) the coupled STRUCTURE still serves the output_structure reverse block
-            # (the structure IS the run's output); _httk_is_artifact stays EMPTY, same rule.
+            # (d) the coupled STRUCTURE serves the input_structure reverse block (the
+            # structure is the run's INPUT -- this SCF does not relax); _httk_is_output
+            # and _httk_is_artifact stay EMPTY, same rule.
             structure = live.get(f"/v1/structures/{structure_id}").json()["data"]
             structure_is_artifact = _relationship_ids(structure, "_httk_is_artifact")
-            structure_is_output = _relationship_ids(structure, "_httk_is_output")
+            structure_is_input = _relationship_ids(structure, "_httk_is_input")
             assert structure_is_artifact == []
-            assert structure_is_output == [("_httk_runs", run_id)]
+            assert _relationship_ids(structure, "_httk_is_output") == []
+            assert structure_is_input == [("_httk_runs", run_id)]
 
-            # (e) the run resolves at its wire endpoint with non-null prefixed values, and
-            # its forward _httk_has_output block carries the relaxed structure, the
-            # calculation record, and the file output -- never a result-typed edge;
+            # (e) the run resolves at its wire endpoint with non-null prefixed values; its
+            # forward _httk_has_input block carries the structure, and _httk_has_output the
+            # calculation record and the file output -- never a result-typed edge;
             # _httk_has_artifact is EMPTY (no sub-workflows, so no distinct artifact edge).
             run = live.get(
                 f"/v1/_httk_runs/{run_id}",
@@ -329,7 +331,8 @@ def test_serves_paired_run_edges_and_records_relationship(tmp_path: Path) -> Non
             assert run_resource["attributes"]["_httk_workflow_declaration_uri"]
             has_output = _relationship_ids(run_resource, "_httk_has_output")
             assert _relationship_ids(run_resource, "_httk_has_artifact") == []
-            assert ("structures", structure_id) in has_output
+            assert _relationship_ids(run_resource, "_httk_has_input") == [("structures", structure_id)]
+            assert ("structures", structure_id) not in has_output
             assert ("_httk_records", calculation_id) in has_output
             assert any(etype == "files" for etype, _ in has_output)
             assert not any(etype == RESULT for etype, _ in has_output)

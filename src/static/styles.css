@@ -544,6 +544,63 @@ html[data-theme="dark"] .theme-icon {
   border-radius: 14px;
 }
 
+/*
+ * Fenced code blocks in Markdown content pages (rendered by python-markdown's
+ * fenced_code + codehilite extensions, which always wrap a block in
+ * `<div class="codehilite"><pre><code>...`, whatever its fence language is).
+ * Content pages that need input/output to read differently wrap that div in
+ * one of the .code-sample--* markers below; raw HTML is passed through by the
+ * renderer, so a blank line before and after the fence is enough to keep it
+ * rendering as a normal code block inside the wrapper.
+ */
+.code-sample {
+  margin: 14px 0;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.code-sample-label {
+  margin: 0;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-soft);
+  color: var(--ink-soft);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+}
+
+.code-sample .codehilite {
+  margin: 0;
+  max-width: 100%;
+}
+
+.code-sample .codehilite pre {
+  margin: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 12px 14px;
+  background: transparent;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.code-sample--python {
+  border-left: 3px solid rgba(var(--accent-rgb), 0.55);
+}
+
+.code-sample--shell {
+  border-left: 3px solid var(--clr-secondary-a10);
+}
+
+.code-sample--output {
+  background: var(--surface-muted);
+}
+
 .results-table {
   width: 100%;
   border-collapse: collapse;

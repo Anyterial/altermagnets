@@ -4,13 +4,7 @@ base_template: base_default
 hosting: static
 ---
 
-[OPTIMADE](https://www.optimade.org/) is a common REST API standard for materials databases, developed by the [OPTIMADE consortium](https://github.com/Materials-Consortia/OPTIMADE) of materials-science data providers so that the same query language and response format work across dozens of independent databases. This database serves its data through OPTIMADE at:
-
-```
-https://altermagnets.anyterial.se/optimade/amdb
-```
-
-`/v1/info` on that base URL describes the service and lists its entry types for discovery.
+[OPTIMADE](https://www.optimade.org/) is a common REST API standard for materials databases, developed by the [OPTIMADE consortium](https://github.com/Materials-Consortia/OPTIMADE) of materials-science data providers so that the same query language and response format work across dozens of independent databases. This database serves its data through OPTIMADE at [https://altermagnets.anyterial.se/optimade/amdb](https://altermagnets.anyterial.se/optimade/amdb).
 
 ### Programmatic access
 
@@ -18,11 +12,19 @@ The provider-specific `_anyterial_altermagnet_screening_results` entry type carr
 
 Fetching a single entry by id also includes the two underlying `_httk_records` data records (the coupled DFT run's declared outputs, and the published screening analysis's values) and the `references` entry, by default. The screened crystal structure itself is a standard OPTIMADE `structures` entry, reached through a `structures` relationship rather than embedded directly; the producing workflow run and its other outputs (structure, files, total energy) are reached through a `_httk_runs` relationship. Provider-specific properties, like standard ones, can be used in `filter` expressions, including through relationships (e.g. `_httk_records.<property>`).
 
-A filter query, restricted to a couple of fields and a few rows:
+A very direct way to query OPTIMADE is via command line tools, such as curl. A filter query, restricted to a couple of fields and a few rows:
 
-```
+<div class="code-sample code-sample--shell">
+<p class="code-sample-label">Shell</p>
+
+```bash
 curl "https://altermagnets.anyterial.se/optimade/amdb/v1/_anyterial_altermagnet_screening_results?filter=_anyterial_max_spin_splitting%20%3E%200.5&response_fields=_anyterial_formula,_anyterial_max_spin_splitting&page_limit=3"
 ```
+
+</div>
+
+<div class="code-sample code-sample--output">
+<p class="code-sample-label">Output</p>
 
 ```json
 {
@@ -38,13 +40,23 @@ curl "https://altermagnets.anyterial.se/optimade/amdb/v1/_anyterial_altermagnet_
 }
 ```
 
+</div>
+
 (relationships and the rest of `meta` trimmed above — 7 of 180 screened materials have a maximum spin splitting above 0.5 eV.)
 
 A single-entry fetch, showing the default-included records:
 
-```
+<div class="code-sample code-sample--shell">
+<p class="code-sample-label">Shell</p>
+
+```bash
 curl "https://altermagnets.anyterial.se/optimade/amdb/v1/_anyterial_altermagnet_screening_results/anyt.am-1-1"
 ```
+
+</div>
+
+<div class="code-sample code-sample--output">
+<p class="code-sample-label">Output</p>
 
 ```json
 {
@@ -76,15 +88,27 @@ curl "https://altermagnets.anyterial.se/optimade/amdb/v1/_anyterial_altermagnet_
 }
 ```
 
+</div>
+
 ## Query OPTIMADE via httk
 
-```
-pip install httk-serve
+[httk](https://httk.org) is a Python toolkit for materials science; its OPTIMADE client lets you query this database programmatically from Python, instead of building URLs and parsing JSON by hand. To follow the examples below, install `httk2`, a meta-package that pulls in a good selection of httk packages including `httk-serve`:
+
+<div class="code-sample code-sample--shell">
+<p class="code-sample-label">Shell</p>
+
+```bash
+pip install httk2
 ```
 
-(these examples were run against `httk-serve` 2.1.0, ahead of its first PyPI release)
+</div>
+
+(these examples were run against `httk-serve` 2.1.0, installed via the pre-release `httk2` meta-package, ahead of its first PyPI release)
 
 Connect and discover the entry types:
+
+<div class="code-sample code-sample--python">
+<p class="code-sample-label">Python</p>
 
 ```python
 from httk.serve.optimade import OptimadeStore
@@ -97,6 +121,11 @@ with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
         print(entry_type.name, "->", entry_type.backend.__name__)
 ```
 
+</div>
+
+<div class="code-sample code-sample--output">
+<p class="code-sample-label">Output</p>
+
 ```text
 api_version: 1.3.0
 _anyterial_altermagnet_screening_results -> OptimadeResource
@@ -107,7 +136,12 @@ _httk_records -> OptimadeResource
 files -> OptimadeFile
 ```
 
+</div>
+
 A pandas-style, bracket-indexed search over the screening results:
+
+<div class="code-sample code-sample--python">
+<p class="code-sample-label">Python</p>
 
 ```python
 from httk.serve.optimade import OptimadeStore
@@ -120,6 +154,11 @@ with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
         print(row.id, row._anyterial_formula, row._anyterial_max_spin_splitting)
 ```
 
+</div>
+
+<div class="code-sample code-sample--output">
+<p class="code-sample-label">Output</p>
+
 ```text
 matches: 7
 anyt.am-1-1 CrSb 1.8724
@@ -131,9 +170,14 @@ anyt.am-1-6 Ca(Al2Fe)4 0.6284
 anyt.am-1-7 Cu2O3Cl 0.553
 ```
 
+</div>
+
 This bracket syntax deliberately offers no sorting, so rows come back in store order rather than by value — here that happens to be the same seven materials as above, in id order. Filtering, counting, and reading columns are all it does; a more expressive `searcher` interface (sorting, relationship-following, includes) is documented in the [httk-serve documentation](https://docs.httk.org/httk-serve/), and is exactly what the next two examples use, to also reach a material's included records and its related structure and run.
 
 Fetching one material together with its included records and, following the `structures` relationship, its crystal structure:
+
+<div class="code-sample code-sample--python">
+<p class="code-sample-label">Python</p>
 
 ```python
 from httk.core.optimade import optimade_document_root
@@ -172,6 +216,11 @@ with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
     print("structure", structure_row.id, structure_row.formula, structure_row.elements)
 ```
 
+</div>
+
+<div class="code-sample code-sample--output">
+<p class="code-sample-label">Output</p>
+
 ```text
 anyt.am-1-1 CrSb max_spin_splitting = 1.8724
 record anyt.am.records-1-1 {'_httk_total_energy': Decimal('-22.40776312'), 'immutable_id': 'anyt.am.records-1-1~1', 'last_modified': None}
@@ -179,7 +228,12 @@ record anyt.am.records-1-135 {'_anyterial_avg_spin_splitting': Decimal('0.763170
 structure anyt.am.structure-1-1 CrSb ('Cr', 'Sb')
 ```
 
+</div>
+
 Following provenance one step further, to the workflow run and its other declared outputs:
+
+<div class="code-sample code-sample--python">
+<p class="code-sample-label">Python</p>
 
 ```python
 from httk.serve.optimade import OptimadeStore
@@ -203,6 +257,11 @@ with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
         print(" output:", output["meta"]["_httk_label"], "->", output["type"], output["id"])
 ```
 
+</div>
+
+<div class="code-sample code-sample--output">
+<p class="code-sample-label">Output</p>
+
 ```text
 anyt.am.runs-1-1 https://schemas.anyterial.se/defs/v0.1/workflows/altermagnets-scf-httk-v1
  output: total_energy -> _httk_records anyt.am.records-1-1
@@ -211,3 +270,5 @@ anyt.am.runs-1-1 https://schemas.anyterial.se/defs/v0.1/workflows/altermagnets-s
  output: doscar -> files anyt.am.files-1-2
  output: splitting_figure -> files anyt.am.files-1-3
 ```
+
+</div>

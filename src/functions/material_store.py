@@ -1127,17 +1127,17 @@ def _list_scalar_query(field: str, *, literals: Mapping[object, object] | None =
     return query
 
 
-def _provider_property(record: object, name: str) -> object:
-    # This compatibility projector is pure and does not enumerate the store.
-    # A root-relative base is made absolute by the thin service adapter.
-    from serve.dataset import _material_properties
-
-    return _material_properties(cast(AltermagnetScreeningResult, record), "")[name]
-
-
 def _provider_response(property_name: str) -> Callable[[object], object]:
+    # Resolves directly to the per-property reader (pure, no store enumeration):
+    # a response call touches only that property's underlying field(s) on the
+    # lazy row instead of building every property first. A root-relative base
+    # is made absolute by the thin service adapter.
+    from serve.dataset import _PROPERTY_READERS
+
+    reader = _PROPERTY_READERS[property_name]
+
     def response(record: object) -> object:
-        return _provider_property(record, property_name)
+        return reader(cast(AltermagnetScreeningResult, record), "")
 
     return response
 

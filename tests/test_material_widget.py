@@ -43,7 +43,7 @@ def test_material_widget_emits_shell_config_and_both_assets(monkeypatch) -> None
     assert config["widget_id"] == "material-detail"
     # The detail page requests the AMDB main entity (the screening-result endpoint).
     assert config["entry_type"] == "_anyterial_altermagnet_screening_result"
-    assert config["include"] == ["structures", "references"]
+    assert config["include"] == ["structures", "references", "_httk_records"]
     assert "_anyterial_magndata_variants" in config["response_fields"]
     assert {asset.path for asset in result.assets} == {
         "serve-optimade-table-protocol.mjs",
@@ -90,8 +90,9 @@ def test_material_widget_requests_every_attribute_used_by_detail_js() -> None:
     }
 
     assert set(config["response_fields"]) == result_fields
-    # The detail page inlines the structure (CrysViz payload) and the references (DOIs).
-    assert config["include"] == ["structures", "references"]
+    # The detail page inlines the structure (CrysViz payload), the references (DOIs), and
+    # the calculation record (so the Provenance section needs no follow-up record fetch).
+    assert config["include"] == ["structures", "references", "_httk_records"]
     # The five CrysViz structural fields are structure-owned and must never be requested
     # on the result endpoint (its /info does not advertise them).
     structure_only = {"lattice_vectors", "cartesian_site_positions", "species", "species_at_sites", "_httk_site_moments"}

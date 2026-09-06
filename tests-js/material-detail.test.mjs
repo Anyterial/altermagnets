@@ -220,6 +220,26 @@ test("detail widget distinguishes no id, not found, and API-down states", async 
   assert.notEqual(missing.result.textContent, down.result.textContent);
 });
 
+test("a build-phase throw (not a network/not-found fault) degrades to the unavailable state rather than leaving the initial placeholder", async () => {
+  // fetchOne and discover both resolve successfully (the two existing try/catch blocks
+  // never see an error), but reading discovery.apiBaseUrl — which the post-fetch build
+  // phase (buildDetail's figure/CIF/POSCAR URLs) needs — throws. This is a genuine
+  // fake-Transport injection (the same seam every other loadShell test uses), not a
+  // monkeypatch of any material-detail.mjs internal: it exercises the real build phase.
+  class ThrowingDiscoveryTransport {
+    async fetchOne() {
+      return { resource: resultResource(realisticResultAttributes), included: [] };
+    }
+    async discover() {
+      return { get apiBaseUrl() { throw new Error("apiBaseUrl accessor blew up"); } };
+    }
+  }
+  const { result } = shell();
+  globalThis.fetch = async () => { throw new Error("must not fetch — this Transport never calls fetch"); };
+  await material.loadShell(result, ThrowingDiscoveryTransport);
+  assert.match(result.textContent, /temporarily unavailable/);
+});
+
 test("field labels carry a native title hint starting with the OPTIMADE field name", async () => {
   const { result } = shell({
     field_info: {
@@ -495,6 +515,24 @@ test("structure card falls back to a single loaded frame when the alternatives r
   assert.equal("frameKinds" in payload, false);
 });
 
+test("structure card falls back to the single loaded frame, and stays live, when alternatives push the src over the length guard", async () => {
+  const count = 6000; // matches the "crysvizIframeSrc falls back (empty)" guard test above
+  const oversized = altResource(`${STRUCTURE_ID}~conventional`, Array.from({ length: count }, () => [1, 1, 1]));
+  const { document, result } = shell({ crysviz_base_url: CRYSVIZ_BASE });
+  const network = fetchForWithAlts(resultResource({}), [structureResource(structureAttributes())], [oversized]);
+  globalThis.fetch = network.fetch;
+  await material.loadShell(result, OptimadeTransport);
+  const frame = result.querySelectorAll("iframe.crysviz-frame")[0];
+  assert.ok(frame, "the iframe stays live instead of getting stuck or disappearing");
+  const { payload } = decodeCrysvizSrc(frame.getAttribute("src"));
+  // Fell back to the single loaded frame — the oversized alternative was dropped.
+  assert.equal(payload.frames.length, 1);
+  assert.equal("frameKinds" in payload, false);
+  // And the iframe keeps responding to later theme toggles (not stuck for good).
+  document.documentElement.setAttribute("data-theme", "dark");
+  assert.ok(frame.getAttribute("src").split("#", 1)[0].includes("theme=dark"));
+});
+
 test("crysvizIframeSrc carries the current page theme and mirrors app.js dark resolution", () => {
   const document = new DomDocument("https://site.example.test/material");
   installDom(document);
@@ -566,7 +604,6 @@ test("structure iframe payload carries CIF and POSCAR download links re-keyed to
 const CALC_RECORD_ID = "anyt.am.records-1-7";
 const SCREENING_RECORD_ID = "anyt.am.records-1-9";
 const RUN_ID = "anyt.am.runs-1-1";
-const RECORD_FIELDS = ["_httk_total_energy"];
 const RUN_FIELDS = ["_httk_workflow_declaration_uri", "_httk_source_id"];
 const RESULT_WITH_RUN_ID = "anyt.am-1-7";
 const STRUCTURE_EDGE_ID = "anyt.am.structure-1-7";
@@ -630,44 +667,47 @@ const EXPECTED_PRODUCED = [
   { type: "files", id: FILE_EDGE_ID, label: "vasprun" },
 ];
 
-// A fake transport answering the direct `_httk_records/<id>` and `_httk_runs/<id>` GETs
-// (fetchOne) without the network; the batched files lookup still uses fetchPage. No
-// route ever accepts a `filter`-based lookup for records or runs.
-class FakeRecordRunTransport {
-  constructor(config) { this.config = config; FakeRecordRunTransport.configs.push(config); }
+// A fake transport answering the direct `_httk_runs/<id>` GET (fetchOne) without the
+// network; the batched files lookup still uses fetchPage. The calculation record itself
+// is never fetched any more — it comes from the `included` array fetchProvenance is
+// passed directly — so this transport has no `_httk_records` branch at all: reaching it
+// with that entry_type is a bug, and the fallthrough throws to catch it.
+class FakeRunTransport {
+  constructor(config) { this.config = config; FakeRunTransport.configs.push(config); }
   async fetchOne(id) {
-    FakeRecordRunTransport.fetched.push({ entryType: this.config.entry_type, id });
-    if (this.config.entry_type === "_httk_records") return { resource: FakeRecordRunTransport.record };
-    if (this.config.entry_type === "_httk_runs") return { resource: FakeRecordRunTransport.run };
+    FakeRunTransport.fetched.push({ entryType: this.config.entry_type, id });
+    if (this.config.entry_type === "_httk_runs") return { resource: FakeRunTransport.run };
     throw new Error(`unexpected fetchOne entry_type ${this.config.entry_type}`);
   }
   async fetchPage({ filter }) {
-    FakeRecordRunTransport.filters.push(filter);
+    FakeRunTransport.filters.push(filter);
     if (this.config.entry_type === "files") return { resources: [] };
     throw new Error(`unexpected fetchPage entry_type ${this.config.entry_type}`);
   }
 }
-function resetFakeTransport(record, run) {
-  FakeRecordRunTransport.configs = [];
-  FakeRecordRunTransport.filters = [];
-  FakeRecordRunTransport.fetched = [];
-  FakeRecordRunTransport.record = record;
-  FakeRecordRunTransport.run = run;
+function resetFakeTransport(run) {
+  FakeRunTransport.configs = [];
+  FakeRunTransport.filters = [];
+  FakeRunTransport.fetched = [];
+  FakeRunTransport.run = run;
 }
 
-test("fetchProvenance follows the calculation_output_record relationship to the record, then the record's reverse block to the run", async () => {
+// A transport that fails the test if ever constructed — proves a code path issues no
+// request of any kind (the calculation record now rides in via `included`, so a
+// Provenance object with no run to chase, or no calculation record at all, needs none).
+class ThrowsIfConstructed {
+  constructor() { throw new Error("must not be instantiated"); }
+}
+
+test("fetchProvenance resolves the calculation record from included, then follows its reverse block to the run", async () => {
   installDom(new DomDocument("https://site.example.test/material"));
-  resetFakeTransport(RECORD_WITH_RUN, RUN_RESOURCE);
-  const obj = await material.fetchProvenance(FakeRecordRunTransport, { base_url: API }, resultWithRun());
-  // Direct id fetches only — no filter route for records or runs, ever.
-  assert.deepEqual(FakeRecordRunTransport.fetched, [
-    { entryType: "_httk_records", id: CALC_RECORD_ID },
-    { entryType: "_httk_runs", id: RUN_ID },
-  ]);
-  assert.deepEqual(FakeRecordRunTransport.configs[0], { base_url: API, entry_type: "_httk_records", response_fields: RECORD_FIELDS, page_size: 1 });
-  assert.deepEqual(FakeRecordRunTransport.configs[1], { base_url: API, entry_type: "_httk_runs", response_fields: RUN_FIELDS, page_size: 1 });
+  resetFakeTransport(RUN_RESOURCE);
+  const obj = await material.fetchProvenance(FakeRunTransport, { base_url: API }, resultWithRun(), [RECORD_WITH_RUN]);
+  // The record comes from `included` — the only direct id fetch is the run.
+  assert.deepEqual(FakeRunTransport.fetched, [{ entryType: "_httk_runs", id: RUN_ID }]);
+  assert.deepEqual(FakeRunTransport.configs[0], { base_url: API, entry_type: "_httk_runs", response_fields: RUN_FIELDS, page_size: 1 });
   // The only fetchPage call is the batched files lookup.
-  assert.deepEqual(FakeRecordRunTransport.filters, [`id="${FILE_EDGE_ID}"`]);
+  assert.deepEqual(FakeRunTransport.filters, [`id="${FILE_EDGE_ID}"`]);
   assert.equal(obj.calcRecordId, CALC_RECORD_ID);
   assert.equal(obj.sourceId, "httk-v1:abc");
   assert.equal(obj.workflowUri, WORKFLOW_URI);
@@ -677,41 +717,36 @@ test("fetchProvenance follows the calculation_output_record relationship to the 
 
 test("fetchProvenance is null with no calculation_output_record entry, and issues no request at all", async () => {
   installDom(new DomDocument("https://site.example.test/material"));
-  class ThrowsIfConstructed {
-    constructor() { throw new Error("must not be instantiated"); }
-  }
   const noRecords = { id: "x", attributes: {}, relationships: {} };
-  assert.equal(await material.fetchProvenance(ThrowsIfConstructed, { base_url: API }, noRecords), null);
+  assert.equal(await material.fetchProvenance(ThrowsIfConstructed, { base_url: API }, noRecords, []), null);
   // A `_httk_records` block with only the screening_result_record role is the same as none.
   const screeningOnly = { id: "x", attributes: {}, relationships: { _httk_records: recordsRelationship(null) } };
-  assert.equal(await material.fetchProvenance(ThrowsIfConstructed, { base_url: API }, screeningOnly), null);
+  assert.equal(await material.fetchProvenance(ThrowsIfConstructed, { base_url: API }, screeningOnly, []), null);
 });
 
-test("fetchProvenance degrades to the energy line alone when the record has no run block, issuing no run request", async () => {
+test("fetchProvenance is null (with a console.warn) when the calculation_output_record's resource is missing from included", async () => {
   installDom(new DomDocument("https://site.example.test/material"));
-  resetFakeTransport(recordResource({}, { _httk_total_energy: -2.5 }), null);
-  const obj = await material.fetchProvenance(FakeRecordRunTransport, { base_url: API }, resultWithRun());
-  assert.deepEqual(FakeRecordRunTransport.fetched, [{ entryType: "_httk_records", id: CALC_RECORD_ID }]);
-  assert.equal(obj.totalEnergy, -2.5);
-  assert.equal(obj.workflowUri, null);
-  assert.equal(obj.sourceId, null);
-  assert.deepEqual(obj.produced, []);
-});
-
-test("fetchProvenance degrades to no energy line when the record fetch fails, issuing no run request", async () => {
-  installDom(new DomDocument("https://site.example.test/material"));
-  class RecordFailsTransport {
-    constructor(config) { this.config = config; }
-    async fetchOne() {
-      RecordFailsTransport.fetchedTypes.push(this.config.entry_type);
-      throw new Error("_httk_records endpoint offline");
-    }
-    async fetchPage() { throw new Error("must not be called"); }
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args);
+  try {
+    // The relationship names CALC_RECORD_ID, but `included` carries nothing with that
+    // id — defensive (the server always inlines what it references) but must degrade
+    // to no section at all, never a near-empty one.
+    const obj = await material.fetchProvenance(ThrowsIfConstructed, { base_url: API }, resultWithRun(), []);
+    assert.equal(obj, null);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0].join(" "), new RegExp(CALC_RECORD_ID));
+  } finally {
+    console.warn = originalWarn;
   }
-  RecordFailsTransport.fetchedTypes = [];
-  const obj = await material.fetchProvenance(RecordFailsTransport, { base_url: API }, resultWithRun());
-  assert.deepEqual(RecordFailsTransport.fetchedTypes, ["_httk_records"]);
-  assert.equal(obj.totalEnergy, null);
+});
+
+test("fetchProvenance degrades to the energy line alone when the record has no run block, issuing no request at all", async () => {
+  installDom(new DomDocument("https://site.example.test/material"));
+  const included = [recordResource({}, { _httk_total_energy: -2.5 })];
+  const obj = await material.fetchProvenance(ThrowsIfConstructed, { base_url: API }, resultWithRun(), included);
+  assert.equal(obj.totalEnergy, -2.5);
   assert.equal(obj.workflowUri, null);
   assert.equal(obj.sourceId, null);
   assert.deepEqual(obj.produced, []);
@@ -721,13 +756,10 @@ test("fetchProvenance degrades to the energy line alone when the run fetch fails
   installDom(new DomDocument("https://site.example.test/material"));
   class RunFailsTransport {
     constructor(config) { this.config = config; }
-    async fetchOne() {
-      if (this.config.entry_type === "_httk_records") return { resource: RECORD_WITH_RUN };
-      throw new Error("_httk_runs endpoint offline");
-    }
+    async fetchOne() { throw new Error("_httk_runs endpoint offline"); }
     async fetchPage() { throw new Error("must not be called"); }
   }
-  const obj = await material.fetchProvenance(RunFailsTransport, { base_url: API }, resultWithRun());
+  const obj = await material.fetchProvenance(RunFailsTransport, { base_url: API }, resultWithRun(), [RECORD_WITH_RUN]);
   assert.equal(obj.totalEnergy, -1.0);
   assert.equal(obj.workflowUri, null);
   assert.equal(obj.sourceId, null);
@@ -775,10 +807,7 @@ test("fetchProvenance turns produced files into download links via ONE batched f
   installDom(new DomDocument("https://site.example.test/material"));
   class FileAwareTransport {
     constructor(config) { this.config = config; FileAwareTransport.configs.push(config); }
-    async fetchOne() {
-      if (this.config.entry_type === "_httk_records") return { resource: RECORD_WITH_RUN };
-      return { resource: RUN_RESOURCE };
-    }
+    async fetchOne() { return { resource: RUN_RESOURCE }; }
     async fetchPage({ filter }) {
       FileAwareTransport.filters.push(filter);
       return { resources: [{ id: FILE_EDGE_ID, type: "files", attributes: { name: "vasprun.xml", url: FILE_URL, size: 20480 } }] };
@@ -786,7 +815,7 @@ test("fetchProvenance turns produced files into download links via ONE batched f
   }
   FileAwareTransport.configs = [];
   FileAwareTransport.filters = [];
-  const obj = await material.fetchProvenance(FileAwareTransport, { base_url: API }, resultWithRun());
+  const obj = await material.fetchProvenance(FileAwareTransport, { base_url: API }, resultWithRun(), [RECORD_WITH_RUN]);
   assert.deepEqual(FileAwareTransport.filters, [`id="${FILE_EDGE_ID}"`]);
   const filesConfig = FileAwareTransport.configs.find((c) => c.entry_type === "files");
   assert.deepEqual(filesConfig, { base_url: API, entry_type: "files", response_fields: ["name", "url", "size"], page_size: 1 });
@@ -809,13 +838,10 @@ test("fetchProvenance leaves produced files as non-link entries when the batched
   installDom(new DomDocument("https://site.example.test/material"));
   class FilesFailTransport {
     constructor(config) { this.config = config; }
-    async fetchOne() {
-      if (this.config.entry_type === "_httk_records") return { resource: RECORD_WITH_RUN };
-      return { resource: RUN_RESOURCE };
-    }
+    async fetchOne() { return { resource: RUN_RESOURCE }; }
     async fetchPage() { throw new Error("files endpoint offline"); }
   }
-  const obj = await material.fetchProvenance(FilesFailTransport, { base_url: API }, resultWithRun());
+  const obj = await material.fetchProvenance(FilesFailTransport, { base_url: API }, resultWithRun(), [RECORD_WITH_RUN]);
   const file = obj.produced.find((item) => item.type === "files");
   assert.equal("file" in file, false);
   const section = material.buildProvenance(obj);
@@ -840,16 +866,13 @@ test("fetchProvenance renders a mixed link/non-link list when the files batch is
   const fileAUrl = "https://api.example.test/optimade/amdb/extensions/files/entry/file-a";
   class PartialTransport {
     constructor(config) { this.config = config; }
-    async fetchOne() {
-      if (this.config.entry_type === "_httk_records") return { resource: RECORD_WITH_RUN };
-      return { resource: twoFileRun };
-    }
+    async fetchOne() { return { resource: twoFileRun }; }
     async fetchPage({ filter }) {
       PartialTransport.filesFilter = filter;
       return { resources: [{ id: "file-a", type: "files", attributes: { name: "a.txt", url: fileAUrl, size: 10 } }] };
     }
   }
-  const obj = await material.fetchProvenance(PartialTransport, { base_url: API }, resultWithRun());
+  const obj = await material.fetchProvenance(PartialTransport, { base_url: API }, resultWithRun(), [RECORD_WITH_RUN]);
   assert.equal(PartialTransport.filesFilter, `id="file-a" OR id="file-b"`);
   const section = material.buildProvenance(obj);
   const links = section.querySelectorAll("a.provenance-produced-file");
@@ -860,18 +883,18 @@ test("fetchProvenance renders a mixed link/non-link list when the files batch is
   assert.deepEqual(spans.map((s) => s.title), ["file-b"]);
 });
 
-// Serves discovery, the result single-entry request, and the direct `_httk_records/<id>` /
-// `_httk_runs/<id>` GETs (fetchOne) — no filter route is ever mounted for either.
+// Serves discovery, the result single-entry request (the calculation record rides in via
+// `included`, exactly like the server's verified include=_httk_records behavior), and the
+// direct `_httk_runs/<id>` GET (fetchOne) — no filter route is ever mounted, and the
+// calculation record is never fetched by id at all any more.
 function runAwareFetch(result, included = []) {
   return async (request) => {
     const url = new URL(request);
     if (url.pathname === "/optimade/amdb/versions") return textResponse("version\n1\n", url.href);
-    if (url.pathname === "/optimade/amdb/v1/info") return jsonResponse(infoRoot([RESULT_TYPE, "structures", "_httk_records", "_httk_runs"]), url.href);
+    if (url.pathname === "/optimade/amdb/v1/info") return jsonResponse(infoRoot([RESULT_TYPE, "structures", "_httk_runs"]), url.href);
     if (url.pathname === `/optimade/amdb/v1/info/${RESULT_TYPE}`) return jsonResponse(infoEntry(RESULT_TYPE, resultFields), url.href);
     if (url.pathname === "/optimade/amdb/v1/info/structures") return jsonResponse(infoEntry("structures", structureFields), url.href);
-    if (url.pathname === "/optimade/amdb/v1/info/_httk_records") return jsonResponse(infoEntry("_httk_records", RECORD_FIELDS), url.href);
     if (url.pathname === "/optimade/amdb/v1/info/_httk_runs") return jsonResponse(infoEntry("_httk_runs", RUN_FIELDS), url.href);
-    if (url.pathname === `/optimade/amdb/v1/_httk_records/${encodeURIComponent(CALC_RECORD_ID)}`) return jsonResponse(pageResponse(RECORD_WITH_RUN), url.href);
     if (url.pathname === `/optimade/amdb/v1/_httk_runs/${encodeURIComponent(RUN_ID)}`) return jsonResponse(pageResponse(RUN_RESOURCE), url.href);
     if (url.pathname.endsWith("/_httk_alts")) return jsonResponse(pageResponse([]), url.href);
     if (url.pathname.startsWith(`/optimade/amdb/v1/${RESULT_TYPE}/`)) return jsonResponse(pageResponse(result, included), url.href);
@@ -879,28 +902,35 @@ function runAwareFetch(result, included = []) {
   };
 }
 
-test("detail page appends a live Provenance section via direct record/run GETs, and omits it when absent", async () => {
+test("detail page appends a Provenance section once the run settles (the record rides in via included, no direct record GET), and omits it when absent", async () => {
   const withRun = resultWithRun({ ...Object.fromEntries(resultFields.map((n) => [n, null])), _anyterial_formula: "CrSb" });
   const shown = shell({}, `?id=${encodeURIComponent(RESULT_WITH_RUN_ID)}`);
   const requests = [];
-  const network = runAwareFetch(withRun, [structureResource(structureAttributes({ lattice_vectors: null }), STRUCTURE_EDGE_ID)]);
+  const network = runAwareFetch(withRun, [
+    structureResource(structureAttributes({ lattice_vectors: null }), STRUCTURE_EDGE_ID),
+    RECORD_WITH_RUN,
+  ]);
   globalThis.fetch = async (request) => { requests.push(new URL(request)); return network(request); };
   await material.loadShell(shown.result, OptimadeTransport);
   assert.match(shown.result.textContent, /Provenance/);
   assert.match(shown.result.textContent, /httk-v1:abc/);
   assert.match(shown.result.textContent, /relaxed_structure/);
   assert.match(shown.result.textContent, /-1\.000000/);
-  // The record and run were located by direct id GETs.
-  assert.ok(requests.some((u) => u.pathname === `/optimade/amdb/v1/_httk_records/${encodeURIComponent(CALC_RECORD_ID)}`), "the calculation record was fetched directly by id");
+  // The run was located by a direct id GET; the calculation record never was — it came
+  // in on the main request's `included` array.
   assert.ok(requests.some((u) => u.pathname === `/optimade/amdb/v1/_httk_runs/${encodeURIComponent(RUN_ID)}`), "the run was fetched directly by id");
-  // No `_httk_runs` or `_httk_records` request ever carries a `filter` query parameter.
-  assert.equal(requests.some((u) => (u.pathname === "/optimade/amdb/v1/_httk_runs" || u.pathname === "/optimade/amdb/v1/_httk_records") && u.searchParams.has("filter")), false);
+  assert.equal(requests.some((u) => u.pathname.startsWith("/optimade/amdb/v1/_httk_records/")), false, "no _httk_records/<id> GET is ever issued");
+  // No `_httk_runs` request ever carries a `filter` query parameter.
+  assert.equal(requests.some((u) => u.pathname === "/optimade/amdb/v1/_httk_runs" && u.searchParams.has("filter")), false);
   // No produced entry is ever a real material-page link.
   assert.equal(shown.result.querySelectorAll("a.provenance-produced-link").length, 0);
 
   const noProv = resultResource({ _anyterial_formula: "CrSb" }, { id: MATERIAL_ID });
   const hidden = shell();
-  globalThis.fetch = fetchFor(noProv).fetch;
+  const hiddenRequests = [];
+  const hiddenNetwork = fetchFor(noProv).fetch;
+  globalThis.fetch = async (request) => { hiddenRequests.push(new URL(request)); return hiddenNetwork(request); };
   await material.loadShell(hidden.result, OptimadeTransport);
   assert.doesNotMatch(hidden.result.textContent, /Provenance/);
+  assert.equal(hiddenRequests.some((u) => u.pathname.startsWith("/optimade/amdb/v1/_httk_records/")), false);
 });

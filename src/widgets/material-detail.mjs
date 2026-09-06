@@ -58,8 +58,6 @@ const ALT_PAGE_LIMIT = 8;
 const ALT_KIND_ORDER = ["conventional", "primitive"];
 // The only run fields the Provenance section needs from each linked _httk_runs entry.
 const RUN_RESPONSE_FIELDS = ["_httk_workflow_declaration_uri", "_httk_source_id"];
-// The only field the Provenance section needs off the linked calculation _httk_records entry.
-const RECORD_RESPONSE_FIELDS = ["_httk_total_energy"];
 // The served fields each produced `files` entry needs to become a download link:
 // the human name (anchor text), the absolute byte-route url (href), and the size
 // shown as a compact annotation.
@@ -72,6 +70,24 @@ const node = (tag, className = "", value = null) => {
   return result;
 };
 const append = (parent, ...children) => children.forEach((child) => child && parent.append(child));
+// Swap a placeholder node for its resolved replacement in place, and drop a placeholder
+// that resolved to nothing. Real DOM elements support `.replaceWith`/`.remove` directly;
+// the parentNode.childNodes splice is the fallback for the minimal test-harness DOM.
+const replaceNode = (oldNode, newNode) => {
+  if (typeof oldNode.replaceWith === "function") return oldNode.replaceWith(newNode);
+  const parent = oldNode.parentNode;
+  if (!parent) return;
+  parent.childNodes[parent.childNodes.indexOf(oldNode)] = newNode;
+  newNode.parentNode = parent;
+  oldNode.parentNode = null;
+};
+const removeNode = (oldNode) => {
+  if (typeof oldNode.remove === "function") return oldNode.remove();
+  const parent = oldNode.parentNode;
+  if (!parent) return;
+  parent.childNodes = parent.childNodes.filter((child) => child !== oldNode);
+  oldNode.parentNode = null;
+};
 const arrayValue = (value) => (Array.isArray(value) ? value.filter((item) => item !== null && item !== undefined) : []);
 const joinValue = (value) => (arrayValue(value).join(", ") || "n/a");
 const safeNumber = (value) => (typeof value === "number" && Number.isFinite(value) ? value : null);
@@ -421,15 +437,21 @@ function sourceLabel(source) {
 // `attributes` is the RESULT resource (its `_httk_custom_figures` records supply the
 // static band/structure/BZ images); `structureAttributes` is the INCLUDED slim
 // structure resource (its five CrysViz structural fields drive the interactive iframe).
-function buildFigures(attributes, structureAttributes, apiBase, alternatives = [], menuLinks = []) {
+// `altState` is a mutable `{ list }` box (not a plain array): the alternatives fetch
+// resolves after this first render, and both the live theme-toggle listener and the
+// returned `refreshStructureFrame` re-read `altState.list` at the moment they run, so
+// mutating the box in place (never replacing it) is what lets a later alternatives
+// arrival, and every subsequent theme toggle, agree on the same up-to-date frame set.
+function buildFigures(attributes, structureAttributes, apiBase, altState = { list: [] }, menuLinks = []) {
   const records = new Map(arrayValue(attributes._httk_custom_figures).map((item) => [item.key, item]));
   const grid = node("div", "figure-grid");
   let availableCount = 0;
+  let refreshStructureFrame = null;
   FIGURE_SPECS.forEach((spec) => {
     const record = records.get(spec.key) || {};
     // The structure card becomes the interactive CrysViz iframe when the included
     // structure carries valid data; otherwise it keeps the static-figure/placeholder path.
-    const crysvizSrc = spec.key === "structure" ? crysvizIframeSrc(structureAttributes, crysvizBaseUrl, alternatives, menuLinks) : "";
+    const crysvizSrc = spec.key === "structure" ? crysvizIframeSrc(structureAttributes, crysvizBaseUrl, altState.list, menuLinks) : "";
     const light = crysvizSrc ? "" : record.available === true ? figureUrl(record.url, apiBase) : "";
     const dark = light ? figureUrl(record.dark_url, apiBase) || light : "";
     const layout = crysvizSrc ? "figure-card--wide" : spec.layout;
@@ -449,12 +471,23 @@ function buildFigures(attributes, structureAttributes, apiBase, alternatives = [
       frame.setAttribute("loading", "lazy");
       visual.append(frame);
       figure.append(visual);
-      // Follow live theme toggles: rebuild the src (with the new theme) — reuses
-      // crysvizIframeSrc so there is one source of truth for the URL shape.
-      onThemeChange(() => {
-        const next = crysvizIframeSrc(structureAttributes, crysvizBaseUrl, alternatives, menuLinks);
+      // Rebuild the src from the CURRENT altState.list (with the current theme) — reused
+      // both for a live theme toggle and, by the caller, for a just-arrived alternatives
+      // fetch — one source of truth for the URL shape. A full alternatives list can push
+      // the src over CRYSVIZ_URL_MAX_CHARS (crysvizIframeSrc then returns ""); rather than
+      // leave the iframe stuck on its previous (possibly pre-alternatives) src forever,
+      // drop back to the single loaded frame, which already fit.
+      const refresh = () => {
+        let next = crysvizIframeSrc(structureAttributes, crysvizBaseUrl, altState.list, menuLinks);
+        if (!next && altState.list.length) {
+          console.warn("CrysViz iframe src exceeded the length guard with alternative frames; falling back to the loaded frame only");
+          altState.list = [];
+          next = crysvizIframeSrc(structureAttributes, crysvizBaseUrl, altState.list, menuLinks);
+        }
         if (next) frame.setAttribute("src", next);
-      });
+      };
+      onThemeChange(refresh);
+      refreshStructureFrame = refresh;
     } else if (light) {
       availableCount += 1;
       const visual = node("div", "figure-visual");
@@ -473,7 +506,7 @@ function buildFigures(attributes, structureAttributes, apiBase, alternatives = [
     }
     grid.append(figure);
   });
-  return { grid, availableCount };
+  return { grid, availableCount, refreshStructureFrame };
 }
 
 function buildVariantTable(variants) {
@@ -623,25 +656,43 @@ async function fetchLinkedResource(Transport, config, entryType, responseFields,
   }
 }
 
-// Build the plain provenance OBJECT the renderer consumes, driven by the material's
-// `_httk_records` relationship. The `calculation_output_record`-role entry (present
-// only for run-coupled materials) names the calculation record; no such entry (or no
-// `_httk_records` block at all) → no Provenance section. The record itself serves the
-// total energy and, via its own `_httk_is_output`/`_httk_is_artifact` reverse blocks,
-// the id of the producing run; the run carries the workflow uri, source id, and a
-// forward `_httk_has_*` block listing what it produced. A record-fetch failure or a
-// record with no run id degrades to the energy line alone, issuing no run request; a
-// run-fetch failure degrades to the same energy-only rendering.
-async function fetchProvenance(Transport, config, resource) {
+// The calculation record named by the RESULT's `_httk_records` relationship (the
+// `calculation_output_record`-role entry, present only for run-coupled materials),
+// located directly in `included` — it rides in on the main request via
+// `include=_httk_records`, so this needs no network request of its own. Returns
+// `{ calcRecordId, record }`, or null when: there is no `_httk_records` block at all;
+// there is a block but no calculation_output_record entry in it (the common case: most
+// materials only carry the screening_result_record entry); or (defensive, should not
+// happen — the server always inlines what it references) the entry is present but its
+// resource is missing from `included`, which warns rather than silently degrading.
+function resolveCalcRecord(resource, included) {
   const records = arrayValue(resource.relationships?._httk_records?.data);
   const calcEntry = records.find((entry) => entry?.meta?.role === "calculation_output_record");
   const calcRecordId = typeof calcEntry?.id === "string" && calcEntry.id ? calcEntry.id : null;
   if (!calcRecordId) return null;
-  const record = await fetchLinkedResource(
-    Transport, config, "_httk_records", RECORD_RESPONSE_FIELDS, calcRecordId, "Calculation record OPTIMADE request failed",
-  );
-  const totalEnergy = safeNumber(record?.attributes?._httk_total_energy);
-  const runId = record ? firstRelationshipId(record, "_httk_is_output") || firstRelationshipId(record, "_httk_is_artifact") : null;
+  const byId = new Map(arrayValue(included).map((item) => [item.id, item]));
+  const record = byId.get(calcRecordId);
+  if (!record || record.type !== "_httk_records") {
+    console.warn("Calculation record referenced but missing from included", calcRecordId);
+    return null;
+  }
+  return { calcRecordId, record };
+}
+
+// Build the plain provenance OBJECT the renderer consumes, driven by the material's
+// `_httk_records` relationship and the calculation record it names (see
+// resolveCalcRecord — no record fetch is issued any more). The record itself serves
+// the total energy and, via its own `_httk_is_output`/`_httk_is_artifact` reverse
+// blocks, the id of the producing run; the run carries the workflow uri, source id,
+// and a forward `_httk_has_*` block listing what it produced. A record with no run id
+// degrades to the energy line alone, issuing no run request; a run-fetch failure
+// degrades to the same energy-only rendering.
+async function fetchProvenance(Transport, config, resource, included) {
+  const resolved = resolveCalcRecord(resource, included);
+  if (!resolved) return null;
+  const { calcRecordId, record } = resolved;
+  const totalEnergy = safeNumber(record.attributes?._httk_total_energy);
+  const runId = firstRelationshipId(record, "_httk_is_output") || firstRelationshipId(record, "_httk_is_artifact");
   const run = runId
     ? await fetchLinkedResource(Transport, config, "_httk_runs", RUN_RESPONSE_FIELDS, runId, "Run provenance OPTIMADE request failed")
     : null;
@@ -709,7 +760,12 @@ function buildProvenance(provenance) {
   return sec;
 }
 
-function buildDetail(resource, included, structure, apiBase, alternatives = [], provenance = null) {
+// Builds the whole main detail article except Provenance (loadShell owns that section:
+// its content depends on a fetch — run + files — that resolves after this first paint,
+// see loadShell). Returns `{ article, figureSection, refreshStructureFrame }` so the
+// caller can mark the Figures section busy and, once the alternatives fetch settles,
+// refresh just the CrysViz iframe (see buildFigures/altState) without rebuilding it.
+function buildDetail(resource, included, structure, apiBase, altState = { list: [] }) {
   const attributes = resource.attributes || {};
   const structureAttributes = structure?.attributes || {};
   const structureId = structure?.id || "";
@@ -766,7 +822,7 @@ function buildDetail(resource, included, structure, apiBase, alternatives = [], 
 
   const figureSection = section("Figures");
   const figureHeading = node("div", "detail-figure-heading");
-  const figureResult = buildFigures(attributes, structureAttributes, apiBase, alternatives, structureDownloadLinks(structureId, apiBase));
+  const figureResult = buildFigures(attributes, structureAttributes, apiBase, altState, structureDownloadLinks(structureId, apiBase));
   figureHeading.append(node("h3", "", "Figures"), node("p", "section-note", `${figureResult.availableCount} of ${FIGURE_SPECS.length} detail figures available from the mounted calculation archive.`));
   figureSection.replaceChildren(figureHeading, figureResult.grid);
   article.append(figureSection);
@@ -785,9 +841,7 @@ function buildDetail(resource, included, structure, apiBase, alternatives = [], 
     article.append(messages);
   }
 
-  const provenanceSection = buildProvenance(provenance);
-  if (provenanceSection) article.append(provenanceSection);
-  return article;
+  return { article, figureSection, refreshStructureFrame: figureResult.refreshStructureFrame };
 }
 
 function showState(shell, message) {
@@ -859,29 +913,108 @@ async function loadShell(shell, Transport = OptimadeTransport) {
     showNoSelection(shell);
     return;
   }
+  let result;
+  let discovery;
   try {
     const transport = new Transport(config, { documentBase: document.baseURI });
     const include = Array.isArray(config.include) && config.include.length ? config.include : ["structures", "references"];
-    const result = await transport.fetchOne(id, { include });
-    if (result === null) {
-      showState(shell, "The requested material entry could not be found.");
-      return;
-    }
-    const discovery = await transport.discover();
-    // The interactive structure, its alternatives and its CIF/POSCAR links all key on
-    // the INCLUDED slim structure's id, not the result id.
-    const structure = includedStructure(result.resource, result.included);
-    const alternatives = structure ? await fetchAlternatives(Transport, config, discovery.apiBaseUrl, structure.id) : null;
-    const provenance = await fetchProvenance(Transport, config, result.resource);
-    shell.replaceChildren(
-      buildDetail(result.resource, result.included, structure, discovery.apiBaseUrl, alternatives, provenance),
-    );
-    shell.setAttribute("aria-busy", "false");
-    window.altermagnetsUi?.initSubtree(shell);
+    // The material fetch and service discovery are independent — run them concurrently
+    // rather than one after the other.
+    [result, discovery] = await Promise.all([transport.fetchOne(id, { include }), transport.discover()]);
   } catch (error) {
     console.error("Material detail OPTIMADE request failed", error);
     showState(shell, "The material data service is temporarily unavailable. Please try again later.");
+    return;
   }
+  if (result === null) {
+    showState(shell, "The requested material entry could not be found.");
+    return;
+  }
+
+  // Building the shell content and painting it can throw on a genuinely malformed
+  // response (a real bug, not the network/not-found faults above) — guard it the same
+  // way, rather than leaving the shell stuck on its initial "Loading…" placeholder.
+  let structure;
+  let altState;
+  let figureSection;
+  let refreshStructureFrame;
+  let provenancePlaceholder;
+  let figureStatus = null;
+  try {
+    // The interactive structure, its alternatives and its CIF/POSCAR links all key on
+    // the INCLUDED slim structure's id, not the result id. `altState` starts empty (a
+    // single loaded frame) and is mutated in place once the alternatives fetch below
+    // resolves — see buildFigures.
+    structure = includedStructure(result.resource, result.included);
+    altState = { list: [] };
+    let article;
+    ({ article, figureSection, refreshStructureFrame } = buildDetail(
+      result.resource, result.included, structure, discovery.apiBaseUrl, altState,
+    ));
+
+    // The calculation record (if any) already rode in on the main request via
+    // include=_httk_records, but the Provenance section also needs the producing run
+    // (and, through it, the produced-files batch) — a chain that only starts now. Show a
+    // busy placeholder in its final position; fetchProvenance below replaces or removes it.
+    provenancePlaceholder = section("Provenance");
+    provenancePlaceholder.setAttribute("aria-busy", "true");
+    provenancePlaceholder.append(node("p", "section-note", "Loading provenance…"));
+    article.append(provenancePlaceholder);
+
+    // The alternative derived-cell frames are likewise still in flight when structure is
+    // present; mark the Figures section busy until that settles.
+    if (structure) {
+      figureSection.setAttribute("aria-busy", "true");
+      figureStatus = node("p", "section-note section-status", "Loading alternative cell frames…");
+      figureSection.append(figureStatus);
+    }
+
+    // First paint: everything that does not depend on the two remaining fetches below.
+    shell.replaceChildren(article);
+    shell.setAttribute("aria-busy", "false");
+    window.altermagnetsUi?.initSubtree(shell);
+  } catch (error) {
+    console.error("Material detail rendering failed", error);
+    showState(shell, "The material data service is temporarily unavailable. Please try again later.");
+    return;
+  }
+
+  // Alternatives and Provenance are independent of each other and of the first paint
+  // above; run them concurrently and let each fill (or remove) only its own section on
+  // resolve, so a failure in one never blocks or blanks the other.
+  const alternativesSettled = (structure
+    ? fetchAlternatives(Transport, config, discovery.apiBaseUrl, structure.id).then((alternatives) => {
+        if (Array.isArray(alternatives) && alternatives.length) {
+          altState.list = alternatives;
+          refreshStructureFrame?.();
+        }
+      })
+    : Promise.resolve()
+  ).finally(() => {
+    figureSection.setAttribute("aria-busy", "false");
+    if (figureStatus) removeNode(figureStatus);
+  });
+
+  const provenanceSettled = fetchProvenance(Transport, config, result.resource, result.included)
+    .then((provenance) => {
+      const built = buildProvenance(provenance);
+      if (built) {
+        replaceNode(provenancePlaceholder, built);
+        // `built` is a freshly built element (its own dataset.katexRendered is unset),
+        // so this actually renders its math — re-running initSubtree on `shell` here
+        // instead would no-op: renderMath skips an element already marked rendered,
+        // and the first-paint call above already marked the shell itself.
+        window.altermagnetsUi?.initSubtree(built);
+      } else {
+        removeNode(provenancePlaceholder);
+      }
+    })
+    .catch((error) => {
+      console.error("Provenance OPTIMADE request failed", error);
+      removeNode(provenancePlaceholder);
+    });
+
+  await Promise.allSettled([alternativesSettled, provenanceSettled]);
 }
 
 const start = () => document.querySelectorAll("[data-site-material-detail]").forEach((shell) => loadShell(shell));

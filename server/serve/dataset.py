@@ -1,7 +1,7 @@
 """Dataset assembly and custom-property projection for the altermagnets service."""
 
 import logging
-from collections.abc import Iterable, Mapping, MutableMapping
+from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from pathlib import Path
 from typing import Any
 
@@ -233,38 +233,68 @@ def _figure_payload(record: Any, public_base_url: str) -> list[dict[str, Any]]:
     return figures
 
 
-def _material_properties(record: Any, public_base_url: str) -> dict[str, Any]:
-    """Project one :class:`MaterialRecord` into served custom properties."""
-    variants = [
+def _read_magndata_variants(record: Any, public_base_url: str) -> list[dict[str, Any]]:
+    # An unresolved linked MAGNDATA id deliberately produces []: the detail
+    # page renders its no-symmetry-record placeholder from that state.
+    return [
         _variant_payload(link.record.id, variant) for link in record.magndata_links for variant in link.record.variants
     ]
-    return {
-        "_anyterial_formula": record.formula or None,
-        "_anyterial_elements": sorted(record.elements) or None,
-        "_anyterial_space_group": record.space_group or None,
-        "_anyterial_space_group_search": record.space_group_search or None,
-        "_anyterial_classification": record.classification or None,
-        "_anyterial_magnetic_phases": _nullable_list(record.magnetic_phases),
-        "_anyterial_wave_classes": _nullable_list(record.wave_classes),
-        "_anyterial_parent_spacegroups": _nullable_list(record.parent_spacegroups),
-        "_anyterial_icsd_ids": _nullable_list(record.icsd_ids),
-        "_anyterial_search_text": record.search_text or None,
-        # An unresolved linked MAGNDATA id deliberately produces []: the detail
-        # page renders its no-symmetry-record placeholder from that state.
-        "_anyterial_magndata_variants": variants,
-        "_httk_custom_figures": _figure_payload(record, public_base_url),
-        "_anyterial_max_spin_splitting": record.max_ss,
-        "_anyterial_avg_spin_splitting": record.avg_ss,
-        "_anyterial_spin_splitting_fraction": (None if record.fdelta_pct is None else record.fdelta_pct / 100.0),
-        "_httk_dft_band_gap": record.bandgap,
-        "_anyterial_electronic_type": record.electronic_type,
-        "_anyterial_min_crustal_abundance": record.min_abund_ppm,
-        "_anyterial_screening_rank": record.screening_rank,
-        "_anyterial_magnetic_phase": _screening_phase(record.magnetic_phases[0]) if record.magnetic_phases else None,
-        "_anyterial_wave_class": record.wave_classes[0] if record.wave_classes else None,
-        "_httk_magnetic_space_group_bns": (variants[0]["bns"][0] if variants and variants[0]["bns"] else None),
-        "_httk_magndata_ids": [link.record.id for link in record.magndata_links] or None,
-    }
+
+
+def _read_magnetic_space_group_bns(record: Any, public_base_url: str) -> str | None:
+    # Only the first linked variant's first BNS label is served here; walk the
+    # same (link, variant) order `_read_magndata_variants` flattens without
+    # building every variant's full payload just to index one string out.
+    for link in record.magndata_links:
+        for variant in link.record.variants:
+            bns = _nullable_list(variant.bns_labels)
+            return bns[0] if bns else None
+    return None
+
+
+#: One reader per served property: each touches only the record field(s) that
+#: property needs, so a narrow `response_fields` request loads only those
+#: fields off the lazy row instead of materializing every property's closure.
+_PROPERTY_READERS: dict[str, Callable[[Any, str], Any]] = {
+    "_anyterial_formula": lambda record, public_base_url: record.formula or None,
+    "_anyterial_elements": lambda record, public_base_url: sorted(record.elements) or None,
+    "_anyterial_space_group": lambda record, public_base_url: record.space_group or None,
+    "_anyterial_space_group_search": lambda record, public_base_url: record.space_group_search or None,
+    "_anyterial_classification": lambda record, public_base_url: record.classification or None,
+    "_anyterial_magnetic_phases": lambda record, public_base_url: _nullable_list(record.magnetic_phases),
+    "_anyterial_wave_classes": lambda record, public_base_url: _nullable_list(record.wave_classes),
+    "_anyterial_parent_spacegroups": lambda record, public_base_url: _nullable_list(record.parent_spacegroups),
+    "_anyterial_icsd_ids": lambda record, public_base_url: _nullable_list(record.icsd_ids),
+    "_anyterial_search_text": lambda record, public_base_url: record.search_text or None,
+    "_anyterial_magndata_variants": _read_magndata_variants,
+    "_httk_custom_figures": lambda record, public_base_url: _figure_payload(record, public_base_url),
+    "_anyterial_max_spin_splitting": lambda record, public_base_url: record.max_ss,
+    "_anyterial_avg_spin_splitting": lambda record, public_base_url: record.avg_ss,
+    "_anyterial_spin_splitting_fraction": (
+        lambda record, public_base_url: None if record.fdelta_pct is None else record.fdelta_pct / 100.0
+    ),
+    "_httk_dft_band_gap": lambda record, public_base_url: record.bandgap,
+    "_anyterial_electronic_type": lambda record, public_base_url: record.electronic_type,
+    "_anyterial_min_crustal_abundance": lambda record, public_base_url: record.min_abund_ppm,
+    "_anyterial_screening_rank": lambda record, public_base_url: record.screening_rank,
+    "_anyterial_magnetic_phase": (
+        lambda record, public_base_url: _screening_phase(record.magnetic_phases[0]) if record.magnetic_phases else None
+    ),
+    "_anyterial_wave_class": lambda record, public_base_url: record.wave_classes[0] if record.wave_classes else None,
+    "_httk_magnetic_space_group_bns": _read_magnetic_space_group_bns,
+    "_httk_magndata_ids": lambda record, public_base_url: [link.record.id for link in record.magndata_links] or None,
+}
+
+
+def _material_properties(record: Any, public_base_url: str) -> dict[str, Any]:
+    """Project one :class:`MaterialRecord` into served custom properties.
+
+    Runs every per-property reader; used by the in-memory/``--validate`` path,
+    which needs the full closure up front. The store-native serving path (see
+    ``material_store._provider_response``) instead calls one reader per
+    requested property, so it never touches a field nobody asked for.
+    """
+    return {name: reader(record, public_base_url) for name, reader in _PROPERTY_READERS.items()}
 
 
 def build_dataset(

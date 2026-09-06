@@ -252,14 +252,17 @@ def test_combined_public_origin_cli(monkeypatch: pytest.MonkeyPatch) -> None:
     }
 
 
-def test_standalone_static_site_does_not_advertise_the_combined_pilot() -> None:
+def test_standalone_static_site_advertises_the_optimade_tab() -> None:
+    # The combined-serving OPTIMADE browser pilot this test used to guard against is gone;
+    # the persistent "OPTIMADE" nav tab and static content page are unconditional site
+    # furniture (like "About"), present in standalone static builds too.
     app = create_web_asgi_app(ROOT / "src", config_name="config")
 
     with TestClient(app, base_url="http://testserver") as client:
         home = client.get("/")
 
     assert home.status_code == 200
-    assert ">OPTIMADE</a>" not in home.text
+    assert ">OPTIMADE</a>" in home.text
 
 
 def _child_app(name: str, events: list[str]) -> Starlette:

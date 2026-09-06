@@ -110,15 +110,13 @@ files -> OptimadeFile
 A filtered, sorted search over the screening results, narrowed to the fields we want:
 
 ```python
-from decimal import Decimal
-
 from httk.serve.optimade import OptimadeStore
 
 with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
     results = store.entry_type("_anyterial_altermagnet_screening_results")
     search = store.searcher()
     material = search.variable(results)
-    search.add(material._anyterial_max_spin_splitting > Decimal("0.5"))
+    search.add(material._anyterial_max_spin_splitting > 0.5)
     search.add_sort(material._anyterial_max_spin_splitting, descending=True)
 
     print("matches:", search.count())

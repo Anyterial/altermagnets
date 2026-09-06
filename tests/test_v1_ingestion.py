@@ -12,7 +12,7 @@ from material_store import load_material_structure, parse_magnetization_moments
 
 RAW_ROOT = Path(__file__).resolve().parents[1] / "data" / "raw_httk_v1"
 ROOT = RAW_ROOT / "1" / "Runs"
-PACKAGE = Path(__file__).resolve().parents[1] / "workflows" / "relax_and_scf_httk_v1"
+PACKAGE = Path(__file__).resolve().parents[1] / "workflows" / "scf_httk_v1"
 
 _COLLECT_SPEC = importlib.util.spec_from_file_location("amdb_v1_collect", PACKAGE / "collect.py")
 assert _COLLECT_SPEC is not None and _COLLECT_SPEC.loader is not None
@@ -51,8 +51,8 @@ def test_real_parenthesized_task_collects() -> None:
         if entry.record.payload_path.name == task_name
     )
     assert item.missing_collector is None
-    assert {"relaxed_structure", "total_energy", "vasprun", "doscar", "splitting_figure"} <= set(item.outputs)
-    assert item.outputs["relaxed_structure"].composition.chemical_formula_reduced == "C4CoH9NO6"
+    assert {"output_structure", "total_energy", "vasprun", "doscar", "splitting_figure"} <= set(item.outputs)
+    assert item.outputs["output_structure"].composition.chemical_formula_reduced == "C4CoH9NO6"
     assert item.outputs["total_energy"].value == -503.12232019
 
 
@@ -73,7 +73,7 @@ def test_synthetic_tree_collects_one_dated_inner_run(tmp_path: Path) -> None:
 
     item = next(iter(collect_finished_tree(tmp_path, workflow_dir=PACKAGE)))
     assert item.missing_collector is None
-    assert item.outputs["relaxed_structure"].composition.chemical_formula_reduced == "Si"
+    assert item.outputs["output_structure"].composition.chemical_formula_reduced == "Si"
     assert item.outputs["total_energy"].value == -1.0
 
 
@@ -147,7 +147,7 @@ def _magn_tree(tmp_path: Path, outcar_text: str) -> Path:
 def test_collect_attaches_matching_moments(tmp_path: Path) -> None:
     tree = _magn_tree(tmp_path, _OUTCAR_MAGN_3)
     item = next(iter(collect_finished_tree(tree, workflow_dir=PACKAGE)))
-    moments = item.outputs["relaxed_structure"].site_moments
+    moments = item.outputs["output_structure"].site_moments
     assert moments is not None
     assert moments.cartesian_moments.to_floats() == [[0.0, 0.0, 0.6], [0.0, 0.0, 0.0], [0.0, 0.0, 1.25]]
 
@@ -156,7 +156,7 @@ def test_collect_length_mismatch_omits_moments(tmp_path: Path, caplog: pytest.Lo
     tree = _magn_tree(tmp_path, _OUTCAR_MAGN_2)
     with caplog.at_level(logging.WARNING):
         item = next(iter(collect_finished_tree(tree, workflow_dir=PACKAGE)))
-    relaxed = item.outputs["relaxed_structure"]
+    relaxed = item.outputs["output_structure"]
     assert len(relaxed.sites) == 3
     assert relaxed.site_moments is None
     assert "2 moments for 3 sites" in caplog.text
@@ -166,7 +166,7 @@ def test_collect_declines_noncollinear_moments(tmp_path: Path, caplog: pytest.Lo
     tree = _magn_tree(tmp_path, _OUTCAR_NONCOLLINEAR)
     with caplog.at_level(logging.WARNING):
         item = next(iter(collect_finished_tree(tree, workflow_dir=PACKAGE)))
-    relaxed = item.outputs["relaxed_structure"]
+    relaxed = item.outputs["output_structure"]
     assert len(relaxed.sites) == 3
     assert relaxed.site_moments is None
     assert "noncollinear" in caplog.text

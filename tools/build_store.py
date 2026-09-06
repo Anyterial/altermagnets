@@ -8,6 +8,11 @@ ROOT = Path(__file__).resolve().parents[1]
 FUNCTIONS = ROOT / "src" / "functions"
 if str(FUNCTIONS) not in sys.path:
     sys.path.insert(0, str(FUNCTIONS))
+# material_store's served projections import serve.dataset's per-field readers,
+# so the server package must be importable for a store build too.
+SERVER = ROOT / "server"
+if str(SERVER) not in sys.path:
+    sys.path.insert(0, str(SERVER))
 
 from material_store import (
     build_store,

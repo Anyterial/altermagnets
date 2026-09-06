@@ -43,7 +43,11 @@ test("search fields map to exact OPTIMADE filter and sort strings", async () => 
   // Sort is not mapped here anymore; the validated display alias rides through as value.sort and
   // the OPTIMADE table widget resolves it via sort_aliases.
   assert.equal(result.value.sort, "abundance_desc");
-  assert.equal(api.buildQuery({ sort: "not-a-sort" }).value.sort, "screening_rank");
+  // Unknown/invalid sort values fall back to the new default (was "screening_rank").
+  assert.equal(api.buildQuery({ sort: "not-a-sort" }).value.sort, "max_ss_desc");
+  // "" is the explicit "ID order" (store-order) option and must survive untouched, not be
+  // coerced to the default -- it is not "unknown", it is a deliberately chosen empty sort.
+  assert.equal(api.buildQuery({ sort: "" }).value.sort, "");
 });
 
 test("field criteria are reflected into the OPTIMADE filter on load for any navigation", async () => {
@@ -63,6 +67,28 @@ test("field criteria are reflected into the OPTIMADE filter on load for any navi
   // An explicit ?filter= with no field criteria (a shared filtered link) is preserved untouched.
   assert.equal(await load(`?filter=${encodeURIComponent("_httk_dft_band_gap >= 1")}`), null);
   assert.equal(await load(""), null);
+});
+
+test("removing a filter param (a table pill's x) leaves the reduced filter stable, not resurrected", async () => {
+  const load = async (search) => {
+    const replaced = [];
+    const window = { location: { href: `https://site.example.test/search${search}`, search, replace: (u) => replaced.push(u), assign() {} } };
+    const document = new DomDocument();
+    installDom(document);
+    await runSearch(document, window);
+    return replaced.length ? new URL(replaced[0]).searchParams.get("filter") : null;
+  };
+  // search_table.py's `clears` mapping deletes a removed predicate's source param(s) together
+  // with the predicate itself, so the URL the pill's "x" lands on already carries BOTH the
+  // param gone and the reduced `filter` -- the redirect normalizer must leave that state alone.
+  const reduced = '_anyterial_elements HAS ALL "Cr"';
+  assert.equal(await load(`?elements=Cr&filter=${encodeURIComponent(reduced)}`), null);
+  // Sanity check on the same fixture: with the removed param still present, its predicate
+  // would be re-derived and appended, proving the "stable" case above is not a false positive.
+  assert.equal(
+    await load(`?elements=Cr&classification=collinear&filter=${encodeURIComponent(reduced)}`),
+    '_anyterial_elements HAS ALL "Cr" AND _anyterial_classification = "collinear"',
+  );
 });
 
 test("numeric fields reject non-finite values and trailing garbage", async () => {

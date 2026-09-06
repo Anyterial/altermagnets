@@ -12,7 +12,7 @@ from httk.store.backend.sql import StoredEntrySource
 #: The AMDB main entity's served (wire) entry type. The screening science, sorting,
 #: public-id remap, and envelope injection all key on it now that ``structures`` is a
 #: slim standard type (its ``served_form()`` name -- see ``AltermagnetScreeningResultEntry``).
-RESULT_TYPE = "_anyterial_altermagnet_screening_result"
+RESULT_TYPE = material_store.AltermagnetScreeningResultEntry.entry_type_definition().served_form().name
 
 SORTABLE_PROPERTIES = {
     RESULT_TYPE: (
@@ -26,13 +26,24 @@ SORTABLE_PROPERTIES = {
         "_anyterial_spin_splitting_fraction",
         "_httk_dft_band_gap",
         "_anyterial_min_crustal_abundance",
-        "_anyterial_screening_rank",
+        # ``_anyterial_screening_rank`` is deliberately NOT sortable here: the
+        # published rank is a curated (not query-stable) ordering; a raw sort on it
+        # 400s, and the widget's legacy ``screening_rank`` alias maps to ``id`` order
+        # (httk-serve rejects an empty alias value, so store order was not expressible).
     )
 }
 
 _PUBLIC_ID = "_httk_custom_public_id"
 _REFERENCE_IDS = "_httk_custom_reference_ids"
-_INTERNAL_STORE_PROPERTIES = {_PUBLIC_ID, _REFERENCE_IDS}
+_RUN_ID = "_httk_custom_run_id"
+_INTERNAL_STORE_PROPERTIES = {_PUBLIC_ID, _REFERENCE_IDS, _RUN_ID}
+
+#: Served entry types to include by default on single-entry GETs when the client
+#: sends no ``include=`` (unioned automatically with ``references`` by httk-serve).
+DEFAULT_INCLUDES = {
+    RESULT_TYPE: ("_httk_records",),
+    "_httk_runs": ("structures", "_httk_records", "files"),
+}
 
 
 class _LiveResults:
@@ -79,17 +90,41 @@ def _absolute_figure_urls(value: object, public_base_url: str) -> object:
     return figures
 
 
+#: Result properties demoted out of the default response (still described/servable
+#: via an explicit ``response_fields=`` request, and still filterable): heavy or
+#: rarely-needed payloads that would otherwise ride along on every default GET.
+_DEMOTED_DEFAULT_FIELDS = {
+    RESULT_TYPE: (
+        "_httk_custom_figures",
+        "_anyterial_magndata_variants",
+        "_anyterial_parent_spacegroups",
+        "_anyterial_icsd_ids",
+        "_httk_magnetic_space_group_bns",
+        "_anyterial_screening_rank",
+        "_anyterial_search_text",
+    )
+}
+
+
 def _public_store_schema(schema: Any) -> Any:
-    """Hide storage-only projections from the published OPTIMADE schema."""
+    """Hide storage-only projections and demote heavy fields from the published schema."""
 
     def public_names(names: Sequence[str]) -> tuple[str, ...]:
         return tuple(name for name in names if name not in _INTERNAL_STORE_PROPERTIES)
+
+    def public_defaults(entry: str, names: Sequence[str]) -> tuple[str, ...]:
+        demoted = _DEMOTED_DEFAULT_FIELDS.get(entry, ())
+        return tuple(name for name in public_names(names) if name not in demoted)
 
     entry_info = {
         entry: {
             **info,
             "properties": {
-                name: value for name, value in info["properties"].items() if name not in _INTERNAL_STORE_PROPERTIES
+                name: (
+                    {**value, "default_response": False} if name in _DEMOTED_DEFAULT_FIELDS.get(entry, ()) else value
+                )
+                for name, value in info["properties"].items()
+                if name not in _INTERNAL_STORE_PROPERTIES
             },
         }
         for entry, info in schema.entry_info.items()
@@ -98,7 +133,9 @@ def _public_store_schema(schema: Any) -> Any:
         schema,
         entry_info=entry_info,
         properties_by_entry={entry: public_names(names) for entry, names in schema.properties_by_entry.items()},
-        default_response_fields={entry: public_names(names) for entry, names in schema.default_response_fields.items()},
+        default_response_fields={
+            entry: public_defaults(entry, names) for entry, names in schema.default_response_fields.items()
+        },
         required_response_fields={
             entry: public_names(names) for entry, names in schema.required_response_fields.items()
         },
@@ -129,13 +166,15 @@ class AltermagnetStoreAdapter:
                 StoredEntrySource(store, material_store.AltermagnetScreeningResultEntry, "amdb-screening-results"),
                 StoredEntrySource(store, material_store.AltermagnetStructureEntry, "amdb-structures"),
                 StoredEntrySource(store, material_store.AltermagnetReferenceEntry, "amdb-references"),
-                # Serves the producing runs at _httk_runs: the runs serve their forward
-                # _httk_has_* edges (outputs and artifacts paired), and their edge
-                # targets — the typed records, the slim structure, the files — serve the
-                # derived reverse _httk_is_* blocks. The result itself carries no
-                # provenance edges; it reaches the run through its calculation-output
-                # record's reverse block. The id/filter/sort remaps below are
-                # result/references-scoped, so runs/structures pass through unmangled.
+                # Serves the producing runs at _httk_runs: the runs serve forward
+                # _httk_has_output edges only (artifacts are retired in this
+                # deployment — they duplicated outputs; see _save_reconstructed_runs),
+                # and their edge targets — the typed records, the slim structure, the
+                # files — serve the derived reverse _httk_is_output blocks. The result
+                # reaches its run through the injected _httk_runs relationship below
+                # (stamped run_id), with the records relationship for the science.
+                # The id/filter/sort remaps below are result/references-scoped, so
+                # runs/structures pass through unmangled.
                 StoredEntrySource(store, material_store.RunEntry, "amdb-runs"),
                 # The records and files families the runs' edges point at. Both serve
                 # raw store-minted ids (anyt.am.records-1-N / anyt.am.files-1-N) with no
@@ -146,6 +185,7 @@ class AltermagnetStoreAdapter:
                 StoredEntrySource(store, material_store.FileEntry, "amdb-files"),
             ),
             sortable=SORTABLE_PROPERTIES,
+            default_includes=DEFAULT_INCLUDES,
         )
         self._public_base_url = public_base_url.rstrip("/")
         self.schema = _public_store_schema(self._adapter.schema)
@@ -185,6 +225,11 @@ class AltermagnetStoreAdapter:
             # structures block IS served natively off the typed structure reference).
             if entry_type == RESULT_TYPE and _REFERENCE_IDS not in fields:
                 fields.append(_REFERENCE_IDS)
+            # Mirrors the reference-id projection above: the coupled run id is served
+            # only through this private column, used to inject the _httk_runs
+            # relationship block (references pattern) below.
+            if entry_type == RESULT_TYPE and _RUN_ID not in fields:
+                fields.append(_RUN_ID)
             store_sort = tuple(
                 (_PUBLIC_ID if name == "id" and id_remapped else name, descending) for name, descending in (sort or ())
             )
@@ -209,6 +254,7 @@ class AltermagnetStoreAdapter:
                 if id_remapped and isinstance(public_id, str):
                     values["id"] = public_id
                 reference_ids = values.pop(_REFERENCE_IDS, None)
+                run_id = values.pop(_RUN_ID, None)
                 if _PUBLIC_ID not in requested:
                     values.pop(_PUBLIC_ID, None)
                 if "_httk_custom_figures" in values:
@@ -227,6 +273,17 @@ class AltermagnetStoreAdapter:
                     # structures block is served natively off the typed structure reference
                     # (E3), so row.relationships already carries it.
                     relationships["references"] = [{"id": value} for value in reference_ids]
+                if entry_type == RESULT_TYPE and isinstance(run_id, str) and run_id:
+                    # Envelope-inject the producing run's relationship block off the
+                    # private stamped run id (the references pattern again): the run is
+                    # id-string linked here, not a Related field, so the federation
+                    # cannot serve it. This is already include-hydratable (the entries
+                    # collector falls back to the block key -- "_httk_runs" -- as the
+                    # related resource's type when no "type" key is present); only
+                    # depth-1 filtering/include *through* _httk_runs would need a typed
+                    # reference field here instead of this private scalar (the upgrade
+                    # path noted on AltermagnetScreeningResult.run_id).
+                    relationships["_httk_runs"] = [{"id": run_id}]
                 rows.append(ResultRow(values, relationships, dict(row.property_metadata)))
             return _LiveResults(source, rows)
 

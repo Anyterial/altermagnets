@@ -30,10 +30,10 @@ def execute(global_data, **kwargs) -> None:
             {"value": "s", "label": "s"},
         ],
         "sorts": [
-            {"value": "screening_rank", "label": "ID"},
             {"value": "max_ss_desc", "label": "Largest maximum spin splitting"},
             {"value": "avg_ss_desc", "label": "Largest average spin splitting"},
             {"value": "bandgap_desc", "label": "Largest KS gap"},
             {"value": "abundance_desc", "label": "Most abundant constituents"},
+            {"value": "", "label": "ID order"},
         ],
     }

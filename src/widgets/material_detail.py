@@ -34,9 +34,11 @@ RESPONSE_FIELDS = (
 #: The related resources inlined on the single-entry request: ``structures`` carries the
 #: CrysViz payload (its five structural fields come back as the include's default
 #: response set); ``references`` carries the DOI blocks; ``_httk_records`` carries the
-#: calculation record (total energy + its own reverse run block), eliminating the
-#: separate follow-up GET the Provenance section used to need.
-INCLUDE = ("structures", "references", "_httk_records")
+#: calculation record (total energy); ``_httk_runs`` carries the producing run itself,
+#: named directly by the result's stamped ``_httk_runs`` relationship, eliminating the
+#: follow-up run GET the Provenance section used to need (it now costs only the
+#: produced-files batch beyond this one request).
+INCLUDE = ("structures", "references", "_httk_records", "_httk_runs")
 
 
 def render(context, **props):

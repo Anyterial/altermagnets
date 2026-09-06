@@ -8,7 +8,10 @@
     electronic_type: new Set(["", "metallic", "semiconducting", "unknown"]),
     magnetic_phase: new Set(["", "AM", "Luttinger ferrimagnet", "weakly-canted AFM", "FiM", "non-AM"]),
     wave_class: new Set(["", "a", "b", "c", "d", "e", "f", "g", "d/g", "s"]),
-    sort: new Set(["screening_rank", "max_ss_desc", "avg_ss_desc", "bandgap_desc", "abundance_desc"]),
+    // Deliberately excludes "" -- the explicit "ID order" (store-order / no-sort) option
+    // (amendment 3) -- so sanitize() below can tell an intentional empty sort apart from
+    // invalid/unknown garbage (both would otherwise collapse to the same "" sentinel).
+    sort: new Set(["max_ss_desc", "avg_ss_desc", "bandgap_desc", "abundance_desc"]),
   };
   const numericPattern = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
   const maxLengths = {
@@ -31,12 +34,14 @@
     const value = {};
     fields.forEach((name) => {
       const cleaned = textToken(raw[name], maxLengths[name], name === "q" || name === "space_group" || name === "elements" ? "'\"" : "");
-      value[name] = enums[name] ? (enums[name].has(cleaned) ? cleaned : "") : cleaned;
+      // "sort" is handled separately below: an explicit "" must survive (store order),
+      // while any other unrecognized value falls back to the authored default.
+      value[name] = name === "sort" ? cleaned : enums[name] ? (enums[name].has(cleaned) ? cleaned : "") : cleaned;
     });
     for (const name of ["min_max_ss", "min_avg_ss", "min_fdelta_pct", "min_bandgap", "max_bandgap", "min_abundance_ppm"]) {
       value[name] = finiteNumber(value[name]) || "";
     }
-    if (!enums.sort.has(value.sort)) value.sort = "screening_rank";
+    if (value.sort !== "" && !enums.sort.has(value.sort)) value.sort = "max_ss_desc";
     return value;
   };
   const buildQuery = (raw) => {

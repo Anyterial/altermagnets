@@ -37,9 +37,9 @@ from .files import (
 logger = report.context_logger(logging.getLogger("httk.altermagnets.optimade"), "optimade")
 
 AMDB_PROVIDER = {
-    "name": "Anyterial",
-    "description": "The Anyterial collection of materials databases.",
-    "prefix": "anyt",
+    "name": "Anyterial Altermagnets Database (amdb)",
+    "description": "The Anyterial Altermagnets Database (amdb)",
+    "prefix": "anyterial",
 }
 AMDB_NAME = "Anyterial Altermagnets Database"
 AMDB_DESCRIPTION = "A database of materials computationally predicted to exhibit altermagnetism."

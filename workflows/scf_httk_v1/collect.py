@@ -1,4 +1,4 @@
-"""Collect one finished altermagnets httk-v1 VASP result."""
+"""Collect one finished altermagnets httk-v1 VASP SCF result (no relaxation: NSW = 0)."""
 
 import logging
 from collections.abc import Mapping
@@ -14,7 +14,7 @@ from httk.workflow.collecting import JobRecord
 from httk.workflow.compat.v1 import run_directory, task_file
 from httk.workflow.compat.v1.reader import parse_v1_task_name
 
-logger = logging.getLogger("httk.altermagnets.relax_and_scf_httk_v1")
+logger = logging.getLogger("httk.altermagnets.scf_httk_v1")
 
 _TOTAL_ENERGY_DEFINITION = "https://schemas.httk.org/defs/v0.1/properties/core/total_energy"
 
@@ -128,9 +128,9 @@ def collect(record: JobRecord) -> Mapping[str, object]:
         logger.warning("%s: cannot read input_structure: %s", outer, error)
 
     try:
-        relaxed_structure = load(str(task_file(inner, "CONTCAR")), precision=RELAXED_STRUCTURE_PRECISION)
+        output_structure = load(str(task_file(inner, "CONTCAR")), precision=RELAXED_STRUCTURE_PRECISION)
     except Exception as error:
-        logger.warning("%s: relaxed_structure unavailable: %s", outer, error)
+        logger.warning("%s: output_structure unavailable: %s", outer, error)
         raise
 
     outputs: dict[str, object] = {}
@@ -170,22 +170,22 @@ def collect(record: JobRecord) -> Mapping[str, object]:
             noncollinear = False
             moments = None
         if moments is None:
-            logger.debug("%s: no magnetization; emitting relaxed_structure without moments", outer)
+            logger.debug("%s: no magnetization; emitting output_structure without moments", outer)
         elif noncollinear:
             # site_moments as (0, 0, m) would misrepresent the x-projection as a
             # z-component; a noncollinear run needs the full vectors we do not have.
-            logger.warning("%s: noncollinear magnetization; emitting relaxed_structure without moments", outer)
-        elif len(moments) != len(relaxed_structure.sites):
+            logger.warning("%s: noncollinear magnetization; emitting output_structure without moments", outer)
+        elif len(moments) != len(output_structure.sites):
             logger.warning(
-                "%s: %d moments for %d sites; emitting relaxed_structure without moments",
+                "%s: %d moments for %d sites; emitting output_structure without moments",
                 outer,
                 len(moments),
-                len(relaxed_structure.sites),
+                len(output_structure.sites),
             )
         else:
-            relaxed_structure = _with_site_moments(relaxed_structure, moments)
+            output_structure = _with_site_moments(output_structure, moments)
 
-    outputs["relaxed_structure"] = UnitcellStructureView(relaxed_structure)
+    outputs["output_structure"] = UnitcellStructureView(output_structure)
 
     for role, names in {
         "vasprun": ("vasprun.xml", "vasprun.xml.bz2"),

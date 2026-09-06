@@ -37,6 +37,11 @@ ROOT = Path(__file__).resolve().parents[1]
 FUNCTIONS = ROOT / "src" / "functions"
 if str(FUNCTIONS) not in sys.path:
     sys.path.insert(0, str(FUNCTIONS))
+# material_store's served projections import serve.dataset's per-field readers,
+# so the server package must be importable for the curation CLI too.
+SERVER = ROOT / "server"
+if str(SERVER) not in sys.path:
+    sys.path.insert(0, str(SERVER))
 
 from httk.core.project.sealing import SealError
 from httk.store import IdLedger, IdLedgerError
@@ -66,7 +71,7 @@ from material_store import (
 
 #: The v1 workflow package whose collector interprets a finished tree, exactly
 #: as the build resolves it (see ``build_store.build_store``).
-WORKFLOW_DIR = ROOT / "workflows" / "relax_and_scf_httk_v1"
+WORKFLOW_DIR = ROOT / "workflows" / "scf_httk_v1"
 
 
 def _open_read_only_ledger(ledger_path: Path) -> IdLedger:

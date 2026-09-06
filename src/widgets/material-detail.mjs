@@ -56,8 +56,6 @@ const ALT_STRUCTURE_FIELDS = ["lattice_vectors", "cartesian_site_positions", "sp
 const ALT_PAGE_LIMIT = 8;
 // Canonical frame order after the loaded cell; unknown kinds keep fetch order.
 const ALT_KIND_ORDER = ["conventional", "primitive"];
-// The only run fields the Provenance section needs from each linked _httk_runs entry.
-const RUN_RESPONSE_FIELDS = ["_httk_workflow_declaration_uri", "_httk_source_id"];
 // The served fields each produced `files` entry needs to become a download link:
 // the human name (anchor text), the absolute byte-route url (href), and the size
 // shown as a compact annotation.
@@ -594,14 +592,12 @@ function buildVariantCards(variants) {
 // kept in a title attribute.
 const PRODUCED_KIND_WORDS = { _httk_records: "record", files: "file", structures: "structure" };
 
-// List of what a run produced, from its forward StrongLink blocks. `_httk_has_output`
-// and `_httk_has_artifact` name identical target sets on the wire, so only one is
-// read: prefer `_httk_has_output`, falling back to `_httk_has_artifact` when the
-// output block is absent or empty.
+// List of what a run produced, from its forward `_httk_has_output` StrongLink block only.
+// The deployment no longer serves artifact relationships at all (`_httk_has_artifact`/
+// `_httk_is_artifact` are absent from the wire), so there is no fallback to read.
 function producedEntries(run) {
   const output = arrayValue(run.relationships?._httk_has_output?.data);
-  const source = output.length ? output : arrayValue(run.relationships?._httk_has_artifact?.data);
-  return source
+  return output
     .filter((entry) => entry && typeof entry.id === "string" && entry.id)
     .map((entry) => ({ type: String(entry.type || ""), id: entry.id, label: String(entry.meta?._httk_label || "") }));
 }
@@ -644,23 +640,6 @@ function firstRelationshipId(resource, key) {
   return typeof entry?.id === "string" && entry.id ? entry.id : null;
 }
 
-// Fetch one `_httk_records` or `_httk_runs` resource directly by id. Any failure
-// (network, validation, not-found) is swallowed to null so the caller degrades
-// rather than blocking the page.
-async function fetchLinkedResource(Transport, config, entryType, responseFields, id, errorLabel) {
-  try {
-    const transport = new Transport(
-      { base_url: config.base_url, entry_type: entryType, response_fields: responseFields, page_size: 1 },
-      { documentBase: document.baseURI },
-    );
-    const fetched = await transport.fetchOne(id);
-    return fetched?.resource || null;
-  } catch (error) {
-    console.error(errorLabel, error);
-    return null;
-  }
-}
-
 // The calculation record named by the RESULT's `_httk_records` relationship (the
 // `calculation_output_record`-role entry, present only for run-coupled materials),
 // located directly in `included` — it rides in on the main request via
@@ -684,23 +663,39 @@ function resolveCalcRecord(resource, included) {
   return { calcRecordId, record };
 }
 
+// The run named by the RESULT's own `_httk_runs` relationship (first entry), located
+// directly in `included` — it rides in on the main request via `include=_httk_runs`, so
+// this needs no network request of its own. Returns the run resource, or null when:
+// there is no `_httk_runs` block on the result (a material with no coupled run, or a
+// request that did not include it); or (defensive, should not happen — the server
+// always inlines what it references) the block names an id missing from `included`,
+// which warns rather than silently degrading.
+function resolveRun(resource, included) {
+  const runId = firstRelationshipId(resource, "_httk_runs");
+  if (!runId) return null;
+  const byId = new Map(arrayValue(included).map((item) => [item.id, item]));
+  const run = byId.get(runId);
+  if (!run || run.type !== "_httk_runs") {
+    console.warn("Run referenced but missing from included", runId);
+    return null;
+  }
+  return run;
+}
+
 // Build the plain provenance OBJECT the renderer consumes, driven by the material's
-// `_httk_records` relationship and the calculation record it names (see
-// resolveCalcRecord — no record fetch is issued any more). The record itself serves
-// the total energy and, via its own `_httk_is_output`/`_httk_is_artifact` reverse
-// blocks, the id of the producing run; the run carries the workflow uri, source id,
-// and a forward `_httk_has_*` block listing what it produced. A record with no run id
-// degrades to the energy line alone, issuing no run request; a run-fetch failure
-// degrades to the same energy-only rendering.
+// `_httk_records` relationship (see resolveCalcRecord) and its own `_httk_runs`
+// relationship (see resolveRun) — both resolved directly from `included`, issuing no
+// record or run fetch of any kind. The record serves the total energy; the run (when
+// present) carries the workflow uri, source id, and a forward `_httk_has_output` block
+// listing what it produced. Either relationship missing, or the run's target missing
+// from `included`, degrades to the energy-only rendering (or to nothing at all when
+// there is no calculation record either) rather than blocking the page.
 async function fetchProvenance(Transport, config, resource, included) {
   const resolved = resolveCalcRecord(resource, included);
   if (!resolved) return null;
   const { calcRecordId, record } = resolved;
   const totalEnergy = safeNumber(record.attributes?._httk_total_energy);
-  const runId = firstRelationshipId(record, "_httk_is_output") || firstRelationshipId(record, "_httk_is_artifact");
-  const run = runId
-    ? await fetchLinkedResource(Transport, config, "_httk_runs", RUN_RESPONSE_FIELDS, runId, "Run provenance OPTIMADE request failed")
-    : null;
+  const run = resolveRun(resource, included);
   const runAttrs = run?.attributes || {};
   return {
     calcRecordId,
@@ -957,10 +952,11 @@ async function loadShell(shell, Transport = OptimadeTransport) {
       result.resource, result.included, structure, discovery.apiBaseUrl, altState,
     ));
 
-    // The calculation record (if any) already rode in on the main request via
-    // include=_httk_records, but the Provenance section also needs the producing run
-    // (and, through it, the produced-files batch) — a chain that only starts now. Show a
-    // busy placeholder in its final position; fetchProvenance below replaces or removes it.
+    // The calculation record and the producing run (if either is present) already rode
+    // in on the main request via include=_httk_records,_httk_runs; the only fetch the
+    // Provenance section still needs is the produced-files batch, which only starts now.
+    // Show a busy placeholder in its final position; fetchProvenance below replaces or
+    // removes it.
     provenancePlaceholder = section("Provenance");
     provenancePlaceholder.setAttribute("aria-busy", "true");
     provenancePlaceholder.append(node("p", "section-note", "Loading provenance…"));

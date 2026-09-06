@@ -145,10 +145,10 @@ logger = report.context_logger(logging.getLogger("httk.altermagnets.material_sto
 # the ``_httk_records`` family is served through the extended ``AltermagnetDataRecord``.
 # The fingerprint does not see id changes, so this version row is the forcing gate.
 # Bump 12: the two-record split. ``AltermagnetScreeningResult`` (served
-# ``_anyterial_altermagnet_screening_result``, ids ``anyt.am-1-N``) owns the science and
+# ``_anyterial_altermagnet_screening_results``, ids ``anyt.am-1-N``) owns the science and
 # references a slim standard ``structures`` main (``UnitcellStructureRecord``, stamped ids
 # ``anyt.am.structure-1-N``) that now carries the structural properties, alternatives, and
-# the ``relaxed_structure`` provenance edge; the result gains the stored ``structure_id``
+# the ``output_structure`` provenance edge; the result gains the stored ``structure_id``
 # serving its ``structures`` relationship block plus an appended ``has_artifact`` run edge.
 # Bump 13: the records/provenance redesign. Two typed record backings
 # (``CalculationOutputRecord`` in ``altermagnets_calculation_outputs``, ``ScreeningResultRecord``
@@ -158,7 +158,17 @@ logger = report.context_logger(logging.getLogger("httk.altermagnets.material_sto
 # curated collection entry, not a run product); the result gains the typed ``calculation_output``
 # and ``screening_record`` references and loses its ``total_energy`` scalar
 # (``_httk_custom_total_energy``). New tables and a dispatch table force the rebuild.
-STORE_LAYOUT_VERSION = 13
+# Bump 14: the AMDB polish batch. The result gains the stamped ``run_id`` column (the
+# material's coupled-run ledger id, served ONLY through the private, never-response
+# ``_httk_custom_run_id`` projection feeding the adapter's ``_httk_runs`` envelope
+# injection); the reconstructed run's ``artifacts`` is now always ``()`` (no
+# sub-workflows in this deployment, so artifacts only duplicated ``outputs`` -- restore
+# by passing the same rewritten tuple to ``artifacts=``); the former relaxed-structure
+# output/edge label is renamed ``output_structure`` (the collecting workflow itself is
+# renamed ``scf-httk-v1``, no run/edge content changes); and the served entry type is
+# pluralized to ``_anyterial_altermagnet_screening_results``. None of this changes any
+# ledger key, so ids are unaffected; the schema/column changes force the rebuild.
+STORE_LAYOUT_VERSION = 14
 RELAXED_STRUCTURE_PRECISION = 5e-4  # Cartesian Å; relaxed-DFT coordinate precision, so symmetry tolerance is realistic (not ~machine epsilon from full-precision CONTCAR digits)
 
 ELEMENT_PATTERN = re.compile(r"[A-Z][a-z]?")
@@ -373,7 +383,7 @@ class ScreeningResultRecord:
 class AltermagnetScreeningResult:
     """The AMDB main entity: one screened material's screening science and figures.
 
-    Served under the provider-specific ``_anyterial_altermagnet_screening_result``
+    Served under the provider-specific ``_anyterial_altermagnet_screening_results``
     entry type. It owns the science, figures, MAGNDATA variants, DOIs, and the primary
     ids (``anyt.am-1-N``); the screened crystal structure is a separate standard
     ``structures`` main referenced through :attr:`structure`, and the authoritative
@@ -383,8 +393,8 @@ class AltermagnetScreeningResult:
     __httk_storage__: ClassVar[StorageInfo] = StorageInfo(
         storage_name="altermagnets_screening_results",
         # The result is NOT a provenance node: it is a curated collection entry, so no
-        # run edge targets it. Provenance runs result -> ``_httk_records`` relationship
-        # -> record -> reverse ``_httk_is_output``/``_httk_is_artifact`` -> run. The
+        # run edge targets it. Provenance runs result -> injected ``_httk_runs``
+        # relationship (stamped ``run_id``) -> run -> forward ``_httk_has_output``. The
         # science columns below stay as the queryable/sortable mirrors of the records.
         indexes=(
             ("classification", "screening_rank"),
@@ -455,6 +465,17 @@ class AltermagnetScreeningResult:
     # a served property; it drives the build and the in-memory dataset provider's
     # ``structures`` relationship (``server/serve/dataset.py``).
     structure_id: str | None = None
+    # The stamped ``anyt.am.runs-1-N`` id of this material's coupled run (or ``None``
+    # when it has none), stamped at build time from ``ledger.lookup(_run_key(material.id))``
+    # -- the binding already exists at that point (:func:`_couple_runs` runs before
+    # stamping). Served ONLY through the private, never-response ``_httk_custom_run_id``
+    # projection (the ``reference_ids``/``_httk_custom_reference_ids`` pattern); the
+    # adapter injects the served ``_httk_runs`` relationship block off it (the
+    # ``references`` pattern). Upgrade note: the envelope injection is ALREADY
+    # include-hydratable (the collector falls back to the block key as the type);
+    # only depth-1 filtering/include *through* ``_httk_runs`` would need a typed
+    # reference field here instead of this private scalar.
+    run_id: str | None = None
     # Entry-id fields per the store contract; id is always set to the amdb
     # public id at construction, immutable_id is minted by the store.
     id: Annotated[str | None, IdentitySkip(), Indexed()] = field(default=None, compare=False)
@@ -508,13 +529,13 @@ ANYTERIAL_ENTRYTYPES_DIR = Path(__file__).resolve().parents[2] / (
 )
 #: The IRI base covering EVERY published Anyterial definition (properties AND entry
 #: types), re-registered for the ``_anyterial_`` prefix so ``served_form()`` prefixes
-#: the ``altermagnet_screening_result`` entry-type name whose ``$id`` lives under
+#: the ``altermagnet_screening_results`` entry-type name whose ``$id`` lives under
 #: ``.../defs/v0.1/entrytypes/`` (the narrower ``.../properties`` base does not cover
 #: it). Additive re-registration keeps the ``.../properties`` synthesis base intact.
 ANYTERIAL_DEFS_ID_BASE = "https://schemas.anyterial.se/defs/"
 #: The vendored entry-type definition IRI of the AMDB main entity.
 ALTERMAGNET_SCREENING_RESULT_DEFINITION_ID = (
-    "https://schemas.anyterial.se/defs/v0.1/entrytypes/altermagnet_screening_result"
+    "https://schemas.anyterial.se/defs/v0.1/entrytypes/altermagnet_screening_results"
 )
 
 
@@ -537,16 +558,16 @@ class AltermagnetScreeningResultEntry:
     :meth:`EntryTypeDefinition.from_optimade` and extended with the served science,
     figure, energy, and private relationship-id property definitions. Its ``$id``
     lives under the re-registered ``_anyterial_`` base, so ``served_form()`` names it
-    ``_anyterial_altermagnet_screening_result`` on the wire.
+    ``_anyterial_altermagnet_screening_results`` on the wire.
     """
 
-    type = "altermagnet_screening_result"
+    type = "altermagnet_screening_results"
     definition_id = ALTERMAGNET_SCREENING_RESULT_DEFINITION_ID
 
     @classmethod
     def entry_type_definition(cls) -> EntryTypeDefinition:
         """Return the vendored entry type extended with the served AMDB properties."""
-        path = ANYTERIAL_ENTRYTYPES_DIR / "altermagnet_screening_result.json"
+        path = ANYTERIAL_ENTRYTYPES_DIR / "altermagnet_screening_results.json"
         if not path.is_file():
             raise RuntimeError(
                 f"Entry-type definition file {path} is missing; regenerate it in "
@@ -686,6 +707,19 @@ def _private_reference_ids_definition() -> PropertyDefinition:
     return PropertyDefinition.from_optimade("_httk_custom_reference_ids", document)
 
 
+def _private_run_id_definition() -> PropertyDefinition:
+    document = PropertyDefinition.from_simple(
+        "_httk_custom_run_id",
+        description="Private stamped run id used to construct the injected OPTIMADE `_httk_runs` relationship block.",
+    ).as_optimade()
+    document["x-optimade-requirements"] = {
+        "support": "may",
+        "query-support": "none",
+        "response-level": "must not",
+    }
+    return PropertyDefinition.from_optimade("_httk_custom_run_id", document)
+
+
 def _load_property_definition(path: Path, served_name: str) -> PropertyDefinition:
     """Load one vendored OPTIMADE property definition document under its served name."""
     if not path.is_file():
@@ -702,7 +736,7 @@ def _optimade_definitions() -> dict[str, PropertyDefinition]:
     register_definition_prefix("_anyterial_", ANYTERIAL_DEFS_BASE)
     # Additive re-registration (the ``_httk_`` pattern): recognizes the entry-type
     # ``$id`` under ``.../defs/`` so ``served_form()`` prefixes the screening-result
-    # entry-type name to ``_anyterial_altermagnet_screening_result``. Without it the
+    # entry-type name to ``_anyterial_altermagnet_screening_results``. Without it the
     # federation would serve the UNPREFIXED internal type name.
     register_definition_prefix("_anyterial_", ANYTERIAL_DEFS_ID_BASE)
     definitions: dict[str, PropertyDefinition] = {}
@@ -712,6 +746,7 @@ def _optimade_definitions() -> dict[str, PropertyDefinition]:
     definitions["_httk_custom_figures"] = _local_figure_definition()
     definitions["_httk_custom_public_id"] = _private_id_definition("structure")
     definitions["_httk_custom_reference_ids"] = _private_reference_ids_definition()
+    definitions["_httk_custom_run_id"] = _private_run_id_definition()
     return definitions
 
 
@@ -1047,13 +1082,18 @@ def _stamp_material(
     structure_mains: Mapping[str, UnitcellStructureRecord],
     screening_records: Mapping[str, "ScreeningResultRecord"],
     calculation_outputs: Mapping[str, "CalculationOutputRecord"],
+    ledger: IdLedger | None = None,
 ) -> "AltermagnetScreeningResult":
-    """Stamp a result's reference ids, structure id, and canonical structure/record mains once.
+    """Stamp a result's reference ids, structure id, run id, and canonical structure/record mains once.
 
     Repointing ``structure``, ``screening_record`` and ``calculation_output`` at the
     canonical stamped mains lets the result's nested references dedup onto the
     already-saved mains with identical metadata. The record maps are empty on the
-    legacy/in-memory paths, which store no records family.
+    legacy/in-memory paths, which store no records family. ``run_id`` is looked up from
+    the already-resolved entity->run ledger binding (:func:`_couple_runs` runs before
+    stamping), never re-derived here; ``ledger is None`` (the legacy/in-memory paths,
+    which open no ledger) stamps ``None`` -- the documented degradation already used for
+    the record family above.
     """
     assert material.id is not None  # always set to the amdb id at construction
     structure_id = structure_id_by_material.get(material.id)
@@ -1064,6 +1104,7 @@ def _stamp_material(
         structure=material.structure if structure_id is None else structure_mains.get(structure_id, material.structure),
         screening_record=screening_records.get(material.id),
         calculation_output=calculation_outputs.get(material.id),
+        run_id=None if ledger is None else ledger.lookup(_run_key(material.id)),
     )
 
 
@@ -1176,6 +1217,10 @@ def _material_reference_ids(record: object) -> list[str]:
     return list(cast(AltermagnetScreeningResult, record).reference_ids)
 
 
+def _material_run_id(record: object) -> str | None:
+    return cast(AltermagnetScreeningResult, record).run_id
+
+
 def _reference_doi(record: object) -> str:
     return cast(AltermagnetReferenceRecord, record).doi
 
@@ -1255,6 +1300,7 @@ def _material_projections() -> dict[str, StoredPropertyProjection]:
         sort=_field_sort("id"),
     )
     projections["_httk_custom_reference_ids"] = StoredPropertyProjection(response=_material_reference_ids)
+    projections["_httk_custom_run_id"] = StoredPropertyProjection(response=_material_run_id)
     return projections
 
 
@@ -2131,7 +2177,7 @@ def _run_observations(items: Iterable[Any]) -> tuple[_RunObservation, ...]:
         if getattr(item, "missing_collector", None) is not None:
             continue
         outputs = getattr(item, "outputs", {})
-        relaxed = outputs.get("relaxed_structure") if isinstance(outputs, Mapping) else None
+        relaxed = outputs.get("output_structure") if isinstance(outputs, Mapping) else None
         run = getattr(item, "run", None)
         if relaxed is None or run is None:
             continue
@@ -2678,11 +2724,11 @@ def _resolve_edge_id(
 ) -> str:
     """Map a collected edge's ``(entry_type, content-id)`` to the store-served id.
 
-    The ``relaxed_structure`` edge resolves to the screened structure main's stamped
-    id (the structure IS the served relaxed structure now that the science moved to
+    The ``output_structure`` edge resolves to the screened structure main's stamped
+    id (the structure IS the served output structure now that the science moved to
     the screening result). It is taken from the build's material->structure-id MAP --
     never a content-id fetch: the details-CONTCAR fallback materials have a structure
-    content id that differs from the collected run's relaxed structure id, so a fetch
+    content id that differs from the collected run's output structure id, so a fetch
     would silently miss for every fallback material. A ``records`` edge resolves the
     same way, through ``record_ids`` keyed by the output role: the collected one-value
     ``DataRecord`` is no longer stored at all (the typed
@@ -2705,8 +2751,8 @@ def _resolve_edge_id(
         mapped target, or the file output has no resolvable store id.
     """
     if entry_type == AltermagnetStructureEntry.type:
-        if label != "relaxed_structure":
-            raise ValueError(f"structures edge {label!r} is not the relaxed structure; only it maps to the structure")
+        if label != "output_structure":
+            raise ValueError(f"structures edge {label!r} is not the output structure; only it maps to the structure")
         return structure_id
     if entry_type == AltermagnetDataRecordEntry.type:
         resolved = record_ids.get(label)
@@ -2768,18 +2814,22 @@ def _save_reconstructed_runs(
     A collected ``item.run``'s edges carry collection-time content ids the store
     never minted, so they cannot resolve. This constructs a replacement run at save
     time -- never mutating ``item.run`` or its :class:`_RunObservation` -- whose edges
-    carry the store-served ids: the ``relaxed_structure`` edge is retargeted at the
+    carry the store-served ids: the ``output_structure`` edge is retargeted at the
     screened structure main's stamped id (through the material->structure-id map), the
     ``total_energy`` records edge at the material's :class:`CalculationOutputRecord`,
     and the file edges at the ids minted for the outputs the bulk pass just saved.
 
-    ``outputs`` and ``artifacts`` are the SAME rewritten tuple. **The AMDB rule: no
-    sub-workflows, so every artifact edge is also an output edge** -- which is exactly
-    what the collector already produces (it overlays one edge tuple onto both sides).
-    No edge targets the screening RESULT: the result is a curated collection entry
+    ``artifacts`` is always ``()``: this deployment has no sub-workflows, so an
+    artifact edge would only ever duplicate the matching output edge (the collector
+    overlays one edge tuple onto both sides) -- serving both bloats every run response
+    for no information gain. ``outputs`` alone carries the (retargeted) edges; the core
+    :attr:`Run.artifacts` mechanism is untouched (a deployment WITH sub-workflows still
+    needs to tell a genuine intermediate artifact from a final output), so restoring it
+    here is a one-line change: pass this same rewritten ``edges`` tuple to ``artifacts=``
+    too. No edge targets the screening RESULT: the result is a curated collection entry
     assembled at build time, not a product of any run, so provenance runs through the
     records instead (result -> ``_httk_records`` reference -> record -> reverse
-    ``_httk_is_output``/``_httk_is_artifact`` -> run).
+    ``_httk_is_output`` -> run).
 
     ``item.products`` ProductLinks are rewritten through the same map; the
     ``ScreeningResultRecord`` gets neither an edge nor a ProductLink (its values come
@@ -2820,7 +2870,11 @@ def _save_reconstructed_runs(
         store.save(
             Run(
                 workflow_declaration_uri=run.workflow_declaration_uri,
-                artifacts=edges,
+                # No sub-workflows in this deployment, so an artifact edge would only
+                # ever duplicate the matching output edge; restore by passing this same
+                # rewritten `edges` tuple to `artifacts=` too (Run.artifacts itself is
+                # untouched -- see the docstring).
+                artifacts=(),
                 outputs=edges,
                 source_id=run.source_id,
                 last_modified=run.last_modified,
@@ -2832,13 +2886,13 @@ def _save_reconstructed_runs(
             store.save(
                 ProductLink(
                     product.source_type,
-                    # Every product here sources from the relaxed_structure output
+                    # Every product here sources from the output_structure output
                     # (the toml ``product_of`` chain), so the structures-edge guard
                     # in _resolve_edge_id sees that label; the target label is unused
                     # for the record/file types products actually target.
                     _resolve_edge_id(
                         store,
-                        "relaxed_structure",
+                        "output_structure",
                         product.source_type,
                         product.source_id,
                         structure_id=structure_id,
@@ -2954,7 +3008,7 @@ def build_store(
                 items = list(
                     collect_finished_tree(
                         resolved_runs_dir,
-                        workflow_dir=Path(__file__).resolve().parents[2] / "workflows" / "relax_and_scf_httk_v1",
+                        workflow_dir=Path(__file__).resolve().parents[2] / "workflows" / "scf_httk_v1",
                     )
                 )
             else:
@@ -3069,7 +3123,9 @@ def build_store(
         # repoint each result's ``structure``/record references at their canonical stamped
         # mains, so both the bulk save and the alternative-cell derivation / provenance
         # retarget (which replace()/read off these materials) carry them; otherwise
-        # alternatives would serve empty references and results empty relationships.
+        # alternatives would serve empty references and results empty relationships. The
+        # run id is stamped from the ledger too (``ledger`` is None on the legacy path,
+        # which stamps every material's run id None -- legacy couples no runs either).
         materials = tuple(
             _stamp_material(
                 material,
@@ -3078,6 +3134,7 @@ def build_store(
                 structure_mains,
                 screening_records,
                 calculation_outputs,
+                ledger=ledger,
             )
             for material in materials
         )

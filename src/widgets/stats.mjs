@@ -13,7 +13,7 @@ async function count(baseUrl, filter) {
   const base = new URL(`${baseUrl.replace(/\/$/, "")}/`, document.baseURI);
   // The counts key on screening-science filters, so they run against the AMDB main
   // entity (the screening-result endpoint), not the slim standard structures type.
-  const endpoint = new URL("v1/_anyterial_altermagnet_screening_result", base);
+  const endpoint = new URL("v1/_anyterial_altermagnet_screening_results", base);
   endpoint.searchParams.set("page_limit", "1");
   endpoint.searchParams.set("response_fields", "id");
   if (filter) endpoint.searchParams.set("filter", filter);

@@ -229,12 +229,15 @@ def test_serves_paired_run_edges_and_records_relationship(tmp_path: Path) -> Non
     ``_httk_is_output`` relationships of its own, but serves a ``_httk_records``
     relationship with BOTH role-tagged record entries (``calculation_output_record``/
     ``screening_result_record``). The calculation record carries the reverse
-    ``_httk_is_output``/``_httk_is_artifact`` blocks naming the producing run and serves
-    ``_httk_total_energy``; the screening record carries neither (no execution produced
-    it) and mirrors the result's science properties. The run's forward ``_httk_has_*``
-    blocks are IDENTICAL (paired, no sub-workflows): the relaxed structure, the
-    calculation record, and the file output -- never a result-typed edge. An uncoupled
-    material in the same build serves only the screening entry.
+    ``_httk_is_output`` block naming the producing run and serves ``_httk_total_energy``;
+    the screening record carries neither (no execution produced it) and mirrors the
+    result's science properties. The run's forward ``_httk_has_output`` block carries the
+    relaxed structure, the calculation record, and the file output -- never a result-typed
+    edge. This deployment has no sub-workflows, so ``Run.artifacts`` is always ``()``
+    (see ``material_store._save_reconstructed_runs``): ``_httk_has_artifact``/
+    ``_httk_is_artifact`` are consequently EMPTY everywhere -- on the run, the record, and
+    the structure alike -- never a mirror of ``_httk_has_output``/``_httk_is_output``. An
+    uncoupled material in the same build serves only the screening entry.
     """
     source = write_source_tables(tmp_path / "tables")
     details = write_detail_assets(tmp_path / "details")
@@ -262,6 +265,10 @@ def test_serves_paired_run_edges_and_records_relationship(tmp_path: Path) -> Non
             ).json()["data"]
             assert _relationship_ids(result, "_httk_is_artifact") == []
             assert _relationship_ids(result, "_httk_is_output") == []
+            # The private stamping columns must never leak into served attributes
+            # (a dropped adapter pop would ride them onto every row unnoticed).
+            assert "_httk_custom_run_id" not in result["attributes"]
+            assert "_httk_custom_reference_ids" not in result["attributes"]
             records_block = result["relationships"]["_httk_records"]["data"]
             assert all(entry["type"] == "_httk_records" for entry in records_block)
             by_role = {entry["meta"]["role"]: entry["id"] for entry in records_block}
@@ -270,17 +277,25 @@ def test_serves_paired_run_edges_and_records_relationship(tmp_path: Path) -> Non
             screening_id = by_role["screening_result_record"]
             structure_id = _relationship_ids(result, "structures")[0][1]
 
-            # (b) the calculation record serves the energy and the reverse run blocks
-            # (paired: has_output IS has_artifact, the AMDB no-sub-workflows rule).
+            # (b) the calculation record serves the energy and the reverse run block;
+            # _httk_is_artifact is EMPTY (Run.artifacts is always () -- no sub-workflows).
             calculation = live.get(
                 f"/v1/_httk_records/{calculation_id}", params={"response_fields": "_httk_total_energy"}
             ).json()["data"]
             assert calculation["attributes"]["_httk_total_energy"] == -1.0
             calc_is_output = _relationship_ids(calculation, "_httk_is_output")
-            calc_is_artifact = _relationship_ids(calculation, "_httk_is_artifact")
-            assert calc_is_output and calc_is_output == calc_is_artifact
+            assert calc_is_output
+            assert _relationship_ids(calculation, "_httk_is_artifact") == []
             assert all(etype == "_httk_runs" for etype, _ in calc_is_output)
             run_id = calc_is_output[0][1]
+
+            # (a2) the result's own envelope-injected _httk_runs relationship (item 7):
+            # same run id, and it is include-hydratable on an explicit include=_httk_runs
+            # (the entries collector falls back to the block key -- "_httk_runs" -- as the
+            # related resource's type since this injected rel dict carries no "type" key).
+            assert _relationship_ids(result, "_httk_runs") == [("_httk_runs", run_id)]
+            run_included = live.get(f"/v1/{RESULT}/anyt.am-1-1", params={"include": "_httk_runs"}).json()["included"]
+            assert any(item["type"] == "_httk_runs" and item["id"] == run_id for item in run_included)
 
             # (c) the screening record mirrors the result's science values and carries no
             # reverse run blocks (the published CSV values were never a run's product).
@@ -292,17 +307,18 @@ def test_serves_paired_run_edges_and_records_relationship(tmp_path: Path) -> Non
             assert _relationship_ids(screening, "_httk_is_output") == []
             assert _relationship_ids(screening, "_httk_is_artifact") == []
 
-            # (d) the coupled STRUCTURE still serves the relaxed_structure reverse blocks
-            # (the structure IS the relaxed output/artifact; unaffected by the redesign).
+            # (d) the coupled STRUCTURE still serves the output_structure reverse block
+            # (the structure IS the run's output); _httk_is_artifact stays EMPTY, same rule.
             structure = live.get(f"/v1/structures/{structure_id}").json()["data"]
             structure_is_artifact = _relationship_ids(structure, "_httk_is_artifact")
             structure_is_output = _relationship_ids(structure, "_httk_is_output")
-            assert structure_is_artifact == [("_httk_runs", run_id)]
+            assert structure_is_artifact == []
             assert structure_is_output == [("_httk_runs", run_id)]
 
             # (e) the run resolves at its wire endpoint with non-null prefixed values, and
-            # its forward _httk_has_* blocks are the SAME tuple: the relaxed structure, the
-            # calculation record, and the file output -- never a result-typed edge.
+            # its forward _httk_has_output block carries the relaxed structure, the
+            # calculation record, and the file output -- never a result-typed edge;
+            # _httk_has_artifact is EMPTY (no sub-workflows, so no distinct artifact edge).
             run = live.get(
                 f"/v1/_httk_runs/{run_id}",
                 params={"response_fields": "_httk_source_id,_httk_workflow_declaration_uri"},
@@ -312,27 +328,29 @@ def test_serves_paired_run_edges_and_records_relationship(tmp_path: Path) -> Non
             assert run_resource["attributes"]["_httk_source_id"]
             assert run_resource["attributes"]["_httk_workflow_declaration_uri"]
             has_output = _relationship_ids(run_resource, "_httk_has_output")
-            has_artifact = _relationship_ids(run_resource, "_httk_has_artifact")
-            assert set(has_output) == set(has_artifact)
+            assert _relationship_ids(run_resource, "_httk_has_artifact") == []
             assert ("structures", structure_id) in has_output
             assert ("_httk_records", calculation_id) in has_output
             assert any(etype == "files" for etype, _ in has_output)
             assert not any(etype == RESULT for etype, _ in has_output)
 
-            # (f) the _httk_relationships filter route now selects the run by RECORD id
-            # (the provenance chain runs result -> record -> run, not result -> run).
+            # (f) the _httk_relationships filter route selects the run by RECORD id through
+            # the OUTPUT edge (the provenance chain runs result -> record -> run, not
+            # result -> run; there is no artifact edge to filter through here).
             filtered = live.get(
                 "/v1/_httk_runs",
-                params={"filter": f'_httk_relationships._httk_has_artifact.id HAS "{calculation_id}"'},
+                params={"filter": f'_httk_relationships._httk_has_output.id HAS "{calculation_id}"'},
             )
             assert filtered.status_code == 200
             assert [item["id"] for item in filtered.json()["data"]] == [run_id]
 
-            # (g) an uncoupled result in the same build serves only the screening entry.
+            # (g) an uncoupled result in the same build serves only the screening entry,
+            # and carries no _httk_runs relationship at all (no coupled run to inject).
             other = live.get(f"/v1/{RESULT}/anyt.am-1-2").json()["data"]
             other_records = other["relationships"]["_httk_records"]["data"]
             assert {entry["meta"]["role"] for entry in other_records} == {"screening_result_record"}
             assert _relationship_ids(other, "_httk_is_artifact") == []
+            assert "_httk_runs" not in other.get("relationships", {})
     finally:
         opened.database.dispose()
 
@@ -409,9 +427,12 @@ def test_files_and_records_endpoints_serve_content_and_bytes(tmp_path: Path) -> 
             assert len(calculations) == 1
             assert len(screenings) == 3
             assert calculations[0]["attributes"]["_httk_total_energy"] == -1.0
-            # The other backing's properties serve null on a calculation-only row.
+            # The other backing's properties serve null on a calculation-only row -- present
+            # as an explicit null (not omitted), since this request named response_fields=
+            # explicitly (httk-serve's default-response null-omission does not apply here).
             for field_name in _SCIENCE_MIRROR_FIELDS:
-                assert calculations[0]["attributes"].get(field_name) is None
+                assert field_name in calculations[0]["attributes"]
+                assert calculations[0]["attributes"][field_name] is None
 
             served = live.get(f"/extensions/files/entry/{file_id}")
             assert served.status_code == 200
@@ -482,6 +503,59 @@ def test_five_entry_type_id_forms(tmp_path: Path) -> None:
         opened.database.dispose()
 
 
+def test_default_includes_serve_on_single_entry_but_not_on_lists(tmp_path: Path) -> None:
+    """``adapter.DEFAULT_INCLUDES`` (item 6/amendment 2): a single-entry GET with no
+    ``include=`` carries the configured targets in ``included`` (results: both
+    ``_httk_records`` rows, unioned with ``references``; runs: their structure, record,
+    and file targets), while a multi-row list response stays defaulted-include-suppressed
+    (httk-serve's existing >1-row rule) regardless of ``default_includes``."""
+    opened, app, _details, _runs = _build_run_backed_store(tmp_path)
+    try:
+        with TestClient(app, base_url="http://testserver") as live:
+            result = live.get(f"/v1/{RESULT}/anyt.am-1-1")
+            assert result.status_code == 200
+            result_payload = result.json()
+            included = result_payload["included"]
+            included_by_type: dict[str, set[str]] = {}
+            for item in included:
+                included_by_type.setdefault(item["type"], set()).add(item["id"])
+            records_block = {
+                entry["meta"]["role"]: entry["id"]
+                for entry in result_payload["data"]["relationships"]["_httk_records"]["data"]
+            }
+            assert included_by_type["_httk_records"] == set(records_block.values())
+            reference_ids = {entry["id"] for entry in result_payload["data"]["relationships"]["references"]["data"]}
+            assert included_by_type["references"] == reference_ids
+            # Not configured for the result endpoint: structures/files stay un-included
+            # by default (an explicit include=structures still resolves them; see the
+            # sibling five-entry-id-forms test).
+            assert "structures" not in included_by_type
+            assert "files" not in included_by_type
+
+            calc_id = records_block["calculation_output_record"]
+            run_id = live.get(f"/v1/_httk_records/{calc_id}").json()["data"]["relationships"]["_httk_is_output"][
+                "data"
+            ][0]["id"]
+            structure_id = result_payload["data"]["relationships"]["structures"]["data"][0]["id"]
+
+            run = live.get(f"/v1/_httk_runs/{run_id}")
+            assert run.status_code == 200
+            run_included_by_type: dict[str, set[str]] = {}
+            for item in run.json()["included"]:
+                run_included_by_type.setdefault(item["type"], set()).add(item["id"])
+            assert structure_id in run_included_by_type["structures"]
+            assert calc_id in run_included_by_type["_httk_records"]
+            assert run_included_by_type["files"]
+
+            # A multi-row list response never carries a defaulted include, configured or not.
+            listing = live.get(f"/v1/{RESULT}", params={"page_limit": "200"})
+            assert listing.status_code == 200
+            assert len(listing.json()["data"]) > 1
+            assert "included" not in listing.json()
+    finally:
+        opened.database.dispose()
+
+
 def test_resolve_locator_path_refuses_escape(tmp_path: Path) -> None:
     """The byte route's locator guard refuses absolute paths and ``..``/symlink escapes."""
     from serve.files import resolve_locator_path
@@ -522,6 +596,7 @@ def test_store_native_service_is_live_and_does_not_own_caller_store(tmp_path: Pa
         assert info.status_code == 200
         assert "_httk_custom_public_id" not in info.json()["data"]["properties"]
         assert "_httk_custom_reference_ids" not in info.json()["data"]["properties"]
+        assert "_httk_custom_run_id" not in info.json()["data"]["properties"]
         assert "_httk_custom_structure_id" not in info.json()["data"]["properties"]
         first = live.get(f"/v1/{RESULT}", params={"sort": "id", "response_fields": "id"})
         assert first.status_code == 200
@@ -820,7 +895,9 @@ def _structure_table_names() -> set[str]:
     """Resolve the structure record's table and its child tables without hardcoding."""
     from httk.store.backend.schema import resolve_schema
 
-    structure_schema = resolve_schema(resolve_schema(material_store.AltermagnetScreeningResult).field("structure").target)
+    structure_schema = resolve_schema(
+        resolve_schema(material_store.AltermagnetScreeningResult).field("structure").target
+    )
     tables = {structure_schema.table_name}
     tables.update(
         field.child.table_name for field in structure_schema.fields if field.role == "child" and field.child is not None
@@ -913,9 +990,7 @@ def test_search_table_columns_skip_structure_hydration(tmp_path: Path) -> None:
 
 def _result_filter_ids(live: "TestClient", filter_string: str) -> "tuple[int, list[str]]":
     """Return ``(status, sorted result ids)`` for a filter on the result endpoint."""
-    response = live.get(
-        f"/v1/{RESULT}", params={"filter": filter_string, "page_limit": "200", "response_fields": "id"}
-    )
+    response = live.get(f"/v1/{RESULT}", params={"filter": filter_string, "page_limit": "200", "response_fields": "id"})
     return response.status_code, sorted(item["id"] for item in response.json().get("data", []))
 
 
@@ -965,9 +1040,7 @@ def test_structures_nsites_depth1_filter_e2e(tmp_path: Path) -> None:
     assert prebuilt is not None
     try:
         for opened in (in_memory, prebuilt):
-            app = build_service_app(
-                public_base_url="https://api.example.test/optimade/amdb", store=opened.store
-            )
+            app = build_service_app(public_base_url="https://api.example.test/optimade/amdb", store=opened.store)
             with TestClient(app, base_url="http://testserver") as live:
                 nsites = _structure_nsites_by_result(live)
                 assert nsites, "fixture must reference at least one structure"
@@ -1196,6 +1269,23 @@ def test_service_info_exposes_license_configuration(providers: list, tmp_path: P
     assert attributes["license"] == "https://altermagnets.anyterial.se/about#legal"
     assert attributes["available_licenses"] == []
     assert attributes["available_licenses_for_entries"] == ["CC-BY-4.0"]
+
+
+def test_service_info_provider_uses_the_anyterial_prefix(providers: list, tmp_path: Path) -> None:
+    """The polish batch's provider rename: prefix ``anyterial``, name/description
+    naming the AMDB deployment itself rather than the whole Anyterial collection."""
+    app = build_service_app(
+        public_base_url="http://testserver",
+        providers=providers,
+        dataset={},
+        details_root=tmp_path,
+    )
+    provider = ApiClient(app).get("/v1/info").json()["meta"]["provider"]
+    assert provider == {
+        "name": "Anyterial Altermagnets Database (amdb)",
+        "description": "The Anyterial Altermagnets Database (amdb)",
+        "prefix": "anyterial",
+    }
 
 
 def test_standalone_service_links_advertise_one_root_self_link(providers: list, tmp_path: Path) -> None:
@@ -1517,19 +1607,92 @@ def test_detail_properties_and_absolute_figures(client: ApiClient) -> None:
     }
 
 
-def test_non_default_properties_are_omitted_unless_requested(client: ApiClient) -> None:
-    response = client.get(f"/{RESULT}", params={"filter": 'id = "anyt.am-1-1"'})
-    assert response.status_code == 200
-    attributes = response.json()["data"][0]["attributes"]
-    assert all(
-        name not in attributes
-        for name in (
-            "_anyterial_magndata_variants",
-            "_httk_custom_figures",
-            "_anyterial_search_text",
-            "_anyterial_space_group_search",
-        )
+#: Fields excluded from the default response -- the polish batch's adapter-level
+#: demotions (screening_rank, magndata_variants, parent_spacegroups, icsd_ids,
+#: magnetic_space_group_bns, search_text, figures; see adapter._DEMOTED_DEFAULT_FIELDS)
+#: plus space_group_search, already "should not" response-level at the schema/definition
+#: level. All still described, filterable, and servable via an explicit response_fields=.
+DEMOTED_DEFAULT_FIELDS = (
+    "_httk_custom_figures",
+    "_anyterial_magndata_variants",
+    "_anyterial_parent_spacegroups",
+    "_anyterial_icsd_ids",
+    "_httk_magnetic_space_group_bns",
+    "_anyterial_screening_rank",
+    "_anyterial_search_text",
+    "_anyterial_space_group_search",
+)
+
+
+def _store_backed_client(tmp_path: Path) -> tuple[Any, TestClient]:
+    """Build a real store-backed service app (the ``AltermagnetStoreAdapter`` path, where
+    the demotion/null-omission/default-includes envelope policy actually applies -- unlike
+    the module-scoped ``client``/``providers`` fixtures, which drive the separate
+    ``adapter_from_providers`` --validate path and do not go through ``_public_store_schema``).
+    """
+    source = write_source_tables(tmp_path / "tables")
+    details = write_detail_assets(tmp_path / "details")
+    opened = material_store.open_in_memory_store(source, details_dir=details)
+    assert opened is not None
+    app = build_service_app(
+        public_base_url="https://api.example.test/optimade/amdb", store=opened.store, details_root=details
     )
+    return opened, TestClient(app, base_url="http://testserver")
+
+
+def test_null_omission_pins_both_directions(tmp_path: Path) -> None:
+    """httk-serve's landed null-omission rule: a default response OMITS a null-valued
+    default-response attribute entirely, but an explicit ``response_fields=`` request
+    keeps it present as an explicit ``null``. Pinned on ``anyt.am-1-3`` (P6Fe_As), the
+    fixture row whose ``_httk_dft_band_gap`` (a still-default-response science field) is
+    null (its "inf" max spin splitting parses to nothing usable)."""
+    field = "_httk_dft_band_gap"
+    opened, live = _store_backed_client(tmp_path)
+    try:
+        with live:
+            default = live.get(f"/v1/{RESULT}", params={"filter": 'id = "anyt.am-1-3"'})
+            assert default.status_code == 200
+            default_attributes = default.json()["data"][0]["attributes"]
+            assert field not in default_attributes  # omitted, not present-as-null
+
+            explicit = live.get(f"/v1/{RESULT}", params={"filter": 'id = "anyt.am-1-3"', "response_fields": field})
+            assert explicit.status_code == 200
+            explicit_attributes = explicit.json()["data"][0]["attributes"]
+            assert field in explicit_attributes
+            assert explicit_attributes[field] is None
+    finally:
+        opened.database.dispose()
+
+
+def test_non_default_properties_are_omitted_unless_requested(tmp_path: Path) -> None:
+    """The polish batch's adapter-level demotions (item 4/amendment 5): gone from the
+    default response, still described, filterable, and servable when named explicitly."""
+    opened, live = _store_backed_client(tmp_path)
+    try:
+        with live:
+            response = live.get(f"/v1/{RESULT}", params={"filter": 'id = "anyt.am-1-1"'})
+            assert response.status_code == 200
+            attributes = response.json()["data"][0]["attributes"]
+            assert all(name not in attributes for name in DEMOTED_DEFAULT_FIELDS)
+
+            # Each demoted field still serves when explicitly named in response_fields.
+            explicit = live.get(
+                f"/v1/{RESULT}",
+                params={"filter": 'id = "anyt.am-1-1"', "response_fields": ",".join(DEMOTED_DEFAULT_FIELDS)},
+            )
+            assert explicit.status_code == 200
+            explicit_attributes = explicit.json()["data"][0]["attributes"]
+            assert all(name in explicit_attributes for name in DEMOTED_DEFAULT_FIELDS)
+
+            # _anyterial_search_text remains filterable even though it is no longer default-response.
+            filtered = live.get(
+                f"/v1/{RESULT}",
+                params={"filter": '_anyterial_search_text CONTAINS "crsb"', "response_fields": "id"},
+            )
+            assert filtered.status_code == 200
+            assert filtered.json()["data"]
+    finally:
+        opened.database.dispose()
 
 
 @pytest.mark.parametrize(
@@ -1638,7 +1801,9 @@ def _material_ids(numbers):
 
 
 GOLDEN_SORT_ORDERS = {
-    "screening_rank": _material_ids(list(range(1, 181))),
+    # ``screening_rank`` (raw ``_anyterial_screening_rank`` sort) is deliberately
+    # gone: the polish batch demoted it out of SORTABLE_PROPERTIES (curated rank,
+    # not query-stable); see test_screening_rank_is_not_directly_sortable below.
     "max_ss_desc": _material_ids(list(range(1, 181))),
     # sort=_anyterial_formula,id ascending: chemical-formula strings compared
     # lexicographically (all ASCII, no nulls in the fixture), id breaking ties.
@@ -2401,7 +2566,6 @@ def test_search_filter_and_sort_goldens(client: ApiClient) -> None:
         assert expression.split(" ", 1)[0] in source
 
     sort_expressions = {
-        "screening_rank": "_anyterial_screening_rank",
         "formula_asc": "_anyterial_formula,id",
         "max_ss_desc": "-_anyterial_max_spin_splitting,id",
         "avg_ss_desc": "-_anyterial_avg_spin_splitting,id",
@@ -2419,3 +2583,12 @@ def test_search_filter_and_sort_goldens(client: ApiClient) -> None:
             page = page_response.json()
             ids.extend(item["id"] for item in page["data"])
         assert ids == GOLDEN_SORT_ORDERS[mode]
+
+
+def test_screening_rank_is_not_directly_sortable(client: ApiClient) -> None:
+    """The polish batch demotes ``_anyterial_screening_rank`` out of SORTABLE_PROPERTIES
+    (a curated rank, not a query-stable one); a raw ``sort=`` request against it now 400s.
+    The widget's search table maps the legacy ``screening_rank`` alias to ``id`` order,
+    so old bookmarks degrade gracefully instead of reaching this 400."""
+    response = client.get(f"/{RESULT}", params={"sort": "_anyterial_screening_rank"})
+    assert response.status_code == 400

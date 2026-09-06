@@ -121,7 +121,7 @@ class AltermagnetScreeningResultProvider(_PropertyEntryProvider):
     """Serve the AMDB main entity (screening results) through the neutral provider contract.
 
     Used by the ``--validate`` path: it advertises the served
-    ``_anyterial_altermagnet_screening_result`` definition and its science/figure
+    ``_anyterial_altermagnet_screening_results`` definition and its science/figure
     property values, plus each result's ``structures``/``references``/``_httk_records``
     relationships (for the provider-backed serving path). The crystal structure is a
     separate provider.
@@ -160,6 +160,7 @@ def load_schema_definitions() -> dict[str, PropertyDefinition]:
     definitions = dict(material_store._optimade_definitions())
     definitions.pop("_httk_custom_public_id")
     definitions.pop("_httk_custom_reference_ids")
+    definitions.pop("_httk_custom_run_id")
     return definitions
 
 

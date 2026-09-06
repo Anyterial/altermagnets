@@ -288,13 +288,13 @@ def _single(store: object, cls: type):
 
 
 def test_coupled_material_reconstructs_run_with_resolvable_edges(tmp_path: Path) -> None:
-    """The coupled build reconstructs the run with store-resolvable, PAIRED edges.
+    """The coupled build reconstructs the run with store-resolvable edges and no artifacts.
 
-    The run's ``relaxed_structure`` edge targets the stamped structure main, the
+    The run's ``output_structure`` edge targets the stamped structure main, the
     ``total_energy`` edge the material's typed ``CalculationOutputRecord``, and the file
     edge the id minted for the bulk-saved output; ``item.products`` are rewritten through
-    the same maps, so no collection-time content id survives anywhere. ``outputs`` and
-    ``artifacts`` are the same tuple (no sub-workflows), and nothing targets the result.
+    the same maps, so no collection-time content id survives anywhere. ``outputs`` carries
+    the edges and ``artifacts`` is empty (no sub-workflows), and nothing targets the result.
     """
     source = write_source_tables(tmp_path / "tables")
     details = write_detail_assets(tmp_path / "details")
@@ -336,14 +336,21 @@ def test_coupled_material_reconstructs_run_with_resolvable_edges(tmp_path: Path)
         assert structure_id is not None
 
         by_output = {edge.label: (edge.entry_type, edge.entry_id) for edge in run.outputs}
-        assert by_output["relaxed_structure"] == ("structures", structure_id)
+        assert by_output["output_structure"] == ("structures", structure_id)
         assert by_output["total_energy"] == ("records", record_id)
         assert by_output["vasprun"] == ("files", file_id)
-        # AMDB rule: no sub-workflows, so every artifact edge is also an output edge, and
-        # the result is a curated collection entry that no run edge may target.
-        assert set(run.outputs) == set(run.artifacts)
-        assert not any(edge.entry_type == "altermagnet_screening_result" for edge in run.artifacts)
-        assert not any(edge.entry_id in screening for edge in run.artifacts)  # Q5: no screening-record edge
+        # Item 2: artifacts are retired from this deployment's reconstructed runs --
+        # they only ever duplicated outputs (no sub-workflows) -- so outputs alone
+        # carries the edges and artifacts is empty.
+        assert run.artifacts == ()
+        assert set(by_output.items()) == {
+            ("output_structure", ("structures", structure_id)),
+            ("total_energy", ("records", record_id)),
+            ("vasprun", ("files", file_id)),
+        }
+
+        # Item 7: the coupled material's run id is stamped from the same ledger binding.
+        assert coupled.run_id == run.id
 
         # The product links are rewritten through the same id map -- no content ids remain.
         products = {link.label: (link.source_id, link.target_id) for link in _all(store, ProductLink)}
@@ -351,17 +358,19 @@ def test_coupled_material_reconstructs_run_with_resolvable_edges(tmp_path: Path)
         assert products["vasprun"] == (structure_id, file_id)
         assert not any(link.target_id in screening for link in _all(store, ProductLink))
 
-        # An uncoupled material has no calculation record and no run edge targeting it.
+        # An uncoupled material has no calculation record, no stamped run id, and no run
+        # edge targeting it.
         uncoupled = _material(store, "anyt.am-1-2")
         assert uncoupled.calculation_output is None
         assert uncoupled.screening_record is not None
+        assert uncoupled.run_id is None
         assert not any(edge.entry_id == "anyt.am-1-2" for edge in run.outputs)
     finally:
         opened.database.dispose()
 
 
-def test_resolve_edge_id_rejects_non_relaxed_structures_edge() -> None:
-    """Only the relaxed_structure output maps to the material; a foreign structures edge raises."""
+def test_resolve_edge_id_rejects_non_output_structure_edge() -> None:
+    """Only the output_structure output maps to the material; a foreign structures edge raises."""
     with pytest.raises(ValueError, match="input_structure"):
         material_store._resolve_edge_id(
             None,  # type: ignore[arg-type]  # the structures guard fires before the store is touched

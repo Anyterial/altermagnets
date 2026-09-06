@@ -60,7 +60,7 @@ def test_combined_discovery_mounts_index_and_amdb_and_paginates() -> None:
     assert configuration["entry_type"] == RESULT_TYPE
     assert configuration["filter_query"] == "filter"
     assert configuration["sort_query"] == "sort"
-    assert configuration["sort_aliases"]["screening_rank"] == "_anyterial_screening_rank"
+    assert configuration["sort_aliases"]["screening_rank"] == "id"
     assert configuration["detail_route"] == "material"
     assert configuration["detail_column"] == "_anyterial_formula"
     assert configuration["detail_query"] == "id"
@@ -211,7 +211,7 @@ def test_combined_figure_route_and_nested_public_base() -> None:
 
     with TestClient(app, base_url="http://testserver") as client:
         response = client.get(
-            "/optimade/amdb/v1/_anyterial_altermagnet_screening_result",
+            f"/optimade/amdb/v1/{RESULT_TYPE}",
             params={
                 "filter": 'id = "anyt.am-1-1"',
                 "response_fields": "_httk_custom_figures",
@@ -346,7 +346,9 @@ def test_composition_failure_closes_factory_created_amdb_store(monkeypatch: pyte
     amdb.state.owns_entry_store = True
     amdb.state.entry_database = type("Database", (), {"dispose": lambda self: closed.append("amdb")})()
 
-    monkeypatch.setattr(combined, "compose_asgi_apps", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(
+        combined, "compose_asgi_apps", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
     with pytest.raises(RuntimeError, match="boom"):
         serve_combined.create_combined_app(
             web_factory=Starlette,

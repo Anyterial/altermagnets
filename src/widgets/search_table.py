@@ -57,11 +57,25 @@ def render(context, **props):
         page_size=50,
         page_size_query="page_size",
         filter_query="filter",
+        sort="max_ss_desc",
         sort_query="sort",
         # The widget resolves these human-facing sort aliases to OPTIMADE sorts, so a stray
         # `sort=screening_rank` from a non-JS navigation is translated, never sent verbatim.
+        # DEVIATION from the authored plan (see report): the plan specifies the legacy
+        # `screening_rank` alias should map to "" (store order), but httk-serve's
+        # `optimade_table._sort_aliases`/`_text` (a sibling package this batch does not
+        # own) reject an empty alias VALUE outright -- `render()` raises
+        # OptimadeTableProtocolError at page-render time for every request, not just
+        # legacy ones. The new, explicit "" empty-sort option (search_options below /
+        # amendment 3's removable default-sort pill) is unaffected: that path sends a
+        # literal empty `sort=` query param, which `effectiveSort` short-circuits to no
+        # sort BEFORE it ever reaches this alias table. Only this backward-compatibility
+        # shim for old bookmarked/shared URLs needs a non-empty stand-in; "id" is a
+        # always-sortable, always-valid, never-erroring proxy for "ID order" (the retired
+        # option's own label), which is strictly better than the previous behavior (the
+        # old alias pointed at `_anyterial_screening_rank`, which 400s server-side).
         sort_aliases={
-            "screening_rank": "_anyterial_screening_rank",
+            "screening_rank": "id",
             "max_ss_desc": "-_anyterial_max_spin_splitting,id",
             "avg_ss_desc": "-_anyterial_avg_spin_splitting,id",
             "bandgap_desc": "-_httk_dft_band_gap,id",
@@ -75,15 +89,25 @@ def render(context, **props):
         summary={
             "noun": "screened entries",
             "fields": {
-                "_anyterial_search_text": {"label": "Text"},
-                "_anyterial_elements": {"label": "Elements"},
-                "_anyterial_space_group_search": {"label": "Space group"},
-                "_anyterial_magnetic_phases": {"label": "Phase"},
-                "_anyterial_wave_classes": {"label": "Wave class"},
+                # `clears` names the search-form.js (src/static/search-form.js buildQuery)
+                # URL param(s) that produce each predicate, so a pill's "x" both drops the
+                # predicate AND deletes those params -- otherwise search-form's redirect
+                # normalizer would re-derive the same `filter` from the still-present form
+                # params and resurrect it (amendment 3).
+                "_anyterial_search_text": {"label": "Text", "clears": ["q"]},
+                "_anyterial_elements": {"label": "Elements", "clears": ["elements"]},
+                "_anyterial_space_group_search": {"label": "Space group", "clears": ["space_group"]},
+                "_anyterial_magnetic_phases": {"label": "Phase", "clears": ["magnetic_phase"]},
+                "_anyterial_wave_classes": {"label": "Wave class", "clears": ["wave_class"]},
                 # Plain-text labels for the pill/sort summary; the LaTeX column labels are never
                 # KaTeX-typeset in the summary block, so they must not be inherited there.
-                "_anyterial_max_spin_splitting": {"label": "Max spin splitting"},
-                "_anyterial_avg_spin_splitting": {"label": "Avg spin splitting"},
+                "_anyterial_max_spin_splitting": {"label": "Max spin splitting", "clears": ["min_max_ss"]},
+                "_anyterial_avg_spin_splitting": {"label": "Avg spin splitting", "clears": ["min_avg_ss"]},
+                "_anyterial_spin_splitting_fraction": {"clears": ["min_fdelta_pct"]},
+                # Band gap is the one two-sided range: both the >= and <= clauses (when both are
+                # active, two separate pills on this SAME property) clear both source params, so
+                # removing either pill also drops the other's now-orphaned param/predicate.
+                "_httk_dft_band_gap": {"clears": ["min_bandgap", "max_bandgap"]},
                 # Option labels duplicated from src/functions/init.py search_options
                 # (source of truth); that list is a local literal with no importable handle.
                 "_anyterial_classification": {
@@ -92,7 +116,8 @@ def render(context, **props):
                         "noncollinear-derived": "Based on noncollinear",
                         "mixed": "Both",
                         "unclassified": "Not classified yet",
-                    }
+                    },
+                    "clears": ["classification"],
                 },
                 "_anyterial_electronic_type": {
                     "label": "KS Gap Type",
@@ -101,8 +126,12 @@ def render(context, **props):
                         "semiconducting": "Semiconducting",
                         "unknown": "KS gap unavailable",
                     },
+                    "clears": ["electronic_type"],
                 },
-                "_anyterial_min_crustal_abundance": {"format": {"name": "number", "digits": 1, "suffix": " ppm"}},
+                "_anyterial_min_crustal_abundance": {
+                    "format": {"name": "number", "digits": 1, "suffix": " ppm"},
+                    "clears": ["min_abundance_ppm"],
+                },
             },
         },
     )

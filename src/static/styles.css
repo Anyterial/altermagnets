@@ -410,6 +410,10 @@ html[data-theme="dark"] .theme-icon {
 
 .content {
   padding: 22px;
+  /* Belt-and-braces alongside .layout-grid's `minmax(0, 1fr)` content
+     track: keeps this grid item from growing past its track to fit a wide
+     code block, so `.codehilite pre`'s own overflow-x can do the scrolling. */
+  min-width: 0;
 }
 
 .page-block > p {
@@ -549,11 +553,34 @@ html[data-theme="dark"] .theme-icon {
  * fenced_code + codehilite extensions, which always wrap a block in
  * `<div class="codehilite"><pre><code>...`, whatever its fence language is).
  * Content pages that need input/output to read differently wrap that div in
- * one of the .code-sample--* markers below; raw HTML is passed through by the
- * renderer, so a blank line before and after the fence is enough to keep it
- * rendering as a normal code block inside the wrapper.
+ * one of the .code-sample/.code-pair markers below; raw HTML is passed
+ * through by the renderer (nesting included), so a blank line before and
+ * after each fence is enough to keep it rendering as a normal code block
+ * inside the wrapper.
+ *
+ * .code-sample is a single standalone panel (one label + one fence).
+ * .code-pair groups an input fence immediately followed by its captured
+ * output into one panel, via two .code-pair-part children that share the
+ * pair's outer border/radius and are separated by a thin divider instead of
+ * each having their own outer border.
+ *
+ * Scroll/overflow chain for long lines (e.g. curl one-liners): the grid
+ * track that carries the content column is `minmax(0, 1fr)` (see
+ * .layout-grid), which already caps the track's width regardless of content;
+ * `.content` below repeats `min-width: 0` directly on that grid item as
+ * belt-and-braces so a wide `pre` cannot inflate the column. Within the
+ * panel, `.codehilite pre` is the actual scroll container: it is a normal
+ * block box (width = 100% of its non-grid, non-flex ancestors, per CSS block
+ * layout - nothing between it and `.content` is a flex/grid context), so its
+ * `overflow-x: auto` triggers a horizontal scrollbar exactly when a `<pre>`
+ * line (rendered `white-space: pre`, never wrapped) is wider than that fixed
+ * width. The scrollbar itself is styled explicitly (thin, on-token colors)
+ * with `scrollbar-gutter: stable` so it reserves its own strip below the
+ * text instead of overlaying the last line, which also matters for item 2
+ * below (nothing here relies on an OS's auto-hiding overlay scrollbar).
  */
-.code-sample {
+.code-sample,
+.code-pair {
   margin: 14px 0;
   max-width: 100%;
   border: 1px solid var(--line);
@@ -573,31 +600,63 @@ html[data-theme="dark"] .theme-icon {
   letter-spacing: 0.11em;
 }
 
-.code-sample .codehilite {
+.code-pair-part + .code-pair-part {
+  border-top: 1px solid var(--line);
+}
+
+.code-sample .codehilite,
+.code-pair-part .codehilite {
   margin: 0;
   max-width: 100%;
 }
 
-.code-sample .codehilite pre {
+.code-sample .codehilite pre,
+.code-pair-part .codehilite pre {
   margin: 0;
   max-width: 100%;
   overflow-x: auto;
-  padding: 12px 14px;
+  /* Padding on every side is >= the panel's 12px border-radius, so no
+     glyph - including the first character of the last line - can ever sit
+     inside the quarter-circle the outer panel's rounded corner clips. */
+  padding: 16px;
   background: transparent;
   font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
   font-size: 13px;
   line-height: 1.55;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-soft) transparent;
 }
 
-.code-sample--python {
+.code-sample .codehilite pre::-webkit-scrollbar,
+.code-pair-part .codehilite pre::-webkit-scrollbar {
+  height: 9px;
+}
+
+.code-sample .codehilite pre::-webkit-scrollbar-track,
+.code-pair-part .codehilite pre::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.code-sample .codehilite pre::-webkit-scrollbar-thumb,
+.code-pair-part .codehilite pre::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 999px;
+}
+
+.code-sample--python,
+.code-pair-part--python {
   border-left: 3px solid rgba(var(--accent-rgb), 0.55);
 }
 
-.code-sample--shell {
+.code-sample--shell,
+.code-pair-part--shell {
   border-left: 3px solid var(--clr-secondary-a10);
 }
 
-.code-sample--output {
+.code-sample--output,
+.code-pair-part--output {
+  border-left: 3px solid var(--ink-soft);
   background: var(--surface-muted);
 }
 

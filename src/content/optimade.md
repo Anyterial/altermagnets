@@ -14,16 +14,24 @@ Fetching a single entry by id also includes the two underlying `_httk_records` d
 
 A very direct way to query OPTIMADE is via command line tools, such as curl. A filter query, restricted to a couple of fields and a few rows:
 
-<div class="code-sample code-sample--shell">
+<div class="code-pair">
+<div class="code-pair-part code-pair-part--shell">
 <p class="code-sample-label">Shell</p>
 
 ```bash
-curl "https://altermagnets.anyterial.se/optimade/amdb/v1/_anyterial_altermagnet_screening_results?filter=_anyterial_max_spin_splitting%20%3E%200.5&response_fields=_anyterial_formula,_anyterial_max_spin_splitting&page_limit=3"
+curl -G \
+  "https://altermagnets.anyterial.se/optimade/amdb/v1/"\
+"_anyterial_altermagnet_screening_results" \
+  --data-urlencode \
+    "filter=_anyterial_max_spin_splitting > 0.5" \
+  --data-urlencode \
+    "response_fields=_anyterial_formula,"\
+"_anyterial_max_spin_splitting" \
+  --data-urlencode "page_limit=3"
 ```
 
 </div>
-
-<div class="code-sample code-sample--output">
+<div class="code-pair-part code-pair-part--output">
 <p class="code-sample-label">Output</p>
 
 ```json
@@ -41,12 +49,14 @@ curl "https://altermagnets.anyterial.se/optimade/amdb/v1/_anyterial_altermagnet_
 ```
 
 </div>
+</div>
 
 (relationships and the rest of `meta` trimmed above — 7 of 180 screened materials have a maximum spin splitting above 0.5 eV.)
 
 A single-entry fetch, showing the default-included records:
 
-<div class="code-sample code-sample--shell">
+<div class="code-pair">
+<div class="code-pair-part code-pair-part--shell">
 <p class="code-sample-label">Shell</p>
 
 ```bash
@@ -54,8 +64,7 @@ curl "https://altermagnets.anyterial.se/optimade/amdb/v1/_anyterial_altermagnet_
 ```
 
 </div>
-
-<div class="code-sample code-sample--output">
+<div class="code-pair-part code-pair-part--output">
 <p class="code-sample-label">Output</p>
 
 ```json
@@ -89,8 +98,9 @@ curl "https://altermagnets.anyterial.se/optimade/amdb/v1/_anyterial_altermagnet_
 ```
 
 </div>
+</div>
 
-## Query OPTIMADE via httk
+### Query OPTIMADE via httk
 
 [httk](https://httk.org) is a Python toolkit for materials science; its OPTIMADE client lets you query this database programmatically from Python, instead of building URLs and parsing JSON by hand. To follow the examples below, install `httk2`, a meta-package that pulls in a good selection of httk packages including `httk-serve`:
 
@@ -107,7 +117,8 @@ pip install httk2
 
 Connect and discover the entry types:
 
-<div class="code-sample code-sample--python">
+<div class="code-pair">
+<div class="code-pair-part code-pair-part--python">
 <p class="code-sample-label">Python</p>
 
 ```python
@@ -122,8 +133,7 @@ with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
 ```
 
 </div>
-
-<div class="code-sample code-sample--output">
+<div class="code-pair-part code-pair-part--output">
 <p class="code-sample-label">Output</p>
 
 ```text
@@ -137,10 +147,12 @@ files -> OptimadeFile
 ```
 
 </div>
+</div>
 
 A pandas-style, bracket-indexed search over the screening results:
 
-<div class="code-sample code-sample--python">
+<div class="code-pair">
+<div class="code-pair-part code-pair-part--python">
 <p class="code-sample-label">Python</p>
 
 ```python
@@ -155,8 +167,7 @@ with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
 ```
 
 </div>
-
-<div class="code-sample code-sample--output">
+<div class="code-pair-part code-pair-part--output">
 <p class="code-sample-label">Output</p>
 
 ```text
@@ -171,12 +182,14 @@ anyt.am-1-7 Cu2O3Cl 0.553
 ```
 
 </div>
+</div>
 
 This bracket syntax deliberately offers no sorting, so rows come back in store order rather than by value — here that happens to be the same seven materials as above, in id order. Filtering, counting, and reading columns are all it does; a more expressive `searcher` interface (sorting, relationship-following, includes) is documented in the [httk-serve documentation](https://docs.httk.org/httk-serve/), and is exactly what the next two examples use, to also reach a material's included records and its related structure and run.
 
 Fetching one material together with its included records and, following the `structures` relationship, its crystal structure:
 
-<div class="code-sample code-sample--python">
+<div class="code-pair">
+<div class="code-pair-part code-pair-part--python">
 <p class="code-sample-label">Python</p>
 
 ```python
@@ -217,8 +230,7 @@ with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
 ```
 
 </div>
-
-<div class="code-sample code-sample--output">
+<div class="code-pair-part code-pair-part--output">
 <p class="code-sample-label">Output</p>
 
 ```text
@@ -229,10 +241,12 @@ structure anyt.am.structure-1-1 CrSb ('Cr', 'Sb')
 ```
 
 </div>
+</div>
 
 Following provenance one step further, to the workflow run and its other declared outputs:
 
-<div class="code-sample code-sample--python">
+<div class="code-pair">
+<div class="code-pair-part code-pair-part--python">
 <p class="code-sample-label">Python</p>
 
 ```python
@@ -258,8 +272,7 @@ with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
 ```
 
 </div>
-
-<div class="code-sample code-sample--output">
+<div class="code-pair-part code-pair-part--output">
 <p class="code-sample-label">Output</p>
 
 ```text
@@ -271,4 +284,5 @@ anyt.am.runs-1-1 https://schemas.anyterial.se/defs/v0.1/workflows/altermagnets-s
  output: splitting_figure -> files anyt.am.files-1-3
 ```
 
+</div>
 </div>

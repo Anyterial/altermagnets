@@ -1,5 +1,5 @@
 ---
-title: OPTIMADE
+title: OPTIMADE API
 base_template: base_default
 hosting: static
 ---

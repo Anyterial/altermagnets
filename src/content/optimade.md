@@ -4,15 +4,15 @@ base_template: base_default
 hosting: static
 ---
 
-[OPTIMADE](https://www.optimade.org/) is a common REST API standard for materials databases, developed by the [OPTIMADE consortium](https://github.com/Materials-Consortia/OPTIMADE) of materials-science data providers so that the same query language and response format work across dozens of independent databases. This database serves its data through OPTIMADE at [https://altermagnets.anyterial.se/optimade/amdb](https://altermagnets.anyterial.se/optimade/amdb).
+The [OPTIMADE API](https://www.optimade.org/) is a REST API for materials databases, developed by the [OPTIMADE consortium](https://github.com/Materials-Consortia/OPTIMADE) of materials-science data providers so that the same query language and response format work across dozens of independent databases. The Altermagnets Database (*amdb*) serves data through the OPTIMADE API at [https://altermagnets.anyterial.se/optimade/amdb](https://altermagnets.anyterial.se/optimade/amdb/).
 
-### Programmatic access
+### Programmatic access to amdb
 
-The provider-specific `_anyterial_altermagnet_screening_results` entry type carries one entry per screened candidate material, with exactly the science shown on each material's web page: chemical formula and elements, space group, collinearity classification, magnetic phase and wave-class assignment, the average and maximum spin splitting and the spin-splitting fraction, electronic type, DFT band gap, minimum crustal elemental abundance, and the linked MAGNDATA symmetry variants.
+While the most commonly used OPTIMADE API structure endpoint it available for structural information, the primary entry in *amdb* is our provider-specific `_anyterial_altermagnet_screening_results` entry type. These entries represent a screened candidate material, with the same quantities as are shown on the web pages: chemical formula and elements, space group, collinearity classification, magnetic phase and wave-class assignment, the average and maximum spin splitting and the spin-splitting fraction, electronic type, DFT band gap, minimum crustal elemental abundance, and the linked MAGNDATA symmetry variants.
 
-Fetching a single entry by id also includes the two underlying `_httk_records` data records (the coupled DFT run's declared outputs, and the published screening analysis's values) and the `references` entry, by default. The screened crystal structure itself is a standard OPTIMADE `structures` entry, reached through a `structures` relationship rather than embedded directly; the producing workflow run and its other outputs (structure, files, total energy) are reached through a `_httk_runs` relationship. Provider-specific properties, like standard ones, can be used in `filter` expressions, including through relationships (e.g. `_httk_records.<property>`).
+Fetching a single entry by id also includes the two underlying `_httk_records` data records (the coupled DFT run's declared outputs, and the published screening analysis's values) and any associated `references` enties. The screened crystal structure itself is a standard OPTIMADE `structures` entry, reached through a `structures` relationship. The workflow producing the screening result (structure, files, total energy) are reached through a `_httk_runs` relationship. Provider-specific properties, like standard ones, can be used in `filter` expressions, including through relationships (e.g. `_httk_records.<property>`).
 
-A very direct way to query OPTIMADE is via command line tools, such as curl. A filter query, restricted to a couple of fields and a few rows:
+It is possible to query OPTIMADE very directly via command line tools such as `curl`. For example, a filter query restricted to a couple of fields and a few rows:
 
 <div class="code-pair">
 <div class="code-pair-part code-pair-part--shell">
@@ -51,7 +51,8 @@ curl -G \
 </div>
 </div>
 
-(relationships and the rest of `meta` trimmed above — 7 of 180 screened materials have a maximum spin splitting above 0.5 eV.)
+(the response copied below is trimmed: relationships and the rest of `meta` is omitted.)
+We find that 7 of 180 screened materials have a maximum spin splitting above 0.5 eV.
 
 A single-entry fetch, showing the default-included records:
 
@@ -100,9 +101,10 @@ curl "https://altermagnets.anyterial.se/optimade/amdb/v1/_anyterial_altermagnet_
 </div>
 </div>
 
-### Query OPTIMADE via httk
+### Using *httk* to query *amdb* with OPTIMADE
 
-[httk](https://httk.org) is a Python toolkit for materials science; its OPTIMADE client lets you query this database programmatically from Python, instead of building URLs and parsing JSON by hand. To follow the examples below, install `httk2`, a meta-package that pulls in a good selection of httk packages including `httk-serve`:
+The [high-throughput toolkit (*httk*)](https://httk.org) is a Python toolkit supporting high-throughput computations. Its provides an OPTIMADE client that lets you query *amdb* with Python.
+To follow the examples below, make sure to have `httk2` installed (preferably in a virtual environment):
 
 <div class="code-sample code-sample--shell">
 <p class="code-sample-label">Shell</p>
@@ -113,7 +115,7 @@ pip install httk2
 
 </div>
 
-(these examples were run against `httk-serve` 2.1.0, installed via the pre-release `httk2` meta-package, ahead of its first PyPI release)
+(these examples were run against `httk-serve` 2.1.0, installed via the `httk2`  package)
 
 Connect and discover the entry types:
 
@@ -149,7 +151,7 @@ files -> OptimadeFile
 </div>
 </div>
 
-A pandas-style, bracket-indexed search over the screening results:
+A simplified bracket-based search syntax (familiar from e.g., Pandas dataframes) allow easy filtering of altermagnets screening results:
 
 <div class="code-pair">
 <div class="code-pair-part code-pair-part--python">
@@ -184,9 +186,9 @@ anyt.am-1-7 Cu2O3Cl 0.553
 </div>
 </div>
 
-This bracket syntax deliberately offers no sorting, so rows come back in store order rather than by value — here that happens to be the same seven materials as above, in id order. Filtering, counting, and reading columns are all it does; a more expressive `searcher` interface (sorting, relationship-following, includes) is documented in the [httk-serve documentation](https://docs.httk.org/httk-serve/), and is exactly what the next two examples use, to also reach a material's included records and its related structure and run.
+The simplified bracket syntax do not offer easy sorting (rows are provided in store order). A more sophistivated `searcher` interface (sorting, relationship-following, includes) is also available (see the [httk-serve documentation](https://docs.httk.org/httk-serve/)).
 
-Fetching one material together with its included records and, following the `structures` relationship, its crystal structure:
+For example, fetching one material together with its included records and, following the `structures` relationship, its crystal structure:
 
 <div class="code-pair">
 <div class="code-pair-part code-pair-part--python">

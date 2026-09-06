@@ -116,15 +116,19 @@ from httk.serve.optimade import OptimadeStore
 
 with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
     results = store.entry_type("_anyterial_altermagnet_screening_results")
-    search = store.searcher(response_fields=["_anyterial_formula", "_anyterial_max_spin_splitting"])
+    search = store.searcher()
     material = search.variable(results)
     search.add(material._anyterial_max_spin_splitting > Decimal("0.5"))
     search.add_sort(material._anyterial_max_spin_splitting, descending=True)
 
     print("matches:", search.count())
-    for row in search.results(item=material):
-        attrs = row.item.unwrap()["attributes"]
-        print(row.item.id, attrs["_anyterial_formula"], attrs["_anyterial_max_spin_splitting"])
+    rows = search.results(
+        id=material.id,
+        formula=material._anyterial_formula,
+        max_ss=material._anyterial_max_spin_splitting,
+    )
+    for row in rows:
+        print(row.id, row.formula, row.max_ss)
 ```
 
 ```text
@@ -149,10 +153,13 @@ with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
     search = store.searcher()
     material = search.variable(results)
     search.add(material.id == "anyt.am-1-1")
-    resource = search.results(item=material).one().item
-
-    attrs = resource.unwrap()["attributes"]
-    print(resource.id, attrs["_anyterial_formula"], "max_spin_splitting =", attrs["_anyterial_max_spin_splitting"])
+    row = search.results(
+        item=material,
+        formula=material._anyterial_formula,
+        max_ss=material._anyterial_max_spin_splitting,
+    ).one()
+    resource = row.item
+    print(resource.id, row.formula, "max_spin_splitting =", row.max_ss)
 
     # Single-entry responses default-include the material's _httk_records and references.
     root = optimade_document_root(resource.document)
@@ -166,8 +173,12 @@ with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
     structure_search = store.searcher()
     structure_var = structure_search.variable(structures)
     structure_search.add(structure_var.id == structure_id)
-    structure = structure_search.results(item=structure_var).one().item.unwrap()
-    print("structure", structure["id"], structure["attributes"]["chemical_formula_reduced"], structure["attributes"]["elements"])
+    structure_row = structure_search.results(
+        id=structure_var.id,
+        formula=structure_var.chemical_formula_reduced,
+        elements=structure_var.elements,
+    ).one()
+    print("structure", structure_row.id, structure_row.formula, structure_row.elements)
 ```
 
 ```text
@@ -195,9 +206,9 @@ with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
     run_search = store.searcher()
     run_var = run_search.variable(runs)
     run_search.add(run_var.id == run_id)
-    run = run_search.results(item=run_var).one().item.unwrap()
-    print(run["id"], run["attributes"]["_httk_workflow_declaration_uri"])
-    for output in run["relationships"]["_httk_has_output"]["data"]:
+    run_row = run_search.results(item=run_var, workflow=run_var._httk_workflow_declaration_uri).one()
+    print(run_row.item.id, run_row.workflow)
+    for output in run_row.item.unwrap()["relationships"]["_httk_has_output"]["data"]:
         print(" output:", output["meta"]["_httk_label"], "->", output["type"], output["id"])
 ```
 

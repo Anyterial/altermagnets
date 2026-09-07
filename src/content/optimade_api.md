@@ -117,7 +117,7 @@ pip install httk2
 
 </div>
 
-(these examples were run against a development build of `httk-serve` beyond the 2.1.0 release, installed via the `httk2` package; the `include()`/`related()` client API used below is not present in the 2.1.0 release)
+(these examples were run against a development build of `httk-serve` after the 2.1.0 release, installed via the `httk2` package; the `links` relationship namespace used below is not present in the 2.1.0 release)
 
 Connect and discover the entry types:
 
@@ -188,9 +188,9 @@ anyt.am-1-7 Cu2O3Cl 0.553
 </div>
 </div>
 
-The simplified bracket syntax do not offer easy sorting (rows are provided in store order). A more sophisticated `searcher` interface is also available, offering sorting, depth-1 relationship filters (`material.structures.nelements > ...`), `include()` to have related resources ride along in the same response, and `store.related()` to resolve a relationship of an already-fetched resource (see the [httk-serve documentation](https://docs.httk.org/httk-serve/)).
+The simplified bracket syntax do not offer easy sorting (rows are provided in store order). A more sophisticated `searcher` interface is also available, offering sorting and a single `links` relationship namespace: `material.links.<relationship>.<field>` as a depth-1 filter predicate, `material.links.<relationship>` as a set-valued output that rides along in the same response (the client adds `include=` for it automatically), and `.links.<name>` on any returned record to take a further hop, resolved from the same response's included resources or, failing that, by a lazy fetch (see the [httk-serve documentation](https://docs.httk.org/httk-serve/)).
 
-For example, fetching one material with `include()` so its `_httk_records` and its crystal structure ride along in the same response, then reading both off with `store.related()`:
+For example, fetching one material with its `_httk_records` and its crystal structure as `links` outputs, so they ride along in the same response:
 
 <div class="code-pair">
 <div class="code-pair-part code-pair-part--python">
@@ -201,23 +201,22 @@ from httk.serve.optimade import OptimadeStore
 
 with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
     results = store.entry_type("_anyterial_altermagnet_screening_results")
-    # include() adds the related resources to the same response's "included" array.
-    search = store.searcher().include("_httk_records", "structures")
+    search = store.searcher()
     material = search.variable(results)
     search.add(material.id == "anyt.am-1-1")
     row = search.results(
         item=material,
         formula=material._anyterial_formula,
         max_ss=material._anyterial_max_spin_splitting,
+        # link outputs ride along in the same response: the client adds
+        # include= for these two automatically, at no extra request.
+        records=material.links._httk_records,
+        structures=material.links.structures,
     ).one()
     print(row.item.id, row.formula, "max_spin_splitting =", row.max_ss)
-
-    # store.related() resolves a relationship of an already-fetched resource,
-    # here from the included resources at no extra request.
-    for record in store.related(row.item, "_httk_records"):
+    for record in row.records:
         print("record", record.id, dict(record["attributes"]))
-
-    (structure,) = store.related(row.item, "structures")
+    (structure,) = row.structures
     print("structure", structure.id, structure.chemical_formula_reduced, structure.elements)
 ```
 
@@ -235,7 +234,7 @@ structure anyt.am.structure-1-1 CrSb ('Cr', 'Sb')
 </div>
 </div>
 
-Following provenance one step further, to the workflow run and its declared input structure and outputs. This query does not use `include()`: `store.related(row.item, "_httk_runs")` costs one request fetching the run by id, but that single-entry fetch, like the one shown near the top of this page, default-includes the run's own `_httk_has_input`/`_httk_has_output` targets, so the two loops below resolve at no further cost:
+Following provenance one step further, to the workflow run and its declared input structure and outputs, by walking `.links` on the returned record:
 
 <div class="code-pair">
 <div class="code-pair-part code-pair-part--python">
@@ -251,11 +250,11 @@ with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
     search.add(material.id == "anyt.am-1-1")
     row = search.results(item=material).one()
 
-    (run,) = store.related(row.item, "_httk_runs")
+    (run,) = row.item.links._httk_runs
     print(run.id, run["attributes"]["_httk_workflow_declaration_uri"])
-    for edge in store.related(run, "_httk_has_input"):
+    for edge in run.links._httk_has_input:
         print(" input:", edge.type, edge.id)
-    for edge in store.related(run, "_httk_has_output"):
+    for edge in run.links._httk_has_output:
         print(" output:", edge.type, edge.id)
 ```
 
@@ -275,9 +274,9 @@ anyt.am.runs-1-1 https://schemas.anyterial.se/defs/v0.1/workflows/altermagnets-s
 </div>
 </div>
 
-(the `_httk_label` meta on each edge, e.g. `input_structure`, `total_energy`, `vasprun`, is dropped here: `related()` resolves the edge targets, not their labels, and `run["relationships"]["_httk_has_input"]["data"][i]["meta"]` would be needed to recover them -- the example stays clear without it.)
+(the `_httk_label` meta on each edge, e.g. `input_structure`, `total_energy`, `vasprun`, is dropped here: `.links.<name>` resolves the edge targets, not their labels, and `run["relationships"]["_httk_has_input"]["data"][i]["meta"]` would be needed to recover them -- the example stays clear without it.)
 
-`include()` cannot make this two-hop case single-request: the run's `_httk_has_input`/`_httk_has_output` edges point at `structures`, `_httk_records`, and `files`, none of which are direct relationships of `_anyterial_altermagnet_screening_results`, so naming them in `search.include()` does not add them to this query's `included`, and `related()` still fetches the run separately -- it only adds requests without removing the one that matters.
+This block issues 2 HTTP requests in total, measured by wrapping `httpx.Client.send` with a counting shim: one to look up the material by id, and one to fetch the run by id, whose single-entry response default-includes the run's own `_httk_has_input`/`_httk_has_output` targets, so both loops resolve at no further cost.
 
 A depth-1 relationship filter reaches through `structures` directly, without following any relationship at runtime:
 
@@ -292,7 +291,7 @@ with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
     results = store.entry_type("_anyterial_altermagnet_screening_results")
     search = store.searcher()
     material = search.variable(results)
-    search.add(material.structures.nelements > 3)
+    search.add(material.links.structures.nelements > 3)
     print("matches:", search.count())
 ```
 

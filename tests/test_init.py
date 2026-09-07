@@ -7,6 +7,11 @@ def test_init_only_registers_static_search_options() -> None:
     init.execute(data)
     assert data["search_options"]["classifications"][1] == {"value": "collinear", "label": "Collinear"}
     assert set(data) == {"search_options"}
+    # The Space group combobox pick list: stored notation, deduplicated, IT-number order.
+    space_groups = data["search_options"]["space_groups"]
+    assert "P6_3/mmc" in space_groups
+    assert len(space_groups) == len(set(space_groups))
+    assert space_groups[0] == "P2_1"  # lowest International Tables number present
 
 
 def test_summarize_symmetry_rows_splits_entries_by_symprec() -> None:

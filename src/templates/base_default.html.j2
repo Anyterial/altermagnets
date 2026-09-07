@@ -211,9 +211,16 @@
                   id="space-group"
                   name="space_group"
                   type="text"
+                  list="space-group-options"
+                  autocomplete="off"
                   value="{{ query.space_group if query.space_group else '' }}"
                   placeholder="e.g. P6_3/mmc"
                 />
+                <datalist id="space-group-options">
+                  {% for symbol in search_options.space_groups %}
+                  <option value="{{ symbol }}"></option>
+                  {% endfor %}
+                </datalist>
               </div>
 
               <div class="form-section">

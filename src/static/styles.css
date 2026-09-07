@@ -1031,6 +1031,12 @@ html[data-theme="dark"] .theme-icon {
   font-size: 12px;
 }
 
+.provenance-produced-id {
+  color: var(--ink-soft);
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+}
+
 .symmetry-table-wrap {
   margin-bottom: 2px;
 }

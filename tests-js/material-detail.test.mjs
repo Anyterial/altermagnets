@@ -643,12 +643,15 @@ function recordResource(relationships = {}, attrs = {}) {
 }
 const CALC_RECORD = recordResource();
 
-// The run's forward `_httk_has_output` edges: the output structure, the calculation record
-// itself, and an output file. The deployment serves no artifact relationships at all any more
-// (`_httk_has_artifact`/`_httk_is_artifact` are absent from the wire after item 2).
+// The run's forward `_httk_has_input` edge: the structure it consumed (this SCF does not
+// relax, so the served cell is the run's input). Its `_httk_has_output` edges: the
+// calculation record itself and an output file. The deployment serves no artifact
+// relationships at all any more (`_httk_has_artifact`/`_httk_is_artifact` absent from the wire).
+function inputEdges(role) {
+  return [{ type: "structures", id: STRUCTURE_EDGE_ID, meta: { role, _httk_label: "input_structure" } }];
+}
 function forwardEdges(role) {
   return [
-    { type: "structures", id: STRUCTURE_EDGE_ID, meta: { role, _httk_label: "output_structure" } },
     { type: "_httk_records", id: CALC_RECORD_ID, meta: { role, _httk_label: "total_energy" } },
     { type: "files", id: FILE_EDGE_ID, meta: { role, _httk_label: "vasprun" } },
   ];
@@ -657,13 +660,16 @@ const RUN_RESOURCE = {
   id: RUN_ID, type: "_httk_runs",
   attributes: { _httk_source_id: "httk-v1:abc", _httk_workflow_declaration_uri: WORKFLOW_URI },
   relationships: {
+    _httk_has_input: { data: inputEdges("input") },
     _httk_has_output: { data: forwardEdges("output") },
   },
 };
 
-// The produced model built from RUN_RESOURCE's `_httk_has_output` block.
+// The input/produced models built from RUN_RESOURCE's forward blocks.
+const EXPECTED_INPUTS = [
+  { type: "structures", id: STRUCTURE_EDGE_ID, label: "input_structure" },
+];
 const EXPECTED_PRODUCED = [
-  { type: "structures", id: STRUCTURE_EDGE_ID, label: "output_structure" },
   { type: "_httk_records", id: CALC_RECORD_ID, label: "total_energy" },
   { type: "files", id: FILE_EDGE_ID, label: "vasprun" },
 ];
@@ -696,6 +702,7 @@ test("fetchProvenance resolves the calculation record and the run directly from 
   assert.equal(obj.sourceId, "httk-v1:abc");
   assert.equal(obj.workflowUri, WORKFLOW_URI);
   assert.equal(obj.totalEnergy, -1.0);
+  assert.deepEqual(obj.inputs, EXPECTED_INPUTS);
   assert.deepEqual(obj.produced, EXPECTED_PRODUCED);
 });
 
@@ -767,20 +774,30 @@ test("produced list is built from _httk_has_output only; a run with only _httk_h
   assert.deepEqual(obj.produced, []);
 });
 
-test("buildProvenance renders the calculation record as the (this material) non-link entry, and no produced entry is ever a link", () => {
+test("buildProvenance renders the input structure and produced entries as non-link entries with visible ids, the calc record as (this material)", () => {
   installDom(new DomDocument("https://site.example.test/material"));
-  const obj = { calcRecordId: CALC_RECORD_ID, workflowUri: WORKFLOW_URI, sourceId: "httk-v1:abc", totalEnergy: -12.5, produced: EXPECTED_PRODUCED };
+  const obj = { calcRecordId: CALC_RECORD_ID, workflowUri: WORKFLOW_URI, sourceId: "httk-v1:abc", totalEnergy: -12.5, inputs: EXPECTED_INPUTS, produced: EXPECTED_PRODUCED };
   const section = material.buildProvenance(obj);
   assert.ok(section);
   assert.match(section.textContent, /Provenance/);
   assert.match(section.textContent, /httk-v1:abc/);
   assert.ok(section.querySelectorAll("a").some((a) => a.getAttribute("href") === WORKFLOW_URI));
   assert.match(section.textContent, /-12\.500000/);
-  // No produced entry is ever a real material-page link any more.
+  // The input section renders above the produced section.
+  assert.match(section.textContent, /This run used as input:/);
+  assert.match(section.textContent, /This run produced:/);
+  assert.ok(section.textContent.indexOf("This run used as input:") < section.textContent.indexOf("This run produced:"));
+  // No entry is ever a real material-page link any more.
   assert.equal(section.querySelectorAll("a.provenance-produced-link").length, 0);
+  // Inputs render first, so DOM order is the input structure then the produced record and file.
   const entries = section.querySelectorAll("span.provenance-produced-entry");
   assert.deepEqual(entries.map((s) => s.textContent.replace(/\s*\(this material\)$/, "")), ["structure", "record", "file"]);
   assert.deepEqual(entries.map((s) => s.title), [STRUCTURE_EDGE_ID, CALC_RECORD_ID, FILE_EDGE_ID]);
+  // Every non-link entry now surfaces its id visibly (not just in the title).
+  assert.deepEqual(
+    section.querySelectorAll("span.provenance-produced-id").map((s) => s.textContent),
+    [STRUCTURE_EDGE_ID, CALC_RECORD_ID, FILE_EDGE_ID],
+  );
   // Only the calculation-record entry carries the current-material annotation.
   const current = entries.find((s) => s.title === CALC_RECORD_ID);
   assert.ok(current.className.includes("is-current"));
@@ -790,10 +807,10 @@ test("buildProvenance renders the calculation record as the (this material) non-
     assert.doesNotMatch(s.textContent, /\(this material\)/);
   });
   // Edge labels render as muted annotations.
-  assert.match(section.textContent, /output_structure/);
+  assert.match(section.textContent, /input_structure/);
   assert.match(section.textContent, /total_energy/);
-  // Energy-only object (no produced entries) still renders the scalar and no produced list.
-  const energyOnly = material.buildProvenance({ calcRecordId: "x", workflowUri: null, sourceId: null, totalEnergy: -1.0, produced: [] });
+  // Energy-only object (no input or produced entries) still renders the scalar and no lists.
+  const energyOnly = material.buildProvenance({ calcRecordId: "x", workflowUri: null, sourceId: null, totalEnergy: -1.0, inputs: [], produced: [] });
   assert.match(energyOnly.textContent, /-1\.000000/);
   assert.equal(energyOnly.querySelectorAll("ul.provenance-produced").length, 0);
   // Null object → no section.
@@ -896,7 +913,8 @@ test("detail page appends a Provenance section from included resources (no run G
   await material.loadShell(shown.result, OptimadeTransport);
   assert.match(shown.result.textContent, /Provenance/);
   assert.match(shown.result.textContent, /httk-v1:abc/);
-  assert.match(shown.result.textContent, /output_structure/);
+  assert.match(shown.result.textContent, /This run used as input:/);
+  assert.match(shown.result.textContent, /input_structure/);
   assert.match(shown.result.textContent, /-1\.000000/);
   // No request is ever issued against the runs endpoint (the run rides in via `included`), and
   // the calculation record is never fetched by id either.

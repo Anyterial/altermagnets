@@ -592,12 +592,13 @@ function buildVariantCards(variants) {
 // kept in a title attribute.
 const PRODUCED_KIND_WORDS = { _httk_records: "record", files: "file", structures: "structure" };
 
-// List of what a run produced, from its forward `_httk_has_output` StrongLink block only.
-// The deployment no longer serves artifact relationships at all (`_httk_has_artifact`/
+// List of a run's edges on one forward StrongLink block: `_httk_has_output` for what
+// the run produced, `_httk_has_input` for what it consumed (the input structure). The
+// deployment does not serve artifact relationships at all (`_httk_has_artifact`/
 // `_httk_is_artifact` are absent from the wire), so there is no fallback to read.
-function producedEntries(run) {
-  const output = arrayValue(run.relationships?._httk_has_output?.data);
-  return output
+function edgeEntries(run, key) {
+  const edges = arrayValue(run.relationships?.[key]?.data);
+  return edges
     .filter((entry) => entry && typeof entry.id === "string" && entry.id)
     .map((entry) => ({ type: String(entry.type || ""), id: entry.id, label: String(entry.meta?._httk_label || "") }));
 }
@@ -702,7 +703,9 @@ async function fetchProvenance(Transport, config, resource, included) {
     workflowUri: runAttrs._httk_workflow_declaration_uri != null ? String(runAttrs._httk_workflow_declaration_uri) : null,
     sourceId: runAttrs._httk_source_id != null ? String(runAttrs._httk_source_id) : null,
     totalEnergy,
-    produced: await attachFileDownloads(Transport, config, run ? producedEntries(run) : []),
+    // Inputs are the run's consumed structure (never a file), so no download attach.
+    inputs: run ? edgeEntries(run, "_httk_has_input") : [],
+    produced: await attachFileDownloads(Transport, config, run ? edgeEntries(run, "_httk_has_output") : []),
   };
 }
 
@@ -731,6 +734,8 @@ function buildProducedList(produced, calcRecordId) {
       entry.title = item.id;
       if (current) entry.append(document.createTextNode(" (this material)"));
       li.append(entry);
+      // These entries have no page of their own to link to, so surface the id itself.
+      li.append(node("span", "provenance-produced-id", item.id));
     }
     list.append(li);
   });
@@ -742,7 +747,7 @@ function buildProducedList(produced, calcRecordId) {
 function buildProvenance(provenance) {
   if (!provenance) return null;
   const sec = section("Provenance");
-  sec.append(node("p", "section-note", "How this material was produced: the workflow run that generated it, its identifiers, and the entries that run produced."));
+  sec.append(node("p", "section-note", "How this material was produced: the workflow run that generated it, its identifiers, the structure it consumed as input, and the entries it produced."));
   const dl = node("dl", "details-grid");
   if (provenance.workflowUri) {
     const value = /^https:\/\//i.test(provenance.workflowUri)
@@ -753,6 +758,10 @@ function buildProvenance(provenance) {
   if (provenance.sourceId) field(dl, "Run source id", provenance.sourceId, "", "details-wide");
   if (provenance.totalEnergy !== null) field(dl, "Total energy", `$${provenance.totalEnergy.toFixed(6)}\\ \\mathrm{eV}$`);
   if (dl.childNodes.length) sec.append(dl);
+  if (provenance.inputs.length) {
+    sec.append(node("p", "section-note", "This run used as input:"));
+    sec.append(buildProducedList(provenance.inputs, provenance.calcRecordId));
+  }
   if (provenance.produced.length) {
     sec.append(node("p", "section-note", "This run produced:"));
     sec.append(buildProducedList(provenance.produced, provenance.calcRecordId));

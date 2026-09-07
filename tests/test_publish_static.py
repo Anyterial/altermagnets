@@ -61,3 +61,17 @@ def test_publish_defaults_all_widgets_to_nested_amdb(monkeypatch, tmp_path) -> N
     assert _widget_config(search, "httk-serve-optimade-table")["base_url"] == "/optimade/amdb"
     assert _widget_config(material, "site-material-detail")["base_url"] == "/optimade/amdb"
     assert _widget_config(index, "site-stats")["base_url"] == "/optimade/amdb"
+
+
+def test_publish_highlights_python_when_pygments_is_unavailable(tmp_path, monkeypatch) -> None:
+    import markdown.extensions.codehilite
+
+    monkeypatch.setattr(markdown.extensions.codehilite, "pygments", False)
+    publish_static.publish_site(tmp_path)
+
+    optimade = (tmp_path / "optimade_api.html").read_text(encoding="utf-8")
+    home = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert '<code class="language-python">' in optimade
+    assert "highlightjs/cdn-release@11.11.1" in optimade
+    assert "hljs?.highlightElement(block)" in optimade
+    assert "highlightjs/cdn-release" not in home

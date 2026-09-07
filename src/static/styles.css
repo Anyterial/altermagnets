@@ -654,25 +654,25 @@ html[data-theme="dark"] .theme-icon {
   border-radius: 999px;
 }
 
-.code-pair-part--python .codehilite :is(.c, .c1, .cm) {
+.code-pair-part--python .codehilite :is(.c, .c1, .cm, .hljs-comment) {
   color: var(--syntax-comment);
   font-style: italic;
 }
 
-.code-pair-part--python .codehilite :is(.k, .kc, .kn, .ow) {
+.code-pair-part--python .codehilite :is(.k, .kc, .kn, .ow, .hljs-keyword) {
   color: var(--syntax-keyword);
   font-weight: 600;
 }
 
-.code-pair-part--python .codehilite :is(.nb, .nf, .nn, .vm) {
+.code-pair-part--python .codehilite :is(.nb, .nf, .nn, .vm, .hljs-built_in, .hljs-title) {
   color: var(--syntax-name);
 }
 
-.code-pair-part--python .codehilite :is(.s, .s1, .s2) {
+.code-pair-part--python .codehilite :is(.s, .s1, .s2, .hljs-string) {
   color: var(--syntax-string);
 }
 
-.code-pair-part--python .codehilite :is(.m, .mf, .mi) {
+.code-pair-part--python .codehilite :is(.m, .mf, .mi, .hljs-number, .hljs-literal) {
   color: var(--syntax-number);
 }
 

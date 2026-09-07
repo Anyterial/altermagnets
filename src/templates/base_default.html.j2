@@ -359,5 +359,13 @@
     <script src="https://cdn.jsdelivr.net/npm/katex/dist/katex.min.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/katex/dist/contrib/auto-render.min.js" crossorigin="anonymous"></script>
     <script src="{{ page.relbaseurl }}/app.js"></script>
+    {% if page.relurl in ('optimade_api', 'optimade_api.html') %}
+    <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js" integrity="sha384-RH2xi4eIQ/gjtbs9fUXM68sLSi99C7ZWBRX1vDrVv6GQXRibxXLbwO2NGZB74MbU" crossorigin="anonymous"></script>
+    <script>
+      document.querySelectorAll(".code-pair-part--python code").forEach((block) => {
+        if (!block.querySelector("span")) window.hljs?.highlightElement(block);
+      });
+    </script>
+    {% endif %}
   </body>
 </html>

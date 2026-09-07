@@ -25,6 +25,11 @@
   --clr-surface-a40: rgba(17, 43, 46, 0.25);
   --clr-surface-a30: rgba(17, 43, 46, 0.18);
   --clr-surface-a20: rgba(17, 43, 46, 0.12);
+  --syntax-comment: #607174;
+  --syntax-keyword: #9b3157;
+  --syntax-name: #28638e;
+  --syntax-string: #287044;
+  --syntax-number: #96500b;
 }
 
 html[data-theme="dark"] {
@@ -53,6 +58,11 @@ html[data-theme="dark"] {
   --clr-surface-a40: rgba(242, 245, 251, 0.24);
   --clr-surface-a30: rgba(242, 245, 251, 0.2);
   --clr-surface-a20: rgba(242, 245, 251, 0.14);
+  --syntax-comment: #9ba9bc;
+  --syntax-keyword: #ff8fab;
+  --syntax-name: #82c7ff;
+  --syntax-string: #8bd49c;
+  --syntax-number: #f4bd70;
 }
 
 html[data-theme="light"] {
@@ -642,6 +652,28 @@ html[data-theme="dark"] .theme-icon {
 .code-pair-part .codehilite pre::-webkit-scrollbar-thumb {
   background: var(--line);
   border-radius: 999px;
+}
+
+.code-pair-part--python .codehilite :is(.c, .c1, .cm) {
+  color: var(--syntax-comment);
+  font-style: italic;
+}
+
+.code-pair-part--python .codehilite :is(.k, .kc, .kn, .ow) {
+  color: var(--syntax-keyword);
+  font-weight: 600;
+}
+
+.code-pair-part--python .codehilite :is(.nb, .nf, .nn, .vm) {
+  color: var(--syntax-name);
+}
+
+.code-pair-part--python .codehilite :is(.s, .s1, .s2) {
+  color: var(--syntax-string);
+}
+
+.code-pair-part--python .codehilite :is(.m, .mf, .mi) {
+  color: var(--syntax-number);
 }
 
 .code-sample--python,

@@ -117,7 +117,7 @@ pip install httk2
 
 </div>
 
-(these examples were run against `httk-serve` 2.1.0, installed via the `httk2`  package)
+(these examples were run against a development build of `httk-serve` beyond the 2.1.0 release, installed via the `httk2` package; the `include()`/`related()` client API used below is not present in the 2.1.0 release)
 
 Connect and discover the entry types:
 
@@ -188,21 +188,21 @@ anyt.am-1-7 Cu2O3Cl 0.553
 </div>
 </div>
 
-The simplified bracket syntax do not offer easy sorting (rows are provided in store order). A more sophistivated `searcher` interface (sorting, relationship-following, includes) is also available (see the [httk-serve documentation](https://docs.httk.org/httk-serve/)).
+The simplified bracket syntax do not offer easy sorting (rows are provided in store order). A more sophisticated `searcher` interface is also available, offering sorting, depth-1 relationship filters (`material.structures.nelements > ...`), `include()` to have related resources ride along in the same response, and `store.related()` to resolve a relationship of an already-fetched resource (see the [httk-serve documentation](https://docs.httk.org/httk-serve/)).
 
-For example, fetching one material together with its included records and, following the `structures` relationship, its crystal structure:
+For example, fetching one material with `include()` so its `_httk_records` and its crystal structure ride along in the same response, then reading both off with `store.related()`:
 
 <div class="code-pair">
 <div class="code-pair-part code-pair-part--python">
 <p class="code-sample-label">Python</p>
 
 ```python
-from httk.core.optimade import optimade_document_root
 from httk.serve.optimade import OptimadeStore
 
 with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
     results = store.entry_type("_anyterial_altermagnet_screening_results")
-    search = store.searcher()
+    # include() adds the related resources to the same response's "included" array.
+    search = store.searcher().include("_httk_records", "structures")
     material = search.variable(results)
     search.add(material.id == "anyt.am-1-1")
     row = search.results(
@@ -210,27 +210,15 @@ with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
         formula=material._anyterial_formula,
         max_ss=material._anyterial_max_spin_splitting,
     ).one()
-    resource = row.item
-    print(resource.id, row.formula, "max_spin_splitting =", row.max_ss)
+    print(row.item.id, row.formula, "max_spin_splitting =", row.max_ss)
 
-    # Single-entry responses default-include the material's _httk_records and references.
-    root = optimade_document_root(resource.document)
-    for included in root["included"]:
-        if included["type"] == "_httk_records":
-            print("record", included["id"], dict(included["attributes"]))
+    # store.related() resolves a relationship of an already-fetched resource,
+    # here from the included resources at no extra request.
+    for record in store.related(row.item, "_httk_records"):
+        print("record", record.id, dict(record["attributes"]))
 
-    # The crystal structure is a separate structures entry, reached through a relationship.
-    structure_id = resource.unwrap()["relationships"]["structures"]["data"][0]["id"]
-    structures = store.entry_type("structures")
-    structure_search = store.searcher()
-    structure_var = structure_search.variable(structures)
-    structure_search.add(structure_var.id == structure_id)
-    structure_row = structure_search.results(
-        id=structure_var.id,
-        formula=structure_var.chemical_formula_reduced,
-        elements=structure_var.elements,
-    ).one()
-    print("structure", structure_row.id, structure_row.formula, structure_row.elements)
+    (structure,) = store.related(row.item, "structures")
+    print("structure", structure.id, structure.chemical_formula_reduced, structure.elements)
 ```
 
 </div>
@@ -247,7 +235,7 @@ structure anyt.am.structure-1-1 CrSb ('Cr', 'Sb')
 </div>
 </div>
 
-Following provenance one step further, to the workflow run and its declared input structure and outputs:
+Following provenance one step further, to the workflow run and its declared input structure and outputs. This query does not use `include()`: `store.related(row.item, "_httk_runs")` costs one request fetching the run by id, but that single-entry fetch, like the one shown near the top of this page, default-includes the run's own `_httk_has_input`/`_httk_has_output` targets, so the two loops below resolve at no further cost:
 
 <div class="code-pair">
 <div class="code-pair-part code-pair-part--python">
@@ -261,21 +249,14 @@ with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
     search = store.searcher()
     material = search.variable(results)
     search.add(material.id == "anyt.am-1-1")
-    resource = search.results(item=material).one().item
+    row = search.results(item=material).one()
 
-    run_id = resource.unwrap()["relationships"]["_httk_runs"]["data"][0]["id"]
-
-    runs = store.entry_type("_httk_runs")
-    run_search = store.searcher()
-    run_var = run_search.variable(runs)
-    run_search.add(run_var.id == run_id)
-    run_row = run_search.results(item=run_var, workflow=run_var._httk_workflow_declaration_uri).one()
-    print(run_row.item.id, run_row.workflow)
-    relationships = run_row.item.unwrap()["relationships"]
-    for edge in relationships["_httk_has_input"]["data"]:
-        print(" input:", edge["meta"]["_httk_label"], "->", edge["type"], edge["id"])
-    for edge in relationships["_httk_has_output"]["data"]:
-        print(" output:", edge["meta"]["_httk_label"], "->", edge["type"], edge["id"])
+    (run,) = store.related(row.item, "_httk_runs")
+    print(run.id, run["attributes"]["_httk_workflow_declaration_uri"])
+    for edge in store.related(run, "_httk_has_input"):
+        print(" input:", edge.type, edge.id)
+    for edge in store.related(run, "_httk_has_output"):
+        print(" output:", edge.type, edge.id)
 ```
 
 </div>
@@ -284,11 +265,43 @@ with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
 
 ```text
 anyt.am.runs-1-1 https://schemas.anyterial.se/defs/v0.1/workflows/altermagnets-scf-httk-v1
- input: input_structure -> structures anyt.am.structure-1-1
- output: total_energy -> _httk_records anyt.am.records-1-1
- output: vasprun -> files anyt.am.files-1-1
- output: doscar -> files anyt.am.files-1-2
- output: splitting_figure -> files anyt.am.files-1-3
+ input: structures anyt.am.structure-1-1
+ output: _httk_records anyt.am.records-1-1
+ output: files anyt.am.files-1-1
+ output: files anyt.am.files-1-2
+ output: files anyt.am.files-1-3
+```
+
+</div>
+</div>
+
+(the `_httk_label` meta on each edge, e.g. `input_structure`, `total_energy`, `vasprun`, is dropped here: `related()` resolves the edge targets, not their labels, and `run["relationships"]["_httk_has_input"]["data"][i]["meta"]` would be needed to recover them -- the example stays clear without it.)
+
+`include()` cannot make this two-hop case single-request: the run's `_httk_has_input`/`_httk_has_output` edges point at `structures`, `_httk_records`, and `files`, none of which are direct relationships of `_anyterial_altermagnet_screening_results`, so naming them in `search.include()` does not add them to this query's `included`, and `related()` still fetches the run separately -- it only adds requests without removing the one that matters.
+
+A depth-1 relationship filter reaches through `structures` directly, without following any relationship at runtime:
+
+<div class="code-pair">
+<div class="code-pair-part code-pair-part--python">
+<p class="code-sample-label">Python</p>
+
+```python
+from httk.serve.optimade import OptimadeStore
+
+with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
+    results = store.entry_type("_anyterial_altermagnet_screening_results")
+    search = store.searcher()
+    material = search.variable(results)
+    search.add(material.structures.nelements > 3)
+    print("matches:", search.count())
+```
+
+</div>
+<div class="code-pair-part code-pair-part--output">
+<p class="code-sample-label">Output</p>
+
+```text
+matches: 63
 ```
 
 </div>

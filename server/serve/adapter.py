@@ -41,8 +41,7 @@ _INTERNAL_STORE_PROPERTIES = {_PUBLIC_ID, _REFERENCE_IDS, _RUN_ID}
 #: Served entry types to include by default on single-entry GETs when the client
 #: sends no ``include=`` (unioned automatically with ``references`` by httk-serve).
 DEFAULT_INCLUDES = {
-    RESULT_TYPE: ("_httk_records",),
-    "_httk_runs": ("structures", "_httk_records", "files"),
+    RESULT_TYPE: ("_httk_records",)
 }
 
 

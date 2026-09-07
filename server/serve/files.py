@@ -148,7 +148,7 @@ def _stored_material_record(store: Any, material_id: str) -> Any | None:
 def _stored_structure_record(store: Any, structure_id: str) -> Any | None:
     """Fetch one slim ``structures`` main (``UnitcellStructureRecord``) by its stamped id.
 
-    The CIF/POSCAR download routes are keyed on the structure id (``anyt.am.structure-1-N``)
+    The CIF/POSCAR download routes are keyed on the structure id (``anyt.am.structures-1-N``)
     now that the crystal structure is a separate standard entry.
 
     :param store: The live entry store to read.

@@ -85,8 +85,8 @@ curl "https://altermagnets.anyterial.se/optimade/amdb/v1/_anyterial_altermagnet_
     "relationships": {
       "_httk_records": { "data": [{"id": "anyt.am.records-1-1", "type": "_httk_records"}, {"id": "anyt.am.records-1-135", "type": "_httk_records"}] },
       "_httk_runs": { "data": [{"id": "anyt.am.runs-1-1", "type": "_httk_runs"}] },
-      "references": { "data": [{"id": "anyt.am.refs-1-1", "type": "references"}] },
-      "structures": { "data": [{"id": "anyt.am.structure-1-1", "type": "structures"}] }
+      "references": { "data": [{"id": "anyt.am.references-1-1", "type": "references"}] },
+      "structures": { "data": [{"id": "anyt.am.structures-1-1", "type": "structures"}] }
     }
   },
   "included": [
@@ -94,7 +94,7 @@ curl "https://altermagnets.anyterial.se/optimade/amdb/v1/_anyterial_altermagnet_
       "attributes": { "_httk_total_energy": -22.40776312 } },
     { "id": "anyt.am.records-1-135", "type": "_httk_records",
       "attributes": { "_anyterial_max_spin_splitting": 1.8724, "_anyterial_avg_spin_splitting": 0.763170313, "..." : "..." } },
-    { "id": "anyt.am.refs-1-1", "type": "references",
+    { "id": "anyt.am.references-1-1", "type": "references",
       "attributes": { "doi": "10.1039/d0dt03277h" } }
   ]
 }
@@ -228,7 +228,7 @@ with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
 anyt.am-1-1 CrSb max_spin_splitting = 1.8724
 record anyt.am.records-1-1 {'_httk_total_energy': Decimal('-22.40776312'), 'immutable_id': 'anyt.am.records-1-1~1', 'last_modified': None}
 record anyt.am.records-1-135 {'_anyterial_avg_spin_splitting': Decimal('0.763170313'), '_anyterial_electronic_type': 'metallic', '_anyterial_max_spin_splitting': Decimal('1.8724'), '_anyterial_spin_splitting_fraction': Decimal('0.34375'), '_httk_dft_band_gap': Decimal('0.0'), 'immutable_id': 'anyt.am.records-1-135~1', 'last_modified': None}
-structure anyt.am.structure-1-1 CrSb ('Cr', 'Sb')
+structure anyt.am.structures-1-1 CrSb ('Cr', 'Sb')
 ```
 
 </div>
@@ -264,7 +264,7 @@ with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
 
 ```text
 anyt.am.runs-1-1 https://schemas.anyterial.se/defs/v0.1/workflows/altermagnets-scf-httk-v1
- input: structures anyt.am.structure-1-1
+ input: structures anyt.am.structures-1-1
  output: _httk_records anyt.am.records-1-1
  output: files anyt.am.files-1-1
  output: files anyt.am.files-1-2

@@ -484,7 +484,7 @@ def test_reopen_logs_the_signer_as_an_audit_record_and_refuses_a_tampered_ledger
     connection = sqlite3.connect(ledger_path)
     try:
         connection.execute(
-            "UPDATE records SET id = 'anyt.am.structure-1-999999' "
+            "UPDATE records SET id = 'anyt.am.structures-1-999999' "
             "WHERE seq = (SELECT MIN(seq) FROM records WHERE family = 'structures')"
         )
         connection.commit()

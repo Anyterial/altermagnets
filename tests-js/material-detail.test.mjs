@@ -12,7 +12,7 @@ const MATERIAL_ID = "anyt.am-1/0001";
 // The AMDB main entity's served (wire) entry type — the detail page's primary endpoint.
 const RESULT_TYPE = "_anyterial_altermagnet_screening_results";
 // The slim structure record referenced by the result (include=structures target).
-const STRUCTURE_ID = "anyt.am.structure-1-1";
+const STRUCTURE_ID = "anyt.am.structures-1-1";
 const siblingProtocol = new URL("../../httk-serve/src/httk/serve/web/assets/serve-optimade-table-protocol.mjs", import.meta.url);
 
 function resolveProtocolImport() {
@@ -566,14 +566,14 @@ test("structure iframe uses the document theme and follows a live theme toggle",
 
 test("structureDownloadLinks builds same-origin CIF and POSCAR links off the /v1 sibling route", () => {
   installDom(new DomDocument("https://site.example.test/material"));
-  const links = material.structureDownloadLinks("anyt.am.structure-1-1", "https://api.example.test/optimade/amdb/v1");
+  const links = material.structureDownloadLinks("anyt.am.structures-1-1", "https://api.example.test/optimade/amdb/v1");
   assert.deepEqual(links, [
-    { label: "Download CIF", url: "https://api.example.test/optimade/amdb/extensions/files/anyt.am.structure-1-1/structure.cif" },
-    { label: "Download POSCAR", url: "https://api.example.test/optimade/amdb/extensions/files/anyt.am.structure-1-1/POSCAR" },
+    { label: "Download CIF", url: "https://api.example.test/optimade/amdb/extensions/files/anyt.am.structures-1-1/structure.cif" },
+    { label: "Download POSCAR", url: "https://api.example.test/optimade/amdb/extensions/files/anyt.am.structures-1-1/POSCAR" },
   ]);
   // A trailing slash on the base must not leak the version segment into the path.
-  const trailing = material.structureDownloadLinks("anyt.am.structure-1-1", "https://api.example.test/optimade/amdb/v1/");
-  assert.equal(trailing[0].url, "https://api.example.test/optimade/amdb/extensions/files/anyt.am.structure-1-1/structure.cif");
+  const trailing = material.structureDownloadLinks("anyt.am.structures-1-1", "https://api.example.test/optimade/amdb/v1/");
+  assert.equal(trailing[0].url, "https://api.example.test/optimade/amdb/extensions/files/anyt.am.structures-1-1/structure.cif");
   assert.deepEqual(material.structureDownloadLinks("", "https://api.example.test/optimade/amdb/v1"), []);
 });
 
@@ -605,7 +605,7 @@ const CALC_RECORD_ID = "anyt.am.records-1-7";
 const SCREENING_RECORD_ID = "anyt.am.records-1-9";
 const RUN_ID = "anyt.am.runs-1-1";
 const RESULT_WITH_RUN_ID = "anyt.am-1-7";
-const STRUCTURE_EDGE_ID = "anyt.am.structure-1-7";
+const STRUCTURE_EDGE_ID = "anyt.am.structures-1-7";
 const FILE_EDGE_ID = "file-hash-000";
 const WORKFLOW_URI = "https://schemas.httk.org/defs/v0.1/workflows/x";
 

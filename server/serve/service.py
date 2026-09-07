@@ -162,7 +162,7 @@ def build_service_app(
         download = STRUCTURE_DOWNLOADS.get(filename)
         if download is not None:
             # Structure files are generated on request from the DATABASE structure main
-            # (never the detail tree), keyed on the structure id (anyt.am.structure-1-N).
+            # (never the detail tree), keyed on the structure id (anyt.am.structures-1-N).
             # Requires a live store.
             record = _stored_structure_record(store, material_id) if store is not None else None
             if record is None:

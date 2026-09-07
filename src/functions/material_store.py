@@ -140,14 +140,14 @@ logger = report.context_logger(logging.getLogger("httk.altermagnets.material_sto
 # ``(entry_type, entry_id)`` index; either forces a rebuild, and the fingerprint --
 # not this version row -- is the operative staleness gate for a pre-change store.
 # Bump 11: the id scheme flips to ``anyt.am``/series ``1`` (materials ``anyt.am-1-N``,
-# minted types ``anyt.am.<type>-1-N``, references densely enumerated ``anyt.am.refs-1-N``),
+# minted types ``anyt.am.<type>-1-N``, references densely enumerated ``anyt.am.references-1-N``),
 # ``AltermagnetScreeningResult`` gains the stored ``reference_ids`` serving its references block, and
 # the ``_httk_records`` family is served through the extended ``AltermagnetDataRecord``.
 # The fingerprint does not see id changes, so this version row is the forcing gate.
 # Bump 12: the two-record split. ``AltermagnetScreeningResult`` (served
 # ``_anyterial_altermagnet_screening_results``, ids ``anyt.am-1-N``) owns the science and
 # references a slim standard ``structures`` main (``UnitcellStructureRecord``, stamped ids
-# ``anyt.am.structure-1-N``) that now carries the structural properties, alternatives, and
+# ``anyt.am.structures-1-N``) that now carries the structural properties, alternatives, and
 # the ``output_structure`` provenance edge; the result gains the stored ``structure_id``
 # serving its ``structures`` relationship block plus an appended ``has_artifact`` run edge.
 # Bump 13: the records/provenance redesign. Two typed record backings
@@ -200,15 +200,15 @@ LEDGER_PATH_ENVIRONMENT = "ALTERMAGNETS_LEDGER_PATH"
 LEDGER_FILENAME = "amdb_ids.sqlite"
 
 #: The per-family id bases the ledger mints under. These are the DEPLOYED id
-#: shapes (``anyt.am.structure-1-N`` etc.) and are load-bearing: serving,
+#: shapes (``anyt.am.structures-1-N`` etc.) and are load-bearing: serving,
 #: alternatives and provenance all assume them, so they are hand-pinned here and
 #: never derived from the family types.
 #: ``results`` mints the served material ids ``anyt.am-1-N`` (base ``anyt.am``,
 #: distinct from the ``anyt.am.<type>`` bases and not a duplicate value); it is the
 #: family the one-time seeding populates from the screening rows' magndata keys.
 LEDGER_BASES = {
-    "structures": "anyt.am.structure",
-    "references": "anyt.am.refs",
+    "structures": "anyt.am.structures",
+    "references": "anyt.am.references",
     "runs": "anyt.am.runs",
     "records": "anyt.am.records",
     "files": "anyt.am.files",
@@ -460,12 +460,12 @@ class AltermagnetScreeningResult:
             description="The published screening analysis's values for this material.",
         ),
     ] = None
-    # The densely enumerated ``anyt.am.refs-1-N`` ids of this material's DOIs, aligned
+    # The densely enumerated ``anyt.am.references-1-N`` ids of this material's DOIs, aligned
     # with ``dois``, stamped at build/seed time (the enumeration needs the whole
     # deployment's DOI order). Serving reads them straight off the row, so the
     # doi->relationship->include chain resolves without re-deriving the global order.
     reference_ids: tuple[str, ...] = ()
-    # The stamped ``anyt.am.structure-1-N`` id of this result's structure main (or
+    # The stamped ``anyt.am.structures-1-N`` id of this result's structure main (or
     # ``None`` when it has no structure), stamped at build/seed time from the
     # material->structure-id map. The stored route serves the ``structures`` block
     # natively off the typed ``structure`` reference (E3), so this scalar is no longer
@@ -956,7 +956,7 @@ def _open_ledger(ledger_path: Path, *, create_if_missing: bool = False) -> IdLed
 def _reference_ids_by_doi(
     materials: Iterable["AltermagnetScreeningResult"], ledger: IdLedger | None = None
 ) -> dict[str, str]:
-    """Map every DOI to its ``anyt.am.refs-1-N`` id, in first-seen order.
+    """Map every DOI to its ``anyt.am.references-1-N`` id, in first-seen order.
 
     With a *ledger* the ids come from stable, case-insensitive ``doi:<lowered>``
     keys, so a DOI keeps its id across rebuilds and two case variants collapse to
@@ -968,11 +968,11 @@ def _reference_ids_by_doi(
 
     :param materials: The materials whose DOIs are enumerated, in deployment order.
     :param ledger: The open ledger to allocate from, or ``None`` for dense enumeration.
-    :return: A DOI-to-``anyt.am.refs-1-N`` mapping keyed by every original DOI.
+    :return: A DOI-to-``anyt.am.references-1-N`` mapping keyed by every original DOI.
     """
     ordered = dict.fromkeys(doi for material in materials for doi in material.dois)
     if ledger is None:
-        return {doi: f"anyt.am.refs-1-{number}" for number, doi in enumerate(ordered, 1)}
+        return {doi: f"anyt.am.references-1-{number}" for number, doi in enumerate(ordered, 1)}
     return {doi: ledger.assign(_reference_key(doi), "references") for doi in ordered}
 
 
@@ -1066,7 +1066,7 @@ def _structure_mains(
     for number, key in enumerate(order, 1):
         members = groups[key]
         if ledger is None:
-            structure_id = f"anyt.am.structure-1-{number}"
+            structure_id = f"anyt.am.structures-1-{number}"
             main = replace(members[0][1], id=structure_id)
         else:
             owner = min(amdb_id for amdb_id, _ in members)

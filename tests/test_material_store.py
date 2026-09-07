@@ -158,12 +158,12 @@ def test_build_stores_conventional_and_primitive_alternatives(tmp_path: Path) ->
         every = immutable_ids(only_main_alt=False)
         # The fixture reuses one CONTCAR: mat1 (with moments) and the shared mat2/mat3
         # (moment-free) collapse to two distinct structure mains by content-id dedup.
-        assert mains == immutable_ids(only_main_alt=True) == {"anyt.am.structure-1-1~1", "anyt.am.structure-1-2~1"}
+        assert mains == immutable_ids(only_main_alt=True) == {"anyt.am.structures-1-1~1", "anyt.am.structures-1-2~1"}
         alternatives = every - mains
         # Not silently alternatives-free: the fixture cells derive both kinds per structure.
         assert alternatives, "build stored no alternative cell records"
         assert alternatives == {
-            f"anyt.am.structure-1-{number}~{kind}~1" for number in (1, 2) for kind in ("conventional", "primitive")
+            f"anyt.am.structures-1-{number}~{kind}~1" for number in (1, 2) for kind in ("conventional", "primitive")
         }
     finally:
         opened.database.dispose()
@@ -379,7 +379,7 @@ def test_resolve_edge_id_rejects_non_input_structure_edge() -> None:
             "output_structure",
             "structures",
             "some-content-id",
-            structure_id="anyt.am.structure-1-1",
+            structure_id="anyt.am.structures-1-1",
             record_ids={},
             memo={},
         )
@@ -393,7 +393,7 @@ def test_resolve_edge_id_rejects_an_unmapped_records_edge() -> None:
             "some_other_output",
             "records",
             "some-content-id",
-            structure_id="anyt.am.structure-1-1",
+            structure_id="anyt.am.structures-1-1",
             record_ids={"total_energy": "anyt.am.records-1-1"},
             memo={},
         )
@@ -514,10 +514,10 @@ def test_save_alternative_cells_uses_magnetic_fallback(tmp_path: Path) -> None:
     material = replace(base, structure=material_store._material_structure_record(chain), id="anyt.am-1-fold")
 
     store = _RecordingStore()
-    structure_ids = {"anyt.am-1-fold": "anyt.am.structure-1-1"}
+    structure_ids = {"anyt.am-1-fold": "anyt.am.structures-1-1"}
     derived, skipped = material_store._save_alternative_cells(store, [material], structure_ids)  # type: ignore[arg-type]
 
     assert (derived, skipped) == (2, 0)
     assert sorted(kind for _, kind in store.saved) == ["conventional", "primitive"]
     # Alternatives re-parent to the structure main (its stamped id), not the result id.
-    assert all(alternative_of == "anyt.am.structure-1-1" for alternative_of, _ in store.saved)
+    assert all(alternative_of == "anyt.am.structures-1-1" for alternative_of, _ in store.saved)

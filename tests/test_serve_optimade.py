@@ -466,10 +466,10 @@ def test_five_entry_type_id_forms(tmp_path: Path) -> None:
             result = live.get(f"/v1/{RESULT}/anyt.am-1-1").json()["data"]
             assert re.fullmatch(r"anyt\.am-1-\d+", result["id"])
             references = result["relationships"]["references"]["data"]
-            assert references and all(re.fullmatch(r"anyt\.am\.refs-1-\d+", ref["id"]) for ref in references)
+            assert references and all(re.fullmatch(r"anyt\.am\.references-1-\d+", ref["id"]) for ref in references)
 
             structure_id = result["relationships"]["structures"]["data"][0]["id"]
-            assert re.fullmatch(r"anyt\.am\.structure-1-\d+", structure_id)
+            assert re.fullmatch(r"anyt\.am\.structures-1-\d+", structure_id)
 
             # include=structures inlines the referenced structure with EVERY CrysViz
             # field non-null; a default-response/schema regression would silently
@@ -756,8 +756,8 @@ def test_structure_downloads_serve_generated_cif_and_poscar(tmp_path: Path) -> N
             assert live.get(f"/extensions/files/{structure_id}/structure.xyz").status_code == 404
 
             # An unknown structure id yields 404 for both generated files.
-            assert live.get("/extensions/files/anyt.am.structure-1-7777/structure.cif").status_code == 404
-            assert live.get("/extensions/files/anyt.am.structure-1-7777/POSCAR").status_code == 404
+            assert live.get("/extensions/files/anyt.am.structures-1-7777/structure.cif").status_code == 404
+            assert live.get("/extensions/files/anyt.am.structures-1-7777/POSCAR").status_code == 404
     finally:
         opened.database.dispose()
 

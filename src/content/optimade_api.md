@@ -117,7 +117,7 @@ pip install httk2
 
 </div>
 
-(these examples were run against a development build of `httk-serve` after the 2.1.0 release, installed via the `httk2` package; the `links` relationship namespace used below is not present in the 2.1.0 release)
+(these examples were run against a development build of *httk₂* after the 2.1.0 release, installed via the `httk2` package; the `links` relationship namespace used below is not present in the 2.1.0 release)
 
 Connect and discover the entry types:
 
@@ -126,7 +126,7 @@ Connect and discover the entry types:
 <p class="code-sample-label">Python</p>
 
 ```python
-from httk.serve.optimade import OptimadeStore
+from httk.store.optimade import OptimadeStore
 
 with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
     print("api_version:", store.api_version)
@@ -160,7 +160,7 @@ A simplified bracket-based search syntax (familiar from e.g., Pandas dataframes)
 <p class="code-sample-label">Python</p>
 
 ```python
-from httk.serve.optimade import OptimadeStore
+from httk.store.optimade import OptimadeStore
 
 with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
     materials = store.slicer("_anyterial_altermagnet_screening_results")
@@ -188,7 +188,7 @@ anyt.am-1-7 Cu2O3Cl 0.553
 </div>
 </div>
 
-The simplified bracket syntax do not offer easy sorting (rows are provided in store order). A more sophisticated `searcher` interface is also available, offering sorting and a single `links` relationship namespace: `material.links.<relationship>.<field>` as a depth-1 filter predicate, `material.links.<relationship>` as a set-valued output that rides along in the same response (the client adds `include=` for it automatically), and `.links.<name>` on any returned record to take a further hop, resolved from the same response's included resources or, failing that, by a lazy fetch (see the [httk-serve documentation](https://docs.httk.org/httk-serve/)).
+The simplified bracket syntax do not offer easy sorting (rows are provided in store order). A more sophisticated `searcher` interface is also available, offering sorting and a single `links` relationship namespace: `material.links.<relationship>.<field>` as a depth-1 filter predicate, `material.links.<relationship>` as a set-valued output that rides along in the same response (the client adds `include=` for it automatically), and `.links.<name>` on any returned record to take a further hop, resolved from the same response's included resources or, failing that, by a lazy fetch (see the [httk-store documentation](https://docs.httk.org/httk-store/)).
 
 For example, fetching one material with its `_httk_records` and its crystal structure as `links` outputs, so they ride along in the same response:
 
@@ -197,7 +197,7 @@ For example, fetching one material with its `_httk_records` and its crystal stru
 <p class="code-sample-label">Python</p>
 
 ```python
-from httk.serve.optimade import OptimadeStore
+from httk.store.optimade import OptimadeStore
 
 with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
     results = store.entry_type("_anyterial_altermagnet_screening_results")
@@ -241,7 +241,7 @@ Following provenance one step further, to the workflow run and its declared inpu
 <p class="code-sample-label">Python</p>
 
 ```python
-from httk.serve.optimade import OptimadeStore
+from httk.store.optimade import OptimadeStore
 
 with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
     results = store.entry_type("_anyterial_altermagnet_screening_results")
@@ -285,7 +285,7 @@ A depth-1 relationship filter reaches through `structures` directly, without fol
 <p class="code-sample-label">Python</p>
 
 ```python
-from httk.serve.optimade import OptimadeStore
+from httk.store.optimade import OptimadeStore
 
 with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
     results = store.entry_type("_anyterial_altermagnet_screening_results")

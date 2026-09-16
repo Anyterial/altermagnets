@@ -262,7 +262,7 @@ def test_standalone_static_site_advertises_the_optimade_tab() -> None:
         home = client.get("/")
 
     assert home.status_code == 200
-    assert ">OPTIMADE</a>" in home.text
+    assert ">OPTIMADE API</a>" in home.text
 
 
 def _child_app(name: str, events: list[str]) -> Starlette:

@@ -1,5 +1,5 @@
 ---
-title: Material details
+title: Altermagnet screening result
 template: detail_page
 base_template: base_default
 hosting: static

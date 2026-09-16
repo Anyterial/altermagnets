@@ -128,12 +128,12 @@ Connect and discover the entry types:
 ```python
 from httk.store.optimade import OptimadeStore
 
-with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
-    print("api_version:", store.api_version)
-    for entry_type in store.entry_types:
-        if entry_type.name.endswith(("~revs", "~alts")):
-            continue
-        print(entry_type.name, "->", entry_type.backend.__name__)
+store = OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb")
+print("api_version:", store.api_version)
+for entry_type in store.entry_types:
+    if entry_type.name.endswith(("~revs", "~alts")):
+        continue
+    print(entry_type.name, "->", entry_type.backend.__name__)
 ```
 
 </div>
@@ -153,7 +153,7 @@ files -> OptimadeFile
 </div>
 </div>
 
-A simplified bracket-based search syntax (familiar from e.g., Pandas dataframes) allow easy filtering of altermagnets screening results:
+A simplified bracket-based search syntax (familiar from e.g., Pandas dataframes) allow easy filtering of altermagnets screening results. Conditions combine with `&` (and) and `|` (or); the `zip` with `range(30)` caps the printed rows at 30:
 
 <div class="code-pair">
 <div class="code-pair-part code-pair-part--python">
@@ -162,12 +162,11 @@ A simplified bracket-based search syntax (familiar from e.g., Pandas dataframes)
 ```python
 from httk.store.optimade import OptimadeStore
 
-with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
-    materials = store.slicer("_anyterial_altermagnet_screening_results")
-    hits = materials[materials["_anyterial_max_spin_splitting"] > 0.5]
-    print("matches:", len(hits))
-    for row in hits[["id", "_anyterial_formula", "_anyterial_max_spin_splitting"]]:
-        print(row.id, row._anyterial_formula, row._anyterial_max_spin_splitting)
+store = OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb")
+materials = store.slicer("_anyterial_altermagnet_screening_results")
+hits = materials[(materials["_anyterial_max_spin_splitting"] > 0.5) & (materials["_anyterial_classification"] == "collinear")]
+for row, i in zip(hits[["id", "_anyterial_formula", "_anyterial_max_spin_splitting"]], range(30)):
+    print(i, row.id, row._anyterial_formula, row._anyterial_max_spin_splitting)
 ```
 
 </div>
@@ -175,14 +174,10 @@ with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
 <p class="code-sample-label">Output</p>
 
 ```text
-matches: 7
-anyt.am-1-1 CrSb 1.8724
-anyt.am-1-2 MnTe 0.9227
-anyt.am-1-3 RuO2 0.8654
-anyt.am-1-4 CrSe 0.8002
-anyt.am-1-5 UCr2Si2C 0.7192
-anyt.am-1-6 Ca(Al2Fe)4 0.6284
-anyt.am-1-7 Cu2O3Cl 0.553
+0 anyt.am-1-1 CrSb 1.8724
+1 anyt.am-1-2 MnTe 0.9227
+2 anyt.am-1-3 RuO2 0.8654
+3 anyt.am-1-5 UCr2Si2C 0.7192
 ```
 
 </div>
@@ -199,25 +194,25 @@ For example, fetching one material with its `_httk_records` and its crystal stru
 ```python
 from httk.store.optimade import OptimadeStore
 
-with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
-    results = store.entry_type("_anyterial_altermagnet_screening_results")
-    search = store.searcher()
-    material = search.variable(results)
-    search.add(material.id == "anyt.am-1-1")
-    row = search.results(
-        item=material,
-        formula=material._anyterial_formula,
-        max_ss=material._anyterial_max_spin_splitting,
-        # link outputs ride along in the same response: the client adds
-        # include= for these two automatically, at no extra request.
-        records=material.links._httk_records,
-        structures=material.links.structures,
-    ).one()
-    print(row.item.id, row.formula, "max_spin_splitting =", row.max_ss)
-    for record in row.records:
-        print("record", record.id, dict(record["attributes"]))
-    (structure,) = row.structures
-    print("structure", structure.id, structure.chemical_formula_reduced, structure.elements)
+store = OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb")
+results = store.entry_type("_anyterial_altermagnet_screening_results")
+search = store.searcher()
+material = search.variable(results)
+search.add(material.id == "anyt.am-1-1")
+row = search.results(
+    item=material,
+    formula=material._anyterial_formula,
+    max_ss=material._anyterial_max_spin_splitting,
+    # link outputs ride along in the same response: the client adds
+    # include= for these two automatically, at no extra request.
+    records=material.links._httk_records,
+    structures=material.links.structures,
+).one()
+print(row.item.id, row.formula, "max_spin_splitting =", row.max_ss)
+for record in row.records:
+    print("record", record.id, dict(record["attributes"]))
+(structure,) = row.structures
+print("structure", structure.id, structure.chemical_formula_reduced, structure.elements)
 ```
 
 </div>
@@ -243,19 +238,19 @@ Following provenance one step further, to the workflow run and its declared inpu
 ```python
 from httk.store.optimade import OptimadeStore
 
-with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
-    results = store.entry_type("_anyterial_altermagnet_screening_results")
-    search = store.searcher()
-    material = search.variable(results)
-    search.add(material.id == "anyt.am-1-1")
-    row = search.results(item=material).one()
+store = OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb")
+results = store.entry_type("_anyterial_altermagnet_screening_results")
+search = store.searcher()
+material = search.variable(results)
+search.add(material.id == "anyt.am-1-1")
+row = search.results(item=material).one()
 
-    (run,) = row.item.links._httk_runs
-    print(run.id, run["attributes"]["_httk_workflow_declaration_uri"])
-    for edge in run.links._httk_has_input:
-        print(" input:", edge.type, edge.id)
-    for edge in run.links._httk_has_output:
-        print(" output:", edge.type, edge.id)
+(run,) = row.item.links._httk_runs
+print(run.id, run["attributes"]["_httk_workflow_declaration_uri"])
+for edge in run.links._httk_has_input:
+    print(" input:", edge.type, edge.id)
+for edge in run.links._httk_has_output:
+    print(" output:", edge.type, edge.id)
 ```
 
 </div>
@@ -276,8 +271,6 @@ anyt.am.runs-1-1 https://schemas.anyterial.se/defs/v0.1/workflows/altermagnets-s
 
 (the `_httk_label` meta on each edge, e.g. `input_structure`, `total_energy`, `vasprun`, is dropped here: `.links.<name>` resolves the edge targets, not their labels, and `run["relationships"]["_httk_has_input"]["data"][i]["meta"]` would be needed to recover them -- the example stays clear without it.)
 
-This block issues 2 HTTP requests in total, measured by wrapping `httpx.Client.send` with a counting shim: one to look up the material by id, and one to fetch the run by id, whose single-entry response default-includes the run's own `_httk_has_input`/`_httk_has_output` targets, so both loops resolve at no further cost.
-
 A depth-1 relationship filter reaches through `structures` directly, without following any relationship at runtime:
 
 <div class="code-pair">
@@ -287,12 +280,12 @@ A depth-1 relationship filter reaches through `structures` directly, without fol
 ```python
 from httk.store.optimade import OptimadeStore
 
-with OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb") as store:
-    results = store.entry_type("_anyterial_altermagnet_screening_results")
-    search = store.searcher()
-    material = search.variable(results)
-    search.add(material.links.structures.nelements > 3)
-    print("matches:", search.count())
+store = OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb")
+results = store.entry_type("_anyterial_altermagnet_screening_results")
+search = store.searcher()
+material = search.variable(results)
+search.add(material.links.structures.nelements > 3)
+print("matches:", search.count())
 ```
 
 </div>

@@ -259,6 +259,20 @@ test("field labels carry a native title hint starting with the OPTIMADE field na
   assert.equal(type.title, "_anyterial_electronic_type");
 });
 
+test("back-to-search link keeps the referring search URL only when it is this site's search page", () => {
+  installDom(new DomDocument("https://site.example.test/material?id=x"));
+  const fallback = "./search";
+  const fromSearch = "https://site.example.test/search?filter=nelements%3E3&sort=max_ss_desc&page_size=100";
+  assert.equal(material.backToSearchHref(fromSearch, fallback), fromSearch);
+  // Static hosting may serve the page as search.html.
+  assert.equal(material.backToSearchHref("https://site.example.test/search.html?q=Cr", fallback), "https://site.example.test/search.html?q=Cr");
+  // Another page on this site, another origin, or no referrer at all → the default search page.
+  assert.equal(material.backToSearchHref("https://site.example.test/highlights", fallback), fallback);
+  assert.equal(material.backToSearchHref("https://evil.example/search?filter=x", fallback), fallback);
+  assert.equal(material.backToSearchHref("", fallback), fallback);
+  assert.equal(material.backToSearchHref(undefined, fallback), fallback);
+});
+
 test("figure URL validation is origin-bound and rejects insecure mixed content", () => {
   const document = new DomDocument("https://site.example.test/material");
   installDom(document);

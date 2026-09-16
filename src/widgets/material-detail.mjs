@@ -1027,8 +1027,29 @@ async function loadShell(shell, Transport = OptimadeTransport) {
   await Promise.allSettled([alternativesSettled, provenanceSettled]);
 }
 
-const start = () => document.querySelectorAll("[data-site-material-detail]").forEach((shell) => loadShell(shell));
+// The "← back to search" href: the referring page when it is this site's search page (its
+// query string carries the filter/sort/page-size of the result table the user left), else
+// `fallback`, the authored default search route. Static hosting may serve the search page
+// as `search.html`, so the `.html` suffix is ignored when comparing paths.
+function backToSearchHref(referrer, fallback) {
+  try {
+    const from = new URL(referrer);
+    const target = new URL(fallback, document.baseURI);
+    const path = (url) => url.pathname.replace(/\.html$/, "");
+    if (from.origin === target.origin && path(from) === path(target)) return from.href;
+  } catch {
+    // no/invalid referrer → fallback
+  }
+  return fallback;
+}
+
+const start = () => {
+  document.querySelectorAll("a[data-back-to-search]").forEach((link) => {
+    link.href = backToSearchHref(document.referrer, link.getAttribute("href"));
+  });
+  document.querySelectorAll("[data-site-material-detail]").forEach((shell) => loadShell(shell));
+};
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
 else start();
 
-export { altKind, buildProvenance, crysvizIframeSrc, crysvizPayload, fetchProvenance, figureUrl, includedStructure, loadShell, structureDownloadLinks };
+export { altKind, backToSearchHref, buildProvenance, crysvizIframeSrc, crysvizPayload, fetchProvenance, figureUrl, includedStructure, loadShell, structureDownloadLinks };

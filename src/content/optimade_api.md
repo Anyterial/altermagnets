@@ -4,17 +4,21 @@ base_template: base_default
 hosting: static
 ---
 
-The [OPTIMADE API](https://www.optimade.org/) is a REST API for materials databases, developed by the [OPTIMADE consortium](https://github.com/Materials-Consortia/OPTIMADE) of materials-science data providers so that the same query language and response format work across dozens of independent databases. The Altermagnets Database (*amdb*) serves data through the OPTIMADE API at [https://altermagnets.anyterial.se/optimade/amdb](https://altermagnets.anyterial.se/optimade/amdb/).
+The [OPTIMADE API](https://www.optimade.org/) is a REST API for materials databases, developed by the [OPTIMADE consortium](https://github.com/Materials-Consortia/OPTIMADE) of materials-science data providers so that the same query language and response format work across dozens of independent databases. The Altermagnets Database (*amdb*) serves data through the OPTIMADE API v1.3.0 at:
+
+* [https://altermagnets.anyterial.se/optimade/amdb/](https://altermagnets.anyterial.se/optimade/amdb/).
 
 ### Overview
 
-While the most commonly used OPTIMADE API structure endpoint it available for structural information, the primary entry in *amdb* is our provider-specific `_anyterial_altermagnet_screening_results` entry type. These entries represent a screened candidate material, with the same quantities as are shown on the web pages: chemical formula and elements, space group, collinearity classification, magnetic phase and wave-class assignment, the average and maximum spin splitting and the spin-splitting fraction, electronic type, DFT band gap, minimum crustal elemental abundance, and the linked MAGNDATA symmetry variants.
+While the standard OPTIMADE API endpoints are available, e.g., structures, the primary entry type in *amdb* is `_anyterial_altermagnet_screening_results`. These entries represent the outcome of a screened candidate material, with the same quantities as shown on the detailed information pages on this website.
 
-Fetching a single entry by id also includes the two underlying `_httk_records` data records (the coupled DFT run's declared outputs, and the published screening analysis's values) and any associated `references` enties. The screened crystal structure itself is a standard OPTIMADE `structures` entry, reached through a `structures` relationship. The workflow run behind the screening result (consuming the crystal structure as its input, producing the files and total energy) is reached through a `_httk_runs` relationship. Provider-specific properties, like standard ones, can be used in `filter` expressions, including through relationships (e.g. `_httk_records.<property>`).
+Fetching a single entry by id uses the JSON:API "included" feature to include all linked `_httk_records` data records, with information about, e.g., extracted quantities from the originating DFT calculation.
+
+Results represented as `_httk_records` provide provenance information via `_httk_runs` relationships.
 
 ### Example queries
 
-It is possible to query OPTIMADE very directly via command line tools such as `curl`. For example, a filter query restricted to a couple of fields and a few rows:
+The *amdb* OPTIMADE endpoint can be queried with command line tools such as `curl`. For example, a filter query restricted to a couple of fields and a few rows:
 
 <div class="code-pair">
 <div class="code-pair-part code-pair-part--shell">
@@ -106,6 +110,8 @@ curl "https://altermagnets.anyterial.se/optimade/amdb/v1/_anyterial_altermagnet_
 ### Query *amdb* with OPTIMADE in Python using *httk*
 
 The [high-throughput toolkit (*httk*)](https://httk.org) is a Python toolkit supporting high-throughput computations. Its provides an OPTIMADE client that lets you query *amdb* with Python.
+The following instructions are fairly generic, and should be adaptable to any database that supports OPTIMADE API.
+
 To follow the examples below, make sure to have `httk2` installed (preferably in a virtual environment):
 
 <div class="code-sample code-sample--shell">
@@ -117,9 +123,7 @@ pip install httk2
 
 </div>
 
-(these examples were run against a development build of *httk₂* after the 2.1.0 release, installed via the `httk2` package; the `links` relationship namespace used below is not present in the 2.1.0 release)
-
-Connect and discover the entry types:
+Connect and discover what entry types the database provides:
 
 <div class="code-pair">
 <div class="code-pair-part code-pair-part--python">
@@ -131,9 +135,8 @@ from httk.store.optimade import OptimadeStore
 store = OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb")
 print("api_version:", store.api_version)
 for entry_type in store.entry_types:
-    if entry_type.name.endswith(("~revs", "~alts")):
-        continue
-    print(entry_type.name, "->", entry_type.backend.__name__)
+    if not entry_type.name.endswith(("~revs", "~alts")): # (skip technical endpoints)
+        print(entry_type.name, "->", entry_type.backend.__name__)
 ```
 
 </div>
@@ -153,7 +156,7 @@ files -> OptimadeFile
 </div>
 </div>
 
-A simplified bracket-based search syntax (familiar from e.g., Pandas dataframes) allow easy filtering of altermagnets screening results. Conditions combine with `&` (and) and `|` (or); the `zip` with `range(30)` caps the printed rows at 30:
+The OPTIMADE API filtering language can be used to extract entries you are looking for. A Pandas dataframe-type slicing syntax is supported. Conditions combine with `&` (and) and `|` (or):
 
 <div class="code-pair">
 <div class="code-pair-part code-pair-part--python">
@@ -162,11 +165,11 @@ A simplified bracket-based search syntax (familiar from e.g., Pandas dataframes)
 ```python
 from httk.store.optimade import OptimadeStore
 
-store = OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb")
-materials = store.slicer("_anyterial_altermagnet_screening_results")
-hits = materials[(materials["_anyterial_max_spin_splitting"] > 0.5) & (materials["_anyterial_classification"] == "collinear")]
-for row, i in zip(hits[["id", "_anyterial_formula", "_anyterial_max_spin_splitting"]], range(30)):
-    print(i, row.id, row._anyterial_formula, row._anyterial_max_spin_splitting)
+store = OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb/")
+results = store.slicer("_anyterial_altermagnet_screening_results")
+selected = materials[(results["_anyterial_max_spin_splitting"] > 0.5) & (results["_anyterial_classification"] == "collinear")]
+for entry, i in selected:
+    print(i, entry.id, entry._anyterial_formula, entry._anyterial_max_spin_splitting)
 ```
 
 </div>
@@ -183,7 +186,7 @@ for row, i in zip(hits[["id", "_anyterial_formula", "_anyterial_max_spin_splitti
 </div>
 </div>
 
-The simplified bracket syntax do not offer easy sorting (rows are provided in store order). A more sophisticated `searcher` interface is also available, offering sorting and a single `links` relationship namespace: `material.links.<relationship>.<field>` as a depth-1 filter predicate, `material.links.<relationship>` as a set-valued output that rides along in the same response (the client adds `include=` for it automatically), and `.links.<name>` on any returned record to take a further hop, resolved from the same response's included resources or, failing that, by a lazy fetch (see the [httk-store documentation](https://docs.httk.org/httk-store/)).
+A more sophisticated `searcher` interface is also available, offering sorting and ways to formulate queries across relationships between entry types (for more details, see the [httk-store documentation](https://docs.httk.org/httk-store/)).
 
 For example, fetching one material with its `_httk_records` and its crystal structure as `links` outputs, so they ride along in the same response:
 
@@ -193,26 +196,34 @@ For example, fetching one material with its `_httk_records` and its crystal stru
 
 ```python
 from httk.store.optimade import OptimadeStore
+from pprint import pprint
 
 store = OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb")
 results = store.entry_type("_anyterial_altermagnet_screening_results")
 search = store.searcher()
-material = search.variable(results)
-search.add(material.id == "anyt.am-1-1")
+selected = search.variable(results)
+search.add(selected.id == "anyt.am-1-1")
+
 row = search.results(
-    item=material,
-    formula=material._anyterial_formula,
-    max_ss=material._anyterial_max_spin_splitting,
+    item=selected,
+    formula=selected._anyterial_formula,
+    max_ss=selected._anyterial_max_spin_splitting,
     # link outputs ride along in the same response: the client adds
     # include= for these two automatically, at no extra request.
-    records=material.links._httk_records,
-    structures=material.links.structures,
+    records=selected.links._httk_records,
+    structures=selected.links.structures,
 ).one()
-print(row.item.id, row.formula, "max_spin_splitting =", row.max_ss)
+
+print("Entry:",row.item.id, row.formula, "with max_spin_splitting =", row.max_ss)
+print("Is linked to",len(row.records),"records and",len(row.structures),"structures\n")
+
 for record in row.records:
-    print("record", record.id, dict(record["attributes"]))
-(structure,) = row.structures
-print("structure", structure.id, structure.chemical_formula_reduced, structure.elements)
+    print("== record:", record.id)
+    pprint(dict(record["attributes"]))
+    print()
+
+for structure in row.structures:
+    print("== structure:", structure.id, structure.chemical_formula_reduced, structure.elements)
 ```
 
 </div>
@@ -220,10 +231,24 @@ print("structure", structure.id, structure.chemical_formula_reduced, structure.e
 <p class="code-sample-label">Output</p>
 
 ```text
-anyt.am-1-1 CrSb max_spin_splitting = 1.8724
-record anyt.am.records-1-1 {'_httk_total_energy': Decimal('-22.40776312'), 'immutable_id': 'anyt.am.records-1-1~1', 'last_modified': None}
-record anyt.am.records-1-135 {'_anyterial_avg_spin_splitting': Decimal('0.763170313'), '_anyterial_electronic_type': 'metallic', '_anyterial_max_spin_splitting': Decimal('1.8724'), '_anyterial_spin_splitting_fraction': Decimal('0.34375'), '_httk_dft_band_gap': Decimal('0.0'), 'immutable_id': 'anyt.am.records-1-135~1', 'last_modified': None}
-structure anyt.am.structures-1-1 CrSb ('Cr', 'Sb')
+Entry: anyt.am-1-1 CrSb with max_spin_splitting = 1.8724
+Is linked to 2 records and 1 structures
+
+== record: anyt.am.records-1-181
+{'_httk_total_energy': Decimal('-22.40776312'),
+ 'immutable_id': 'anyt.am.records-1-181~1',
+ 'last_modified': None}
+
+== record: anyt.am.records-1-1
+{'_anyterial_avg_spin_splitting': Decimal('0.763170313'),
+ '_anyterial_electronic_type': 'metallic',
+ '_anyterial_max_spin_splitting': Decimal('1.8724'),
+ '_anyterial_spin_splitting_fraction': Decimal('0.34375'),
+ '_httk_dft_band_gap': Decimal('0.0'),
+ 'immutable_id': 'anyt.am.records-1-1~1',
+ 'last_modified': None}
+
+== structure: anyt.am.structures-1-1 CrSb ('Cr', 'Sb')
 ```
 
 </div>
@@ -241,9 +266,9 @@ from httk.store.optimade import OptimadeStore
 store = OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb")
 results = store.entry_type("_anyterial_altermagnet_screening_results")
 search = store.searcher()
-material = search.variable(results)
-search.add(material.id == "anyt.am-1-1")
-row = search.results(item=material).one()
+selected = search.variable(results)
+search.add(selected.id == "anyt.am-1-1")
+row = search.results(item=selected).one()
 
 (run,) = row.item.links._httk_runs
 print(run.id, run["attributes"]["_httk_workflow_declaration_uri"])
@@ -283,8 +308,8 @@ from httk.store.optimade import OptimadeStore
 store = OptimadeStore("https://altermagnets.anyterial.se/optimade/amdb")
 results = store.entry_type("_anyterial_altermagnet_screening_results")
 search = store.searcher()
-material = search.variable(results)
-search.add(material.links.structures.nelements > 3)
+selected = search.variable(results)
+search.add(selected.links.structures.nelements > 3)
 print("matches:", search.count())
 ```
 

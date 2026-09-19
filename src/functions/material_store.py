@@ -52,6 +52,7 @@ from httk.core import (
     Related,
     Skip,
     StorageInfo,
+    StrongLink,
     Unique,
     load,
     register_definition_prefix,
@@ -175,7 +176,13 @@ logger = report.context_logger(logging.getLogger("httk.altermagnets.material_sto
 # now source from the input structure); ids, columns and the result's direct
 # ``structures`` relationship are unaffected, so this version row is the forcing gate
 # (the fingerprint does not see edge-direction changes).
-STORE_LAYOUT_VERSION = 15
+# Bump 16: ``CalculationOutputRecord`` gains a ``product_of`` StrongLink edge naming the
+# screened structure it describes (label ``input_structure``, the structure main's stamped
+# id), served as ``_httk_product_of`` / reverse ``_httk_has_product``. The field is record
+# content, so it enters content identity AND the schema fingerprint -- a non-additive
+# layout change; the fingerprint is the operative staleness gate here, and this version row
+# also forces the rebuild. No ledger key or ProductLink emission changes.
+STORE_LAYOUT_VERSION = 16
 RELAXED_STRUCTURE_PRECISION = 5e-4  # Cartesian Å; relaxed-DFT coordinate precision, so symmetry tolerance is realistic (not ~machine epsilon from full-precision CONTCAR digits)
 
 ELEMENT_PATTERN = re.compile(r"[A-Z][a-z]?")
@@ -339,15 +346,45 @@ class CalculationOutputRecord:
     one-value :class:`~httk.core.DataRecord`. It inherits the ledger id of the record
     it replaces (key ``amdb:<id>:total_energy``), so the reconstructed run's edges and
     the ProductLinks targeting it keep resolving.
+
+    ``product_of`` names the screened structure this value describes, as a single
+    :class:`~httk.core.provenance.RunEdge` (label ``input_structure``, type
+    ``structures``, the structure main's stamped store id) carried under a
+    :class:`~httk.core.storage.StrongLink` -- the same scheme
+    :class:`~httk.core.data_records.DataRecord` uses. It is served forward as
+    ``_httk_product_of`` and in reverse as ``_httk_has_product`` on the structure, and
+    is searchable through ``record.links.product_of`` / ``structure.links.has_product``.
+    The field is record content, so it participates in content identity and the schema
+    fingerprint: a store built before this field must be rebuilt with ``make build_store``.
+
+    :param total_energy: The coupled run's total energy.
+    :param product_of: The screened structure this value is a product of, as a labeled edge.
+    :param id: The human-readable entry id shared by all revisions; the ledger id at construction.
+    :param immutable_id: The per-revision immutable id; minted by the store when None.
+    :param last_modified: The optional timezone-aware metadata timestamp.
     """
 
     __httk_storage__: ClassVar[StorageInfo] = StorageInfo(storage_name="altermagnets_calculation_outputs")
 
     total_energy: float
+    product_of: Annotated[tuple[RunEdge, ...], StrongLink("product_of", reverse="has_product", role="subject")] = ()
     # Entry-id fields per the store contract; id is always the ledger id at construction.
     id: Annotated[str | None, IdentitySkip(), Indexed()] = field(default=None, compare=False)
     immutable_id: Annotated[str | None, IdentitySkip(), Unique()] = field(default=None, compare=False)
     last_modified: Annotated[datetime.datetime | None, IdentitySkip()] = field(default=None, compare=False)
+
+    def __post_init__(self) -> None:
+        """Coerce ``product_of`` to :class:`~httk.core.provenance.RunEdge` and reject duplicate labels.
+
+        :raises ValueError: If two edges share a relationship label.
+        """
+        edges = tuple(RunEdge.from_obj(edge) for edge in self.product_of)
+        labels: set[str] = set()
+        for edge in edges:
+            if edge.label in labels:
+                raise ValueError(f"Duplicate label {edge.label!r} on CalculationOutputRecord product_of.")
+            labels.add(edge.label)
+        object.__setattr__(self, "product_of", edges)
 
     @property
     def type(self) -> str:
@@ -2674,6 +2711,7 @@ def _record_mains(
     materials: Iterable[AltermagnetScreeningResult],
     coupled: Mapping[str, _RunObservation],
     ledger: IdLedger,
+    structure_id_by_material: Mapping[str, str],
 ) -> tuple[dict[str, ScreeningResultRecord], dict[str, CalculationOutputRecord]]:
     """Build the two ``_httk_records`` backings' mains, keyed by amdb id.
 
@@ -2682,11 +2720,17 @@ def _record_mains(
     outputs carry a numeric total energy also gets a :class:`CalculationOutputRecord`
     under the PRE-EXISTING ``amdb:<id>:total_energy`` key, so the typed record inherits
     the id the retired one-value ``DataRecord`` held and the run edges and ProductLinks
-    targeting it keep resolving.
+    targeting it keep resolving. Each :class:`CalculationOutputRecord` carries a
+    ``product_of`` StrongLink edge naming the screened structure it describes
+    (label ``input_structure``, the structure main's stamped id), mirroring the run's
+    ``input_structure`` INPUT edge; a coupled material whose structure was not stamped
+    gets ``()`` with a warning (the same pathological degraded case
+    :func:`_save_reconstructed_runs` guards).
 
     :param materials: The screened materials, each carrying its amdb id.
     :param coupled: The coupled run observations keyed by amdb id.
     :param ledger: The open ledger to allocate from.
+    :param structure_id_by_material: The stamped structure store id per amdb id.
     :return: The ``(screening records, calculation outputs)`` maps keyed by amdb id.
     """
     screening: dict[str, ScreeningResultRecord] = {}
@@ -2712,8 +2756,17 @@ def _record_mains(
         energy = _coupled_total_energy(observation)
         if energy is None:
             continue
+        structure_id = structure_id_by_material.get(amdb_id)
+        if structure_id is None:
+            # A coupled run always yields a structure, so the coupled material carries
+            # one; guard the pathological degraded case rather than mis-target.
+            logger.warning("No stamped structure id for %s: calculation output carries no product_of", amdb_id)
+            product_of: tuple[RunEdge, ...] = ()
+        else:
+            product_of = (RunEdge("input_structure", AltermagnetStructureEntry.type, structure_id),)
         calculations[amdb_id] = CalculationOutputRecord(
             total_energy=energy,
+            product_of=product_of,
             id=ledger.assign(_record_key(amdb_id, "total_energy"), "records"),
         )
     return screening, calculations
@@ -3148,7 +3201,7 @@ def build_store(
         if not legacy:
             assert ledger is not None  # non-legacy always opens the ledger
             structure_id_by_material, structure_mains = _structure_mains(materials, ledger)
-            screening_records, calculation_outputs = _record_mains(materials, coupled, ledger)
+            screening_records, calculation_outputs = _record_mains(materials, coupled, ledger, structure_id_by_material)
         # Stamp the densely enumerated reference ids AND structure id on the list ONCE, and
         # repoint each result's ``structure``/record references at their canonical stamped
         # mains, so both the bulk save and the alternative-cell derivation / provenance

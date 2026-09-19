@@ -6,7 +6,7 @@ import pytest
 from conftest import write_detail_assets, write_source_tables
 from httk.atomistic import CartesianSiteMoments, Cell, Sites, Species, UnitcellStructure
 from httk.core import DataRecord, FileRecord
-from httk.core.provenance import ProductLink, Run
+from httk.core.provenance import ProductLink, Run, RunEdge
 from material_store import (
     AltermagnetScreeningResult,
     _magnetic_alternative_cell,
@@ -335,6 +335,26 @@ def test_coupled_material_reconstructs_run_with_resolvable_edges(tmp_path: Path)
         assert record_id and file_id
         structure_id = coupled.structure_id
         assert structure_id is not None
+
+        # The typed record names its screened structure through a product_of StrongLink,
+        # mirroring the run's input_structure INPUT edge (the structure main's stamped id).
+        assert calculation.product_of == (RunEdge("input_structure", "structures", structure_id),)
+        # The relationship resolves through the searcher both ways and returns exactly the
+        # one coupled (record, structure) pair.
+        from httk.atomistic.storage.records import UnitcellStructureRecord
+
+        def _linked(constrain) -> list[tuple[str, str]]:
+            search = store.searcher(only_latest=True)  # type: ignore[attr-defined]
+            record_var = search.variable(material_store.CalculationOutputRecord)
+            structure_var = search.variable(UnitcellStructureRecord)
+            constrain(search, record_var, structure_var)
+            return [
+                (row["record"].id, row["structure"].id)
+                for row in search.results(record=record_var, structure=structure_var)
+            ]
+
+        assert _linked(lambda s, r, st: s.add(r.links.product_of == st)) == [(record_id, structure_id)]
+        assert _linked(lambda s, r, st: s.add(st.links.has_product == r)) == [(record_id, structure_id)]
 
         # The structure is the run's INPUT (SCF, no relaxation); the products are outputs.
         by_input = {edge.label: (edge.entry_type, edge.entry_id) for edge in run.inputs}

@@ -296,6 +296,8 @@ anyt.am.runs-1-1 https://schemas.anyterial.se/defs/v0.1/workflows/altermagnets-s
 
 (the `_httk_label` meta on each edge, e.g. `input_structure`, `total_energy`, `vasprun`, is dropped here: `.links.<name>` resolves the edge targets, not their labels, and `run["relationships"]["_httk_has_input"]["data"][i]["meta"]` would be needed to recover them -- the example stays clear without it.)
 
+Each `_httk_records` calculation record also links directly to the screened structure it describes: it carries a `_httk_product_of` relationship to the `structures` entry, and that structure carries the reverse `_httk_has_product` relationship back to the record. Both are derived from the record's `product_of` edge written at build time, so the structure and its total energy can be traversed without going through the run.
+
 A depth-1 relationship filter reaches through `structures` directly, without following any relationship at runtime:
 
 <div class="code-pair">

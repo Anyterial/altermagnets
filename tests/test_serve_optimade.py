@@ -288,6 +288,9 @@ def test_serves_paired_run_edges_and_records_relationship(tmp_path: Path) -> Non
             assert _relationship_ids(calculation, "_httk_is_artifact") == []
             assert all(etype == "_httk_runs" for etype, _ in calc_is_output)
             run_id = calc_is_output[0][1]
+            # The calculation record names its screened structure through the forward
+            # _httk_product_of relationship (the CalculationOutputRecord StrongLink).
+            assert _relationship_ids(calculation, "_httk_product_of") == [("structures", structure_id)]
 
             # (a2) the result's own envelope-injected _httk_runs relationship (item 7):
             # same run id, and it is include-hydratable on an explicit include=_httk_runs
@@ -316,6 +319,9 @@ def test_serves_paired_run_edges_and_records_relationship(tmp_path: Path) -> Non
             assert structure_is_artifact == []
             assert _relationship_ids(structure, "_httk_is_output") == []
             assert structure_is_input == [("_httk_runs", run_id)]
+            # ... and the reverse _httk_has_product block points back at the record whose
+            # product_of names this structure (the CalculationOutputRecord StrongLink).
+            assert _relationship_ids(structure, "_httk_has_product") == [("_httk_records", calculation_id)]
 
             # (e) the run resolves at its wire endpoint with non-null prefixed values; its
             # forward _httk_has_input block carries the structure, and _httk_has_output the
